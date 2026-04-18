@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth transitions for the toggle */
+@layer utilities {
+    .animate-in {
+        animation-fill-mode: both;
+    }
+
+    .slide-in-from-right-4 {
+        --tw-enter-translate-x: 1rem;
+    }
+
+    .fade-in {
+        animation-name: fadeIn;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateX(var(--tw-enter-translate-x, 0));
+        }
+
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+}

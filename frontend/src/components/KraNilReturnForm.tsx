@@ -2,11 +2,15 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import ToggleSwitch from './ToggleSwitch';
 import {
-    NilReturnFormData,
+    FilingFormData,
     FilingResponse,
+    FilingStepLog,
     FilingStatusResponse,
     TAX_OBLIGATION_OPTIONS,
 } from '../types';
+
+const NIL_FILING_OPTIONS = TAX_OBLIGATION_OPTIONS.filter((option) => option.filingMode === 'nil');
+const TRANSACTION_FILING_OPTIONS = TAX_OBLIGATION_OPTIONS.filter((option) => option.filingMode === 'transactional');
 
 // ─── Toast ───────────────────────────────────────────────────────────────────
 
@@ -122,14 +126,35 @@ function formatJobState(state: FilingStatusResponse['state']): string {
     }
 }
 
+function formatLogTimestamp(timestamp: string): string {
+    return new Date(timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
+}
+
+function formatLogProgress(log: FilingStepLog): string | null {
+    return typeof log.progress === 'number' ? `${log.progress}%` : null;
+}
+
+function getPreviousMonthRange(referenceDate = new Date()): { periodFrom: string; periodTo: string } {
+    const previousMonthStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth() - 1, 1);
+    const previousMonthEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 0);
+
+    return {
+        periodFrom: previousMonthStart.toISOString().slice(0, 10),
+        periodTo: previousMonthEnd.toISOString().slice(0, 10),
+    };
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 /**
  * KraNilReturnForm
  *
  * Collects KRA iTax credentials and filing metadata, POSTs them to the
- * /api/tax/file-nil-return endpoint, and immediately shows a success toast
- * without blocking on the background automation run.
+ * filing endpoint, and then tracks the queued worker execution.
  */
 const KraNilReturnForm: React.FC = () => {
     const { toasts, addToast } = useToasts();
@@ -140,9 +165,10 @@ const KraNilReturnForm: React.FC = () => {
         register,
         handleSubmit,
         control,
+        watch,
         reset,
         formState: { errors, isSubmitting },
-    } = useForm<NilReturnFormData>({
+    } = useForm<FilingFormData>({
         defaultValues: {
             kraPin: '',
             kraPassword: '',
@@ -150,9 +176,28 @@ const KraNilReturnForm: React.FC = () => {
             periodTo: '',
             taxObligationType: 'income_tax_resident_individual',
             ownsRentalProperty: false,
+            rentalIncomeAmount: undefined,
+            zipFilePath: '',
+            otpCode: '',
         },
         mode: 'onBlur',
     });
+
+    const selectedObligation = watch('taxObligationType');
+    const selectedObligationOption = TAX_OBLIGATION_OPTIONS.find(
+        (option) => option.value === selectedObligation
+    );
+    const isMriReturn = selectedObligation === 'monthly_rental_income';
+    const isTotReturn = selectedObligation === 'turnover_tax';
+    const isTransactionalReturn = selectedObligationOption?.filingMode === 'transactional';
+    const selectedWorkflowTitle = isTransactionalReturn
+        ? 'Return With Transactions'
+        : 'Nil Filing';
+    const workflowHint = isTotReturn
+        ? 'Requires the prepared ZIP file path and may require an OTP if KRA requests mobile verification.'
+        : isMriReturn
+            ? 'Requires the rental income amount and uses the previous month period when dates are not supplied.'
+            : 'Requires the nil filing period and any nil-return-specific prompts such as the rental property toggle.';
 
     useEffect(() => {
         if (!activeJobId) {
@@ -207,15 +252,30 @@ const KraNilReturnForm: React.FC = () => {
 
     // ── Submission ─────────────────────────────────────────────────────────────
 
-    const onSubmit = async (data: NilReturnFormData): Promise<void> => {
+    const onSubmit = async (data: FilingFormData): Promise<void> => {
         try {
-            const response = await fetch('/api/tax/file-nil-return', {
+            const fallbackMriPeriod = getPreviousMonthRange();
+            const response = await fetch('/api/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 // kraPin is uppercased by the form; backend validates too
                 body: JSON.stringify({
                     ...data,
                     kraPin: data.kraPin.toUpperCase(),
+                    periodFrom: isMriReturn
+                        ? (data.periodFrom || fallbackMriPeriod.periodFrom)
+                        : isTotReturn
+                            ? undefined
+                            : data.periodFrom,
+                    periodTo: isMriReturn
+                        ? (data.periodTo || fallbackMriPeriod.periodTo)
+                        : isTotReturn
+                            ? undefined
+                            : data.periodTo,
+                    ownsRentalProperty: isMriReturn || isTotReturn ? false : data.ownsRentalProperty,
+                    rentalIncomeAmount: isMriReturn ? data.rentalIncomeAmount : undefined,
+                    zipFilePath: isTotReturn ? data.zipFilePath : undefined,
+                    otpCode: isTotReturn ? data.otpCode || undefined : undefined,
                 }),
             });
 
@@ -230,6 +290,10 @@ const KraNilReturnForm: React.FC = () => {
                     progress: 0,
                     attemptsMade: 0,
                     failedReason: null,
+                    stepLogs: [],
+                    lastStep: null,
+                    credentialUpdate: null,
+                    result: null,
                     processedOn: null,
                     finishedOn: null,
                 } : null);
@@ -283,10 +347,10 @@ const KraNilReturnForm: React.FC = () => {
                         <DocumentIcon />
                     </div>
                     <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-                        KRA Nil Return Filing
+                        KRA Return Filing
                     </h1>
                     <p className="text-sm text-gray-500 mt-1">
-                        Queue a KRA nil return and track any blocking portal warnings
+                        Choose a nil filing or a transaction-based return. The form adjusts the required prerequisites for the selected workflow.
                     </p>
                 </div>
 
@@ -294,7 +358,7 @@ const KraNilReturnForm: React.FC = () => {
                 <form
                     onSubmit={handleSubmit(onSubmit)}
                     noValidate
-                    aria-label="KRA Nil Return Form"
+                    aria-label="KRA Return Filing Form"
                     className="space-y-5"
                 >
                     {/* ── KRA PIN ──────────────────────────────────────────────────────── */}
@@ -336,27 +400,121 @@ const KraNilReturnForm: React.FC = () => {
                             htmlFor="taxObligationType"
                             className="block text-sm font-medium text-gray-700 mb-1"
                         >
-                            Nil Return Obligation <span className="text-red-500" aria-hidden="true">*</span>
+                            Filing Obligation <span className="text-red-500" aria-hidden="true">*</span>
                         </label>
                         <select
                             id="taxObligationType"
                             aria-invalid={!!errors.taxObligationType}
                             className={inputCls(!!errors.taxObligationType)}
                             {...register('taxObligationType', {
-                                required: 'Select the nil return obligation to file',
+                                required: 'Select the return obligation to file',
                             })}
                         >
-                            {TAX_OBLIGATION_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                    {option.label}
-                                </option>
-                            ))}
+                            <optgroup label="Nil Filings">
+                                {NIL_FILING_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </optgroup>
+                            <optgroup label="Returns With Transactions">
+                                {TRANSACTION_FILING_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </optgroup>
                         </select>
                         <FieldError message={errors.taxObligationType?.message} />
                         <p className="mt-1 text-xs text-gray-400">
-                            Choose the tax obligation you want the worker to select in KRA.
+                            Nil filings are separated from returns with transactions so the form can collect the correct prerequisites.
                         </p>
                     </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Selected Workflow
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                    {selectedWorkflowTitle}
+                                </p>
+                                <p className="mt-1 text-sm text-slate-700 leading-relaxed">
+                                    {selectedObligationOption?.description}
+                                </p>
+                            </div>
+                            <span className={[
+                                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
+                                isTransactionalReturn
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-blue-100 text-blue-800',
+                            ].join(' ')}>
+                                {isTransactionalReturn ? 'Transactions' : 'Nil'}
+                            </span>
+                        </div>
+                        <p className="mt-3 text-xs text-slate-600 leading-relaxed">
+                            {workflowHint}
+                        </p>
+                    </div>
+
+                    {isMriReturn ? (
+                        <div>
+                            <label
+                                htmlFor="rentalIncomeAmount"
+                                className="block text-sm font-medium text-gray-700 mb-1"
+                            >
+                                Monthly Rental Income Amount <span className="text-red-500" aria-hidden="true">*</span>
+                            </label>
+                            <input
+                                id="rentalIncomeAmount"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                inputMode="decimal"
+                                placeholder="Enter the month's rental income"
+                                aria-invalid={!!errors.rentalIncomeAmount}
+                                className={inputCls(!!errors.rentalIncomeAmount)}
+                                {...register('rentalIncomeAmount', {
+                                    validate: (value) =>
+                                        !isMriReturn || (typeof value === 'number' && value > 0) || 'Monthly rental income amount is required',
+                                    setValueAs: (value: string) => value === '' ? undefined : Number(value),
+                                })}
+                            />
+                            <FieldError message={errors.rentalIncomeAmount?.message} />
+                            <p className="mt-1 text-xs text-gray-400">
+                                MRI is a transaction-based filing. The worker uses the MRI flow and submits the monthly rental income amount instead of a nil return.
+                            </p>
+                        </div>
+                    ) : null}
+
+                    {isTotReturn ? (
+                        <div>
+                            <label
+                                htmlFor="zipFilePath"
+                                className="block text-sm font-medium text-gray-700 mb-1"
+                            >
+                                ToT ZIP File Path <span className="text-red-500" aria-hidden="true">*</span>
+                            </label>
+                            <input
+                                id="zipFilePath"
+                                type="text"
+                                spellCheck={false}
+                                placeholder="C:\\Users\\ADMIN\\Desktop\\KRAFILER\\returns\\tot-return.zip"
+                                aria-invalid={!!errors.zipFilePath}
+                                className={inputCls(!!errors.zipFilePath)}
+                                {...register('zipFilePath', {
+                                    validate: (value) =>
+                                        !isTotReturn || Boolean(value?.trim()) || 'ToT ZIP file path is required',
+                                    setValueAs: (value: string) => value.trim(),
+                                })}
+                            />
+                            <FieldError message={errors.zipFilePath?.message} />
+                            <p className="mt-1 text-xs text-gray-400">
+                                ToT is a transaction-based filing. Provide the absolute path on the backend machine to the pre-generated ZIP file the worker should upload.
+                            </p>
+                        </div>
+                    ) : null}
 
                     {/* ── KRA Password ─────────────────────────────────────────────────── */}
                     <div>
@@ -384,77 +542,107 @@ const KraNilReturnForm: React.FC = () => {
                         </p>
                     </div>
 
-                    {/* ── Date Range ───────────────────────────────────────────────────── */}
-                    <fieldset>
-                        <legend className="text-sm font-medium text-gray-700 mb-2">
-                            Filing Period <span className="text-red-500" aria-hidden="true">*</span>
-                        </legend>
-                        <div className="grid grid-cols-2 gap-3">
-                            {/* Period From */}
-                            <div>
-                                <label htmlFor="periodFrom" className="block text-xs text-gray-500 mb-1">
-                                    From
-                                </label>
-                                <input
-                                    id="periodFrom"
-                                    type="date"
-                                    aria-invalid={!!errors.periodFrom}
-                                    className={inputCls(!!errors.periodFrom)}
-                                    {...register('periodFrom', {
-                                        required: 'Start date is required',
-                                    })}
-                                />
-                                <FieldError message={errors.periodFrom?.message} />
-                            </div>
-
-                            {/* Period To */}
-                            <div>
-                                <label htmlFor="periodTo" className="block text-xs text-gray-500 mb-1">
-                                    To
-                                </label>
-                                <input
-                                    id="periodTo"
-                                    type="date"
-                                    aria-invalid={!!errors.periodTo}
-                                    className={inputCls(!!errors.periodTo)}
-                                    {...register('periodTo', {
-                                        required: 'End date is required',
-                                        validate: (value, formValues) =>
-                                            !formValues.periodFrom ||
-                                            new Date(value) >= new Date(formValues.periodFrom) ||
-                                            'End date must be on or after start date',
-                                    })}
-                                />
-                                <FieldError message={errors.periodTo?.message} />
-                            </div>
+                    {isTotReturn ? (
+                        <div>
+                            <label
+                                htmlFor="otpCode"
+                                className="block text-sm font-medium text-gray-700 mb-1"
+                            >
+                                Mobile Verification Code <span className="text-gray-400">(optional)</span>
+                            </label>
+                            <input
+                                id="otpCode"
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                placeholder="Enter OTP if you already have it"
+                                aria-invalid={!!errors.otpCode}
+                                className={inputCls(!!errors.otpCode)}
+                                {...register('otpCode', {
+                                    setValueAs: (value: string) => value.trim(),
+                                })}
+                            />
+                            <FieldError message={errors.otpCode?.message} />
+                            <p className="mt-1 text-xs text-gray-400">
+                                Only used for ToT mobile verification. Leave it blank if the worker will source the OTP from your SMS integration.
+                            </p>
                         </div>
-                    </fieldset>
+                    ) : null}
+
+                    {/* ── Date Range ───────────────────────────────────────────────────── */}
+                    {!isMriReturn && !isTotReturn ? (
+                        <fieldset>
+                            <legend className="text-sm font-medium text-gray-700 mb-2">
+                                Nil Filing Period <span className="text-red-500" aria-hidden="true">*</span>
+                            </legend>
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Period From */}
+                                <div>
+                                    <label htmlFor="periodFrom" className="block text-xs text-gray-500 mb-1">
+                                        From
+                                    </label>
+                                    <input
+                                        id="periodFrom"
+                                        type="date"
+                                        aria-invalid={!!errors.periodFrom}
+                                        className={inputCls(!!errors.periodFrom)}
+                                        {...register('periodFrom', {
+                                            required: isMriReturn ? false : 'Start date is required',
+                                        })}
+                                    />
+                                    <FieldError message={errors.periodFrom?.message} />
+                                </div>
+
+                                {/* Period To */}
+                                <div>
+                                    <label htmlFor="periodTo" className="block text-xs text-gray-500 mb-1">
+                                        To
+                                    </label>
+                                    <input
+                                        id="periodTo"
+                                        type="date"
+                                        aria-invalid={!!errors.periodTo}
+                                        className={inputCls(!!errors.periodTo)}
+                                        {...register('periodTo', {
+                                            required: isMriReturn ? false : 'End date is required',
+                                            validate: (value, formValues) =>
+                                                !formValues.periodFrom ||
+                                                new Date(value) >= new Date(formValues.periodFrom) ||
+                                                'End date must be on or after start date',
+                                        })}
+                                    />
+                                    <FieldError message={errors.periodTo?.message} />
+                                </div>
+                            </div>
+                        </fieldset>
+                    ) : null}
 
                     {/* ── Rental Property Toggle ───────────────────────────────────────── */}
-                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                        <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                                <p className="text-sm font-medium text-gray-800">
-                                    Owns Rental Property?
-                                </p>
-                                <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
-                                    Used only if the selected KRA form asks about rental property
-                                    for the filing period.
-                                </p>
+                    {!isMriReturn && !isTotReturn ? (
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium text-gray-800">
+                                        Owns Rental Property?
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">
+                                        Nil filing prerequisite only. This is used only when the selected KRA nil return asks about rental property for the filing period.
+                                    </p>
+                                </div>
+                                <Controller
+                                    name="ownsRentalProperty"
+                                    control={control}
+                                    render={({ field }) => (
+                                        <ToggleSwitch
+                                            checked={field.value}
+                                            onChange={field.onChange}
+                                            disabled={isSubmitting}
+                                        />
+                                    )}
+                                />
                             </div>
-                            <Controller
-                                name="ownsRentalProperty"
-                                control={control}
-                                render={({ field }) => (
-                                    <ToggleSwitch
-                                        checked={field.value}
-                                        onChange={field.onChange}
-                                        disabled={isSubmitting}
-                                    />
-                                )}
-                            />
                         </div>
-                    </div>
+                    ) : null}
 
                     {/* ── Submit ───────────────────────────────────────────────────────── */}
                     <button
@@ -475,7 +663,11 @@ const KraNilReturnForm: React.FC = () => {
                                 Queuing return…
                             </span>
                         ) : (
-                            'File Nil Return'
+                            isTotReturn
+                                ? 'Queue ToT Filing'
+                                : isMriReturn
+                                    ? 'Queue MRI Filing'
+                                    : 'Queue Nil Filing'
                         )}
                     </button>
                 </form>
@@ -516,6 +708,29 @@ const KraNilReturnForm: React.FC = () => {
                             </div>
                         </div>
 
+                        {jobStatus?.lastStep ? (
+                            <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                            Last Recorded Step
+                                        </p>
+                                        <p className="mt-1 text-sm font-medium text-slate-900 leading-relaxed">
+                                            {jobStatus.lastStep.message}
+                                        </p>
+                                    </div>
+                                    <div className="text-right text-xs text-slate-500 whitespace-nowrap">
+                                        <p>{formatLogTimestamp(jobStatus.lastStep.timestamp)}</p>
+                                        {formatLogProgress(jobStatus.lastStep) ? (
+                                            <p className="mt-1 font-medium text-slate-700">
+                                                {formatLogProgress(jobStatus.lastStep)}
+                                            </p>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
                         {jobStatus?.failedReason ? (
                             <div className="rounded-lg border border-red-200 bg-red-50 p-3">
                                 <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
@@ -527,9 +742,69 @@ const KraNilReturnForm: React.FC = () => {
                             </div>
                         ) : null}
 
+                        {jobStatus?.credentialUpdate ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                                    Password Updated
+                                </p>
+                                <p className="mt-1 text-sm text-amber-900 leading-relaxed">
+                                    KRA required a password change during login. The bot generated a new password and continued filing with that credential.
+                                </p>
+                                <p className="mt-2 text-xs text-amber-700">New iTax password</p>
+                                <p className="mt-1 rounded-md border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 break-all">
+                                    {jobStatus.credentialUpdate.newPassword}
+                                </p>
+                            </div>
+                        ) : null}
+
+                        {jobStatus?.result?.receiptPath ? (
+                            <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-green-700">
+                                    Local Receipt Copy
+                                </p>
+                                <p className="mt-1 text-sm text-green-900 break-all leading-relaxed">
+                                    {jobStatus.result.receiptPath}
+                                </p>
+                                {jobStatus.result.receiptNumber ? (
+                                    <p className="mt-2 text-xs font-medium text-green-800">
+                                        Receipt Number: {jobStatus.result.receiptNumber}
+                                    </p>
+                                ) : null}
+                            </div>
+                        ) : null}
+
+                        {jobStatus?.stepLogs.length ? (
+                            <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    Execution Log
+                                </p>
+                                <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+                                    {jobStatus.stepLogs.slice(-8).map((log, index) => (
+                                        <div
+                                            key={`${log.timestamp}-${index}`}
+                                            className={[
+                                                'rounded-md border px-3 py-2 text-xs',
+                                                log.level === 'error'
+                                                    ? 'border-red-200 bg-red-50 text-red-800'
+                                                    : 'border-slate-200 bg-slate-50 text-slate-700',
+                                            ].join(' ')}
+                                        >
+                                            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide">
+                                                <span>{formatLogTimestamp(log.timestamp)}</span>
+                                                {formatLogProgress(log) ? <span>{formatLogProgress(log)}</span> : null}
+                                            </div>
+                                            <p className="mt-1 text-sm normal-case leading-relaxed">
+                                                {log.message}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
+
                         {jobStatus?.state !== 'failed' ? (
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                If KRA blocks the filing with a warning dialog, the exact portal message will appear here.
+                                The execution log updates as each worker step runs, so you can see exactly where the attempt is currently paused or stopped.
                             </p>
                         ) : null}
                     </div>

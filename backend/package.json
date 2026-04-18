@@ -7,8 +7,10 @@
         "build": "tsc",
         "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
         "worker": "ts-node-dev --respawn --transpile-only src/workers/kraFilingWorker.ts",
+        "tot": "ts-node-dev --respawn --transpile-only src/scripts/file-kra-tot-return.ts",
         "start": "node dist/server.js",
-        "start:worker": "node dist/workers/kraFilingWorker.js"
+        "start:worker": "node dist/workers/kraFilingWorker.js",
+        "start:tot": "node dist/scripts/file-kra-tot-return.js"
     },
     "dependencies": {
         "@types/sharp": "^0.31.1",

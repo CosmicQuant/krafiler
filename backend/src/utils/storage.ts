@@ -1,73 +1,44 @@
 /**
  * storage.ts
  *
- * Mock cloud storage adapter.
- * Replace the body of `uploadReceiptToStorage` with the real AWS S3 SDK
- * (or GCS / Azure Blob) implementation before deploying to production.
+ * Receipt persistence helpers for keeping downloaded PDFs inside the workspace.
  */
 
 import fs from 'fs/promises';
 import path from 'path';
 
-export interface UploadResult {
-    /** Public/pre-signed URL to the uploaded PDF receipt. */
-    fileUrl: string;
-    /** S3 (or equivalent) bucket name. */
-    bucket: string;
-    /** Object key within the bucket. */
-    key: string;
+const RECEIPTS_DIR = path.resolve(__dirname, '..', '..', '..', 'receipts');
+
+export interface StoredReceiptResult {
+    /** Absolute path to the persisted PDF receipt inside the workspace. */
+    receiptPath: string;
+    /** Relative path from the workspace root, useful for UI/logging. */
+    relativePath: string;
 }
 
 /**
- * [MOCK] Uploads a local PDF receipt to cloud object storage.
- *
- * Production replacement — AWS S3 example:
- * ```ts
- * import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
- *
- * const s3 = new S3Client({ region: process.env.AWS_REGION });
- * const fileBuffer = await fs.readFile(localFilePath);
- * await s3.send(new PutObjectCommand({
- *   Bucket: bucket,
- *   Key: key,
- *   Body: fileBuffer,
- *   ContentType: 'application/pdf',
- *   ServerSideEncryption: 'AES256',
- * }));
- * const fileUrl = `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
- * ```
+ * Moves a downloaded PDF receipt from the temp browser download folder into a
+ * persistent receipts directory within the workspace.
  *
  * @param localFilePath - Absolute path to the downloaded PDF on disk.
- * @param jobId         - Unique filing job ID (used to namespace the S3 key).
- * @returns {@link UploadResult} with the public URL and storage coordinates.
+ * @param jobId         - Unique filing job ID (used to namespace the receipt).
+ * @returns {@link StoredReceiptResult} with the final local file path.
  */
-export async function uploadReceiptToStorage(
+export async function storeReceiptLocally(
     localFilePath: string,
     jobId: string
-): Promise<UploadResult> {
-    // Simulate cloud upload latency
-    await new Promise<void>((resolve) => setTimeout(resolve, 500));
-
+): Promise<StoredReceiptResult> {
     const fileName = path.basename(localFilePath);
-    const bucket = process.env.S3_BUCKET_NAME ?? 'kra-receipts-bucket';
-    const key = `receipts/${jobId}/${fileName}`;
-    const fileUrl = `https://${bucket}.s3.${process.env.AWS_REGION ?? 'us-east-1'}.amazonaws.com/${key}`;
+    const targetDir = path.join(RECEIPTS_DIR, jobId);
+    const targetPath = path.join(targetDir, fileName);
 
-    console.log(`[Storage] [MOCK] Uploaded: ${localFilePath} -> s3://${bucket}/${key}`);
+    await fs.mkdir(targetDir, { recursive: true });
+    await fs.rename(localFilePath, targetPath);
 
-    return { fileUrl, bucket, key };
-}
+    console.log(`[Storage] Stored receipt locally: ${localFilePath} -> ${targetPath}`);
 
-/**
- * Deletes a temporary local file after it has been uploaded to cloud storage.
- * Failures are logged but not re-thrown — a cleanup failure must not abort
- * the overall job success.
- */
-export async function cleanupTempFile(filePath: string): Promise<void> {
-    try {
-        await fs.unlink(filePath);
-        console.log(`[Storage] Cleaned up temp file: ${filePath}`);
-    } catch (err) {
-        console.warn(`[Storage] Failed to clean up temp file "${filePath}":`, err);
-    }
+    return {
+        receiptPath: targetPath,
+        relativePath: path.relative(path.resolve(__dirname, '..', '..', '..'), targetPath),
+    };
 }

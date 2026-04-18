@@ -15,6 +15,7 @@ frontend/dist/
 backend/build_output.txt
 backend/kra-portal-screenshot.png
 backend/eng.traineddata
+receipts/
 redis/dump.rdb
 redis/*.pdb
 redis/redis.zip

@@ -1,6 +1,6 @@
-# KRA iTax Nil Return Filing Module
+# KRA iTax Return Filing Module
 
-End-to-end automation for filing KRA nil returns via the iTax portal.
+End-to-end automation for filing KRA nil returns and Monthly Rental Income returns via the iTax portal.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ End-to-end automation for filing KRA nil returns via the iTax portal.
 ┌─────────────────────────────────────────────────────────────────┐
 │  React Frontend (Vite + Tailwind)                               │
 │  KraNilReturnForm  ──POST /api/tax/file-nil-return──►           │
-│  Obligation picker + job status polling                         │
+│  Return picker + job status polling                             │
 └──────────────────────────────────┬──────────────────────────────┘
                                    │ 202 Accepted + jobId
 ┌──────────────────────────────────▼──────────────────────────────┐
@@ -21,9 +21,10 @@ End-to-end automation for filing KRA nil returns via the iTax portal.
 │  BullMQ Worker (concurrency: 1)                                 │
 │  • Playwright (stealth mode) automates KRA iTax portal          │
 │  • Surfaces blocking KRA warning dialogs as failedReason        │
-│  • Solves arithmetic captcha via regex                          │
+│  • Solves arithmetic captcha via Gemini vision                  │
+│  • Handles forced KRA password changes automatically            │
 │  • Downloads PDF receipt  ────────────────────────────────────► │
-│  • Uploads to S3  •  Notifies user  •  Updates job status       │
+│  • Stores locally  •  Notifies user  •  Updates job status      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,15 +35,15 @@ krafiler/
 ├── backend/
 │   ├── src/
 │   │   ├── api/
-│   │   │   └── tax.routes.ts          # POST /api/tax/file-nil-return
+│   │   │   └── tax.routes.ts          # Submission + job status routes
 │   │   ├── queues/
 │   │   │   └── kraFilingQueue.ts      # BullMQ queue + Redis connection
 │   │   ├── types/
 │   │   │   └── index.ts               # Shared TypeScript types
 │   │   ├── utils/
 │   │   │   ├── encryption.ts          # AES-256-GCM encrypt/decrypt
-│   │   │   ├── storage.ts             # Cloud storage adapter (mock → S3)
-│   │   │   └── notifications.ts       # Notification dispatcher (mock → SES/webhook)
+│   │   │   ├── storage.ts             # Local receipt storage helpers
+│   │   │   └── notifications.ts       # Notification dispatcher (currently mock logging)
 │   │   ├── workers/
 │   │   │   └── kraFilingWorker.ts     # Playwright automation worker
 │   │   └── server.ts                  # Express app entry point
@@ -100,11 +101,14 @@ npm install
 
 ## Running
 
-Open **three terminals**:
+Open **four terminals**:
 
 ```bash
 # Terminal 1 — Redis (if running locally)
 redis-server
+
+# Or on this workspace's Windows bundle
+# .\redis\redis-server.exe .\redis\redis.windows.conf
 
 # Terminal 2 — Express API
 cd backend && npm run dev
@@ -127,8 +131,8 @@ See `backend/.env.example` for the full list. Critical variables:
 | `ENCRYPTION_SECRET` | AES key derivation secret (≥ 32 chars) |
 | `ENCRYPTION_SALT` | scrypt salt (unique per deployment) |
 | `REDIS_HOST` / `REDIS_PORT` | BullMQ backing store |
-| `S3_BUCKET_NAME` | Receipt storage bucket |
-| `WEBHOOK_URL` | Post-filing notification endpoint |
+| `GEMINI_API_KEY` | Captcha OCR for the KRA arithmetic image |
+| `WEBHOOK_URL` | Post-filing notification endpoint if notifications are wired later |
 
 ## Security Notes
 
@@ -137,11 +141,30 @@ See `backend/.env.example` for the full list. Critical variables:
 - The key is derived via `scrypt` (not used raw) to prevent weak-key attacks.
 - The Express API uses `helmet` (security headers), `cors` (origin allowlist), and `express-rate-limit` (10 req / 15 min per IP).
 - Worker runs at `concurrency: 1` to avoid KRA portal rate-limiting and IP bans.
-- Human-like random delays (3–8 s) are injected between each automation step.
+- Forced KRA password-reset flows are completed automatically and the replacement password is surfaced through job status for operator recovery.
+- Receipts are kept locally under `receipts/<jobId>/...` until a real storage integration is introduced.
+- Human-like random delays are injected between sensitive automation steps.
+
+## Supported Return Types
+
+- Income Tax - Resident Individual nil return
+- Income Tax - Non-Resident Individual nil return
+- Monthly Rental Income (MRI)
+
+MRI submissions reuse the shared login and receipt flow, select `Returns -> File Return`, rely on KRA's prepopulated period, and submit the provided monthly rental income amount.
+
+## Job Status Data
+
+The status endpoint returns recent execution details so the frontend can surface worker progress:
+
+- `stepLogs`: recent worker log entries with timestamps and progress
+- `lastStep`: the latest recorded worker step
+- `credentialUpdate`: the generated replacement password when KRA forces a reset
+- `result.receiptPath`: the local receipt path inside the workspace
 
 ## Production Checklist
 
-- [ ] Replace mock `uploadReceiptToStorage` with real AWS S3 SDK calls
+- [ ] Replace local receipt persistence with real object storage if receipts must leave the workspace
 - [ ] Replace mock `sendReceiptNotification` with real SES / SendGrid / webhook
 - [ ] Add JWT/session-based authentication middleware to the API
 - [ ] Store job results in a persistent database (PostgreSQL recommended)

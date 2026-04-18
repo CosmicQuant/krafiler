@@ -10,7 +10,7 @@ export interface NotificationPayload {
     userId: string;
     jobId: string;
     kraPin: string;
-    receiptUrl: string;
+    receiptPath: string;
     completedAt: string;
 }
 
@@ -61,6 +61,6 @@ export async function sendReceiptNotification(
     console.log(`  Job ID      : ${payload.jobId}`);
     console.log(`  User ID     : ${payload.userId}`);
     console.log(`  KRA PIN     : ${payload.kraPin}`);
-    console.log(`  Receipt URL : ${payload.receiptUrl}`);
+    console.log(`  Receipt Path: ${payload.receiptPath}`);
     console.log(`  Completed At: ${payload.completedAt}`);
 }

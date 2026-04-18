@@ -36,17 +36,15 @@ redisConnection.on('connect', () => {
 /**
  * BullMQ queue for KRA nil return filing jobs.
  *
- * Retry strategy: exponential back-off starting at 60 s, up to 3 attempts.
- * This is conservative — the KRA portal rate-limits aggressively.
+ * Jobs run once and fail immediately.
+ * KRA validation and credential errors must be surfaced back to the user
+ * without automatic retries so the user can correct the input and resubmit.
  */
 export const kraFilingQueue = new Queue<FilingJob>(KRA_QUEUE_NAME, {
     connection: redisConnection,
     defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-            type: 'exponential',
-            delay: 60_000, // 1 minute base delay; doubles each retry
-        },
+        attempts: 1,
+        keepLogs: 200,
         removeOnComplete: { count: 100 }, // keep the last 100 completed jobs
         removeOnFail: { count: 50 },      // keep the last 50 failed jobs
     },

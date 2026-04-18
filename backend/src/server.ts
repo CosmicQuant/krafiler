@@ -55,7 +55,11 @@ app.use(express.json({ limit: '10kb' }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-app.use('/api/tax', filingLimiter, taxRoutes);
+// Only submission requests should consume the expensive filing quota.
+// Status polling must stay available while the frontend tracks an active job.
+app.use('/api/tax/file-return', filingLimiter);
+app.use('/api/tax/file-nil-return', filingLimiter);
+app.use('/api/tax', taxRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });

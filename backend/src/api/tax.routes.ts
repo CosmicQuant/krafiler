@@ -1,10 +1,13 @@
 /**
  * tax.routes.ts
  *
- * POST /api/tax/file-nil-return  — enqueue a new KRA nil return filing job.
+ * POST /api/tax/file-return      — enqueue a new KRA filing job.
+ * POST /api/tax/file-nil-return  — legacy alias for the same queueing route.
  * GET  /api/tax/filing-status/:jobId — poll the status of an existing job.
  */
 
+import fs from 'fs/promises';
+import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import { v4 as uuidv4 } from 'uuid';
@@ -12,6 +15,7 @@ import { encrypt } from '../utils/encryption';
 import { kraFilingQueue } from '../queues/kraFilingQueue';
 import {
     FilingJob,
+    FilingStepLog,
     FileNilReturnRequest,
     FileNilReturnResponse,
     TAX_OBLIGATION_TYPES,
@@ -19,9 +23,43 @@ import {
 
 const router = Router();
 
+const PERIOD_OPTIONAL_OBLIGATIONS = new Set(['monthly_rental_income', 'turnover_tax']);
+const RENTAL_ANSWER_OPTIONAL_OBLIGATIONS = new Set(['monthly_rental_income', 'turnover_tax']);
+
+function getPreviousMonthIsoRange(referenceDate = new Date()): { periodFrom: string; periodTo: string } {
+    const year = referenceDate.getUTCFullYear();
+    const month = referenceDate.getUTCMonth();
+    const previousMonthStart = new Date(Date.UTC(year, month - 1, 1));
+    const previousMonthEnd = new Date(Date.UTC(year, month, 0));
+
+    return {
+        periodFrom: previousMonthStart.toISOString().slice(0, 10),
+        periodTo: previousMonthEnd.toISOString().slice(0, 10),
+    };
+}
+
+function parseFilingStepLog(rawEntry: string): FilingStepLog {
+    try {
+        const parsed = JSON.parse(rawEntry) as Partial<FilingStepLog>;
+        return {
+            timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
+            message: typeof parsed.message === 'string' ? parsed.message : rawEntry,
+            progress: typeof parsed.progress === 'number' ? parsed.progress : null,
+            level: parsed.level === 'error' ? 'error' : 'info',
+        };
+    } catch {
+        return {
+            timestamp: new Date().toISOString(),
+            message: rawEntry,
+            progress: null,
+            level: 'info',
+        };
+    }
+}
+
 // ─── Input Validation Middleware ─────────────────────────────────────────────
 
-const validateNilReturn = [
+const validateFilingRequest = [
     body('kraPin')
         .trim()
         .toUpperCase()
@@ -34,14 +72,33 @@ const validateNilReturn = [
         .withMessage('kraPassword is required'),
 
     body('periodFrom')
-        .isISO8601()
-        .withMessage('periodFrom must be a valid ISO 8601 date (YYYY-MM-DD)'),
+        .custom((value: string, { req }) => {
+            if (!value && PERIOD_OPTIONAL_OBLIGATIONS.has(req.body.taxObligationType as string)) {
+                return true;
+            }
+
+            if (!value) {
+                throw new Error('periodFrom must be a valid ISO 8601 date (YYYY-MM-DD)');
+            }
+
+            if (Number.isNaN(Date.parse(value))) {
+                throw new Error('periodFrom must be a valid ISO 8601 date (YYYY-MM-DD)');
+            }
+
+            return true;
+        }),
 
     body('periodTo')
-        .isISO8601()
-        .withMessage('periodTo must be a valid ISO 8601 date (YYYY-MM-DD)')
         .custom((value: string, { req }) => {
-            if (new Date(value) < new Date(req.body.periodFrom as string)) {
+            if (!value && PERIOD_OPTIONAL_OBLIGATIONS.has(req.body.taxObligationType as string)) {
+                return true;
+            }
+
+            if (!value || Number.isNaN(Date.parse(value))) {
+                throw new Error('periodTo must be a valid ISO 8601 date (YYYY-MM-DD)');
+            }
+
+            if (req.body.periodFrom && new Date(value) < new Date(req.body.periodFrom as string)) {
                 throw new Error('periodTo must be on or after periodFrom');
             }
             return true;
@@ -50,18 +107,77 @@ const validateNilReturn = [
     body('taxObligationType')
         .isString()
         .isIn([...TAX_OBLIGATION_TYPES])
-        .withMessage('taxObligationType must be one of the supported nil return obligations'),
+        .withMessage('taxObligationType must be one of the supported filing obligations'),
 
     body('ownsRentalProperty')
-        .isBoolean()
-        .withMessage('ownsRentalProperty must be a boolean'),
+        .custom((value: unknown, { req }) => {
+            if ((value === undefined || value === null || value === '') && RENTAL_ANSWER_OPTIONAL_OBLIGATIONS.has(req.body.taxObligationType as string)) {
+                return true;
+            }
+
+            if (typeof value !== 'boolean') {
+                throw new Error('ownsRentalProperty must be a boolean');
+            }
+
+            return true;
+        }),
+
+    body('rentalIncomeAmount')
+        .custom((value: unknown, { req }) => {
+            if (req.body.taxObligationType !== 'monthly_rental_income' && (value === undefined || value === null || value === '')) {
+                return true;
+            }
+
+            if (req.body.taxObligationType === 'monthly_rental_income' && (value === undefined || value === null || value === '')) {
+                throw new Error('rentalIncomeAmount is required for monthly rental income returns');
+            }
+
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue <= 0) {
+                throw new Error('rentalIncomeAmount must be a positive number');
+            }
+
+            return true;
+        }),
+
+    body('zipFilePath')
+        .custom(async (value: unknown, { req }) => {
+            if (req.body.taxObligationType !== 'turnover_tax' && (value === undefined || value === null || value === '')) {
+                return true;
+            }
+
+            if (req.body.taxObligationType === 'turnover_tax' && (typeof value !== 'string' || !value.trim())) {
+                throw new Error('zipFilePath is required for turnover tax returns');
+            }
+
+            if (typeof value !== 'string' || !value.trim()) {
+                throw new Error('zipFilePath must be a valid file path');
+            }
+
+            const resolvedPath = path.resolve(value.trim());
+            const stats = await fs.stat(resolvedPath).catch(() => null);
+            if (!stats?.isFile()) {
+                throw new Error(`zipFilePath does not exist: ${resolvedPath}`);
+            }
+
+            if (path.extname(resolvedPath).toLowerCase() !== '.zip') {
+                throw new Error('zipFilePath must point to a .zip file');
+            }
+
+            return true;
+        }),
+
+    body('otpCode')
+        .optional({ values: 'falsy' })
+        .isString()
+        .withMessage('otpCode must be a string when provided'),
 ];
 
-// ─── POST /api/tax/file-nil-return ───────────────────────────────────────────
+// ─── POST /api/tax/file-return (+ legacy alias) ─────────────────────────────
 
 router.post(
-    '/file-nil-return',
-    validateNilReturn,
+    ['/file-return', '/file-nil-return'],
+    validateFilingRequest,
     async (
         req: Request<object, FileNilReturnResponse, FileNilReturnRequest>,
         res: Response<FileNilReturnResponse>
@@ -78,8 +194,12 @@ router.post(
             return;
         }
 
-        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty } =
+        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, zipFilePath, otpCode } =
             req.body;
+
+        const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
+            ? getPreviousMonthIsoRange()
+            : { periodFrom: periodFrom ?? '', periodTo: periodTo ?? '' };
 
         try {
             // Encrypt password immediately — plaintext must not leave this scope
@@ -100,15 +220,26 @@ router.post(
                     encryptedPassword: encryptedData,
                     iv,
                     authTag,
-                    periodFrom,
-                    periodTo,
+                    periodFrom: effectivePeriod.periodFrom,
+                    periodTo: effectivePeriod.periodTo,
                     taxObligationType,
                     ownsRentalProperty: Boolean(ownsRentalProperty),
+                    rentalIncomeAmount: typeof rentalIncomeAmount === 'number'
+                        ? rentalIncomeAmount
+                        : rentalIncomeAmount
+                            ? Number(rentalIncomeAmount)
+                            : undefined,
+                    zipFilePath: typeof zipFilePath === 'string' && zipFilePath.trim()
+                        ? path.resolve(zipFilePath.trim())
+                        : undefined,
+                    otpCode: typeof otpCode === 'string' && otpCode.trim()
+                        ? otpCode.trim()
+                        : undefined,
                 },
                 createdAt: new Date().toISOString(),
             };
 
-            await kraFilingQueue.add('file-nil-return', filingJob, { jobId });
+            await kraFilingQueue.add('file-return', filingJob, { jobId });
 
             console.log(`[API] Queued job ${jobId} for KRA PIN ${kraPin}`);
 
@@ -155,6 +286,9 @@ router.get(
             }
 
             const state = await job.getState();
+            const jobLogsResult = await kraFilingQueue.getJobLogs(jobId, 0, 199, true);
+            const stepLogs = jobLogsResult.logs.map(parseFilingStepLog);
+            const lastStep = stepLogs.length > 0 ? stepLogs[stepLogs.length - 1] : null;
 
             res.status(200).json({
                 jobId,
@@ -162,6 +296,10 @@ router.get(
                 progress: job.progress,
                 attemptsMade: job.attemptsMade,
                 failedReason: job.failedReason ?? null,
+                stepLogs,
+                lastStep,
+                credentialUpdate: job.data.credentialUpdate ?? null,
+                result: job.returnvalue ?? null,
                 processedOn: job.processedOn
                     ? new Date(job.processedOn).toISOString()
                     : null,

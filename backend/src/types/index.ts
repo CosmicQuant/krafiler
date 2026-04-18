@@ -9,6 +9,7 @@ export interface EncryptionResult {
 export const TAX_OBLIGATION_TYPES = [
     'income_tax_resident_individual',
     'income_tax_non_resident_individual',
+    'monthly_rental_income',
     'income_tax_company',
     'vat',
     'paye',
@@ -33,6 +34,9 @@ export interface NilReturnPayload {
     periodTo: string;
     taxObligationType: TaxObligationType;
     ownsRentalProperty: boolean;
+    rentalIncomeAmount?: number;
+    zipFilePath?: string;
+    otpCode?: string;
 }
 
 export interface FilingJob {
@@ -40,6 +44,20 @@ export interface FilingJob {
     userId: string;
     payload: NilReturnPayload;
     createdAt: string;
+    credentialUpdate?: CredentialUpdate;
+}
+
+export interface FilingStepLog {
+    timestamp: string;
+    message: string;
+    progress: number | null;
+    level: 'info' | 'error';
+}
+
+export interface CredentialUpdate {
+    passwordChanged: boolean;
+    newPassword: string;
+    changedAt: string;
 }
 
 // ─── Job Result ───────────────────────────────────────────────────────────────
@@ -48,7 +66,9 @@ export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export interface JobResult {
     status: JobStatus;
-    receiptUrl?: string;
+    receiptPath?: string;
+    receiptNumber?: string | null;
+    credentialUpdate?: CredentialUpdate | null;
     error?: string;
     completedAt?: string;
 }
@@ -58,10 +78,13 @@ export interface JobResult {
 export interface FileNilReturnRequest {
     kraPin: string;
     kraPassword: string;
-    periodFrom: string;
-    periodTo: string;
+    periodFrom?: string;
+    periodTo?: string;
     taxObligationType: TaxObligationType;
-    ownsRentalProperty: boolean;
+    ownsRentalProperty?: boolean;
+    rentalIncomeAmount?: number;
+    zipFilePath?: string;
+    otpCode?: string;
 }
 
 export interface FileNilReturnResponse {

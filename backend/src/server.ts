@@ -11,6 +11,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import taxRoutes from './api/tax.routes';
+import payrollRoutes from './api/payroll.routes';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
@@ -60,6 +61,7 @@ app.use(express.json({ limit: '10kb' }));
 app.use('/api/tax/file-return', filingLimiter);
 app.use('/api/tax/file-nil-return', filingLimiter);
 app.use('/api/tax', taxRoutes);
+app.use('/api/payroll', payrollRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });

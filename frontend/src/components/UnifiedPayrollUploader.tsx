@@ -1,13 +1,35 @@
 import React, { useState } from 'react';
 
+type PayrollOptions = {
+    paye: boolean;
+    nssf: boolean;
+    sha: boolean;
+};
+
 export default function UnifiedPayrollUploader() {
     const [file, setFile] = useState<File | null>(null);
     const [status, setStatus] = useState<string>('');
+    const [options, setOptions] = useState<PayrollOptions>({
+        paye: true,
+        nssf: true,
+        sha: true
+    });
+
+    const selectedCount = Object.values(options).filter(Boolean).length;
+
+    const handleToggle = (key: keyof PayrollOptions) => {
+        setOptions((current) => ({ ...current, [key]: !current[key] }));
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!file) {
             setStatus('Please attach the exported CSV!');
+            return;
+        }
+
+        if (selectedCount === 0) {
+            setStatus('Select at least one output to generate.');
             return;
         }
 
@@ -17,10 +39,12 @@ export default function UnifiedPayrollUploader() {
             // Prepare the Multipart payload
             const formData = new FormData();
             formData.append('payrollFile', file);
-            // Config values are now successfully parsed directly from the uploaded Excel template
+            formData.append('generatePaye', String(options.paye));
+            formData.append('generateNssf', String(options.nssf));
+            formData.append('generateSha', String(options.sha));
 
             // Call the API endpoint
-            const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+            const response = await fetch('/api/payroll/generate-unified', {
                 method: 'POST',
                 body: formData,
             });
@@ -59,7 +83,25 @@ export default function UnifiedPayrollUploader() {
                     <input type="file" accept=".csv" onChange={e => setFile(e.target.files?.[0] || null)} style={{ padding: '8px' }} required />
                 </div>
 
-                <button type="submit" style={{ padding: '12px', marginTop: '10px', backgroundColor: '#1E293B', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <label style={{ fontWeight: 'bold' }}>Choose outputs</label>
+                    {[
+                        { key: 'paye' as const, label: 'KRA PAYE ZIP' },
+                        { key: 'nssf' as const, label: 'NSSF workbook' },
+                        { key: 'sha' as const, label: 'SHA workbook' }
+                    ].map((option) => (
+                        <label key={option.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#334155' }}>
+                            <input
+                                type="checkbox"
+                                checked={options[option.key]}
+                                onChange={() => handleToggle(option.key)}
+                            />
+                            <span>{option.label}</span>
+                        </label>
+                    ))}
+                </div>
+
+                <button type="submit" disabled={selectedCount === 0} style={{ padding: '12px', marginTop: '10px', backgroundColor: selectedCount === 0 ? '#94A3B8' : '#1E293B', color: 'white', border: 'none', borderRadius: '4px', cursor: selectedCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     Generate Unified Returns
                 </button>
             </form>

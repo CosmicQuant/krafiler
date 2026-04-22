@@ -146,7 +146,13 @@ export class AxonDataExtractionEngine {
         const sheet = workbook.worksheets[0];
 
         // Apply dropdown validation for the entire Column D (Identity Type)
-        sheet.dataValidations.add('D2:D1048576', {
+        const sheetWithValidations = sheet as ExcelJS.Worksheet & {
+            dataValidations?: {
+                add: (range: string, validation: Record<string, unknown>) => void;
+            };
+        };
+
+        sheetWithValidations.dataValidations?.add('D2:D1048576', {
             type: 'list',
             allowBlank: true,
             showErrorMessage: true,
@@ -358,7 +364,7 @@ export class AxonDataExtractionEngine {
     }
 }
 
-export async function generateComplianceFiles(inputCsvPath: string, fallbackConfig: CompanyConfig) {
+export async function generateComplianceFiles(inputCsvPath: string, fallbackConfig: CompanyConfig, options?: { generatePaye: boolean, generateNssf: boolean, generateSha: boolean }) {
     console.log('--- Starting Axon Data Extraction & Generation Engine ---');
     const outputDir = path.join(path.dirname(inputCsvPath), 'output');
 
@@ -396,9 +402,11 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         const employees = await engine.parseMasterCsv(inputCsvPath);
         console.log(`Parsed ${employees.length} employee records from master CSV.`);
 
-        const shaFilePath = await engine.generateSHAExcel(employees);
-        const nssfFilePath = await engine.generateNSSFExcel(employees);
-        const payeZipPath = await engine.generatePAYEZip(employees);
+        const activeOptions = options || { generatePaye: true, generateNssf: true, generateSha: true };
+
+        const shaFilePath = activeOptions.generateSha ? await engine.generateSHAExcel(employees) : null;
+        const nssfFilePath = activeOptions.generateNssf ? await engine.generateNSSFExcel(employees) : null;
+        const payeZipPath = activeOptions.generatePaye ? await engine.generatePAYEZip(employees) : null;
 
         console.log('--- Compliance Files Generation Complete ---');
         return { shaFilePath, nssfFilePath, payeZipPath };

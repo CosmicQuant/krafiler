@@ -16,6 +16,7 @@
     "dependencies": {
         "@types/sharp": "^0.31.1",
         "adm-zip": "^0.5.17",
+        "archiver": "^7.0.1",
         "bullmq": "^5.7.0",
         "cors": "^2.8.5",
         "csv-parser": "^3.2.0",

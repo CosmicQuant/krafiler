@@ -3,6 +3,7 @@
 !.env.example
 backend/.env
 frontend/.env
+node_modules/
 backend/node_modules/
 backend/dist/
 frontend/node_modules/
@@ -16,6 +17,7 @@ backend/build_output.txt
 backend/kra-portal-screenshot.png
 backend/eng.traineddata
 receipts/
+dump.rdb
 redis/dump.rdb
 redis/*.pdb
 redis/redis.zip

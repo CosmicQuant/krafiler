@@ -1,6 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+    --kw-paper: #f4f5ef;
+    --kw-ink: #0f172a;
+    --kw-red: #dc2626;
+    --kw-green: #15803d;
+}
+
+@layer base {
+    html {
+        scroll-behavior: smooth;
+    }
+
+    body {
+        background:
+            radial-gradient(circle at top left, rgba(220, 38, 38, 0.08), transparent 28%),
+            radial-gradient(circle at top right, rgba(21, 128, 61, 0.08), transparent 22%),
+            var(--kw-paper);
+        color: var(--kw-ink);
+        font-family: 'Manrope', sans-serif;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+        font-family: 'Sora', sans-serif;
+    }
+}
 
 /* Smooth transitions for the toggle */
 @layer utilities {

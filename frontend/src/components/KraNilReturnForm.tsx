@@ -177,7 +177,9 @@ const KraNilReturnForm: React.FC = () => {
             taxObligationType: 'income_tax_resident_individual',
             ownsRentalProperty: false,
             rentalIncomeAmount: undefined,
-            zipFilePath: '',
+            totYear: new Date().getFullYear(),
+            totMonth: new Date().getMonth() === 0 ? 12 : new Date().getMonth(),
+            totTurnover: undefined,
             otpCode: '',
         },
         mode: 'onBlur',
@@ -194,7 +196,7 @@ const KraNilReturnForm: React.FC = () => {
         ? 'Return With Transactions'
         : 'Nil Filing';
     const workflowHint = isTotReturn
-        ? 'Requires the prepared ZIP file path and may require an OTP if KRA requests mobile verification.'
+        ? 'Requires the Period Year, Month and Gross Turnover in order to calculate 1.5% tax.'
         : isMriReturn
             ? 'Requires the rental income amount and uses the previous month period when dates are not supplied.'
             : 'Requires the nil filing period and any nil-return-specific prompts such as the rental property toggle.';
@@ -274,7 +276,9 @@ const KraNilReturnForm: React.FC = () => {
                             : data.periodTo,
                     ownsRentalProperty: isMriReturn || isTotReturn ? false : data.ownsRentalProperty,
                     rentalIncomeAmount: isMriReturn ? data.rentalIncomeAmount : undefined,
-                    zipFilePath: isTotReturn ? data.zipFilePath : undefined,
+                    totYear: isTotReturn ? data.totYear : undefined,
+                    totMonth: isTotReturn ? data.totMonth : undefined,
+                    totTurnover: isTotReturn ? data.totTurnover : undefined,
                     otpCode: isTotReturn ? data.otpCode || undefined : undefined,
                 }),
             });
@@ -489,30 +493,68 @@ const KraNilReturnForm: React.FC = () => {
                     ) : null}
 
                     {isTotReturn ? (
-                        <div>
-                            <label
-                                htmlFor="zipFilePath"
-                                className="block text-sm font-medium text-gray-700 mb-1"
-                            >
-                                ToT ZIP File Path <span className="text-red-500" aria-hidden="true">*</span>
-                            </label>
-                            <input
-                                id="zipFilePath"
-                                type="text"
-                                spellCheck={false}
-                                placeholder="C:\\Users\\ADMIN\\Desktop\\KRAFILER\\returns\\tot-return.zip"
-                                aria-invalid={!!errors.zipFilePath}
-                                className={inputCls(!!errors.zipFilePath)}
-                                {...register('zipFilePath', {
-                                    validate: (value) =>
-                                        !isTotReturn || Boolean(value?.trim()) || 'ToT ZIP file path is required',
-                                    setValueAs: (value: string) => value.trim(),
-                                })}
-                            />
-                            <FieldError message={errors.zipFilePath?.message} />
-                            <p className="mt-1 text-xs text-gray-400">
-                                ToT is a transaction-based filing. Provide the absolute path on the backend machine to the pre-generated ZIP file the worker should upload.
-                            </p>
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label htmlFor="totYear" className="block text-xs text-gray-500 mb-1">
+                                        Filing Year <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="totYear"
+                                        type="number"
+                                        min="2000"
+                                        placeholder="e.g. 2026"
+                                        aria-invalid={!!errors.totYear}
+                                        className={inputCls(!!errors.totYear)}
+                                        {...register('totYear', {
+                                            validate: (val) => !isTotReturn || (typeof val === 'number' && val > 2000) || 'Valid Year required',
+                                            setValueAs: (v: string) => v === '' ? undefined : Number(v),
+                                        })}
+                                    />
+                                    <FieldError message={errors.totYear?.message} />
+                                </div>
+                                <div>
+                                    <label htmlFor="totMonth" className="block text-xs text-gray-500 mb-1">
+                                        Filing Month (1-12) <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        id="totMonth"
+                                        type="number"
+                                        min="1"
+                                        max="12"
+                                        placeholder="e.g. 3"
+                                        aria-invalid={!!errors.totMonth}
+                                        className={inputCls(!!errors.totMonth)}
+                                        {...register('totMonth', {
+                                            validate: (val) => !isTotReturn || (typeof val === 'number' && val >= 1 && val <= 12) || 'Month must be 1-12',
+                                            setValueAs: (v: string) => v === '' ? undefined : Number(v),
+                                        })}
+                                    />
+                                    <FieldError message={errors.totMonth?.message} />
+                                </div>
+                            </div>
+                            <div>
+                                <label htmlFor="totTurnover" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Gross Turnover Amount <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    id="totTurnover"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="Enter gross turnover"
+                                    aria-invalid={!!errors.totTurnover}
+                                    className={inputCls(!!errors.totTurnover)}
+                                    {...register('totTurnover', {
+                                        validate: (val) => !isTotReturn || (typeof val === 'number' && val >= 0) || 'Turnover amount required',
+                                        setValueAs: (v: string) => v === '' ? undefined : Number(v),
+                                    })}
+                                />
+                                <FieldError message={errors.totTurnover?.message} />
+                                <p className="mt-1 text-xs text-gray-400">
+                                    The worker generates the formatted ZIP and calculates the 1.5% tax dynamically based on this dataset.
+                                </p>
+                            </div>
                         </div>
                     ) : null}
 

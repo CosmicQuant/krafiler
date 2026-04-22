@@ -27,6 +27,7 @@ import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
+import { packageToTZip } from '../scripts/kra-tot-generator';
 
 // Apply stealth plugin once at module load
 chromium.use(StealthPlugin());
@@ -37,9 +38,11 @@ const TMP_DIR = path.join(
 );
 
 const KRA_PORTAL_URL = 'https://itax.kra.go.ke/KRA-Portal/';
+const KRA_DEBUG_ARTIFACTS = process.env.KRA_DEBUG_ARTIFACTS === 'true';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
+const PLAYWRIGHT_SLOW_MO = Math.max(0, Number.parseInt(process.env.PLAYWRIGHT_SLOW_MO ?? '0', 10) || 0);
 
 const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     income_tax_resident_individual: [
@@ -94,7 +97,14 @@ const LOGIN_FAILURE_PATTERNS = [
 const PASSWORD_EXPIRED_PATTERNS = [
     /your\s+password\s+has\s+expired/i,
     /change\s+password/i,
+    /first\s*time\s*login/i,
 ];
+
+const FAVORITE_COLOR_SECURITY_QUESTION_PATTERNS = [
+    /^what\s+is\s+your\s+favorite\s+color\??$/i,
+];
+
+const FAVORITE_COLOR_SECURITY_ANSWER = 'Blue';
 
 const TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS = [
     /invalid\s+file/i,
@@ -110,28 +120,13 @@ const TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS = [
  * Waits for a random duration to simulate human interaction cadence without
  * making ordinary form entry feel artificially slow.
  */
-function humanDelay(minMs = 500, maxMs = 1_400): Promise<void> {
+function humanDelay(minMs = 150, maxMs = 450): Promise<void> {
     const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function navigationDelay(): Promise<void> {
-    return humanDelay(1_500, 3_000);
-}
-
-async function ensureZipFileExists(zipFilePath: string): Promise<string> {
-    const resolvedPath = path.resolve(zipFilePath);
-    const stats = await fs.stat(resolvedPath).catch(() => null);
-
-    if (!stats || !stats.isFile()) {
-        throw new Error(`Turnover Tax ZIP file not found: ${resolvedPath}`);
-    }
-
-    if (path.extname(resolvedPath).toLowerCase() !== '.zip') {
-        throw new Error(`Turnover Tax ZIP file must end with .zip: ${resolvedPath}`);
-    }
-
-    return resolvedPath;
+    return humanDelay(400, 900);
 }
 
 async function getOtpFromSmsService(providedOtpCode?: string): Promise<string> {
@@ -483,6 +478,107 @@ async function waitForMatchingPortalMessage(
     return null;
 }
 
+async function detectAuthenticatedPortalState(
+    page: any,
+    timeout = 30_000
+): Promise<'dashboard' | 'login' | 'mobile-verification' | 'password-change' | null> {
+    const selector = await waitForAnySelector(page, [
+        '#homePageLink',
+        'a:has-text("Logout")',
+        'a:has-text("Returns")',
+        '#logid',
+        '#loginButton',
+        'input[name="captcahText"]',
+        'text=Mobile Number Verification',
+        'button:has-text("Send Verification Code")',
+        'text=YOUR PASSWORD HAS EXPIRED!',
+        'text=Change Password',
+        'text=FIRST TIME LOGIN!',
+        'text=Security Question',
+    ], timeout);
+
+    if (!selector) {
+        return null;
+    }
+
+    if (/Mobile Number Verification|Send Verification Code/i.test(selector)) {
+        return 'mobile-verification';
+    }
+
+    if (PASSWORD_EXPIRED_PATTERNS.some((pattern) => pattern.test(selector))) {
+        return 'password-change';
+    }
+
+    if (/#logid|#loginButton|captcahText/.test(selector)) {
+        return 'login';
+    }
+
+    if (/#homePageLink|Logout|Returns/.test(selector)) {
+        return 'dashboard';
+    }
+
+    return null;
+}
+
+async function fillSecurityAnswerFields(page: any, answer: string): Promise<boolean> {
+    const findSecurityAnswerInput = async (labelPattern: RegExp) => {
+        const candidates = await page.locator('input:visible').evaluateAll((elements: HTMLInputElement[]) => {
+            const isVisible = (element: HTMLElement) => {
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+            };
+
+            return elements
+                .map((input, index) => {
+                    const type = (input.getAttribute('type') ?? '').toLowerCase();
+                    const rowText = input.closest('tr, td, div, label')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+                    const label = input.id
+                        ? document.querySelector(`label[for="${input.id}"]`)?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+                        : '';
+
+                    return {
+                        index,
+                        type,
+                        rowText,
+                        label,
+                        disabled: input.disabled,
+                        readOnly: input.readOnly,
+                        visible: isVisible(input),
+                    };
+                })
+                .filter((candidate) => candidate.visible)
+                .filter((candidate) => !candidate.disabled && !candidate.readOnly)
+                .filter((candidate) => !['hidden', 'password', 'checkbox', 'radio', 'submit', 'button'].includes(candidate.type));
+        });
+
+        const match = candidates.find((candidate: { index: number; rowText: string; label: string }) =>
+            labelPattern.test(`${candidate.rowText} ${candidate.label}`)
+        );
+
+        return match ? page.locator('input:visible').nth(match.index) : null;
+    };
+
+    const securityAnswerField = await findSecurityAnswerInput(/(^|\b)security answer\b/i);
+    const confirmSecurityAnswerField = await findSecurityAnswerInput(/confirm security answer/i);
+
+    if (securityAnswerField && confirmSecurityAnswerField) {
+        await securityAnswerField.fill(answer);
+        await confirmSecurityAnswerField.fill(answer);
+        return true;
+    }
+
+    const fallbackTextInputs = page.locator('input:not([type]):visible, input[type="text"]:visible, input[type="search"]:visible, input[type="email"]:visible');
+    const fallbackCount = await fallbackTextInputs.count();
+    if (fallbackCount >= 2) {
+        await fallbackTextInputs.nth(0).fill(answer);
+        await fallbackTextInputs.nth(1).fill(answer);
+        return true;
+    }
+
+    return false;
+}
+
 function formatPortalDate(isoDate: string): string {
     const [year, month, day] = isoDate.split('-');
     if (!year || !month || !day) {
@@ -718,7 +814,7 @@ async function performKraLogin(
         console.log(`[Worker][${jobId}] KRA dialog: "${checkPinDialogMessage}"`);
     }
 
-    const passwordVisible = await page.waitForSelector('input[type="password"]:visible', { timeout: 30_000 })
+    const passwordVisible = await page.waitForSelector('input[type="password"]:visible', { timeout: 18_000 })
         .then(() => true)
         .catch(() => false);
 
@@ -815,6 +911,8 @@ async function performKraLogin(
         'a:has-text("Returns")',
         'text=YOUR PASSWORD HAS EXPIRED!',
         'text=Change Password',
+        'text=FIRST TIME LOGIN!',
+        'text=Security Question',
         'text=Mobile Number Verification',
         'button:has-text("Send Verification Code")',
     ], 30_000);
@@ -832,8 +930,8 @@ async function performKraLogin(
         await waitForPortalReadyWithReload(page, job, {
             description: 'Post-login dashboard',
             selectors: ['#homePageLink', 'a:has-text("Logout")', 'a:has-text("Returns")'],
-            timeout: 30_000,
-            reloadAttempts: 2,
+            timeout: 20_000,
+            reloadAttempts: 1,
         });
     }
 
@@ -845,17 +943,17 @@ async function handleExpiredPasswordReset(
     job: Job<FilingJob>,
     currentPassword: string
 ): Promise<CredentialUpdate> {
-    await setJobStep(job, 42, 'KRA requires a password change before filing can continue');
+    await setJobStep(job, 42, 'KRA requires a credential update before filing can continue');
 
-    const expiredFormVisible = await waitForAnySelector(page, ['text=YOUR PASSWORD HAS EXPIRED!', 'text=Change Password'], 15_000);
+    const expiredFormVisible = await waitForAnySelector(page, ['text=YOUR PASSWORD HAS EXPIRED!', 'text=Change Password', 'text=FIRST TIME LOGIN!', 'text=Security Question'], 15_000);
     if (!expiredFormVisible) {
-        throw new Error('Expected the KRA password-expired page, but it did not appear');
+        throw new Error('Expected the KRA credential update page, but it did not appear');
     }
 
     const visiblePasswordFields = page.locator('input[type="password"]:visible');
     const visiblePasswordFieldCount = await visiblePasswordFields.count();
     if (visiblePasswordFieldCount < 3) {
-        throw new Error('KRA showed the password-expired page, but the change-password form fields were not all visible');
+        throw new Error('KRA showed the credential update page, but the password fields were not all visible');
     }
 
     const generatedPassword = generateKraCompliantPassword();
@@ -865,9 +963,25 @@ async function handleExpiredPasswordReset(
     await visiblePasswordFields.nth(1).fill(generatedPassword);
     await visiblePasswordFields.nth(2).fill(generatedPassword);
 
-    const guidelineCheckbox = page.locator('input[type="checkbox"]:visible').first();
-    if (await guidelineCheckbox.count() > 0) {
-        await guidelineCheckbox.check();
+    const securityQuestionSelect = page.locator('select:visible').filter({ has: page.locator('option') }).first();
+    if (await securityQuestionSelect.count() > 0) {
+        await setJobStep(job, 45, 'Completing KRA security question setup');
+        await selectOptionByTextPatterns(securityQuestionSelect, FAVORITE_COLOR_SECURITY_QUESTION_PATTERNS);
+
+        const answersFilled = await fillSecurityAnswerFields(page, FAVORITE_COLOR_SECURITY_ANSWER);
+        if (!answersFilled) {
+            throw new Error('KRA requested security answers, but the answer fields were not visible');
+        }
+    }
+
+    const guidelineCheckboxes = page.locator('input[type="checkbox"]:visible');
+    const guidelineCheckboxCount = await guidelineCheckboxes.count();
+    for (let index = 0; index < guidelineCheckboxCount; index += 1) {
+        const checkbox = guidelineCheckboxes.nth(index);
+        const isChecked = await checkbox.isChecked().catch(() => false);
+        if (!isChecked) {
+            await checkbox.check();
+        }
     }
 
     await humanDelay(250, 600);
@@ -880,14 +994,10 @@ async function handleExpiredPasswordReset(
         throw new Error(`KRA rejected the password change: ${passwordChangeDialogMessage}`);
     }
 
-    const expiredPageDismissed = await page.waitForFunction(() => {
-        const bodyText = document.body?.innerText ?? '';
-        return !/your password has expired/i.test(bodyText);
-    }, { timeout: 30_000 }).then(() => true).catch(() => false);
-
-    if (!expiredPageDismissed) {
+    const postResetState = await detectAuthenticatedPortalState(page, 15_000);
+    if (postResetState === 'password-change') {
         const portalMessage = await page.$eval('#errorDiv, .error-message, [id*="error"]', (el: any) => el.textContent?.trim()).catch(() => null);
-        throw new Error(`Password change did not complete: ${portalMessage ?? 'KRA kept the password change screen open'}`);
+        throw new Error(`Password change did not complete: ${portalMessage ?? 'KRA kept the credential update screen open'}`);
     }
 
     const credentialUpdate: CredentialUpdate = {
@@ -923,7 +1033,7 @@ async function handleMobileVerification(
         'input[placeholder*="verification code" i]',
         'input[placeholder*="otp" i]',
         'input[maxlength="6"]',
-    ], 30_000);
+    ], 20_000);
 
     if (!otpFieldSelector) {
         throw new Error('KRA requested mobile verification, but the OTP input field did not appear');
@@ -942,17 +1052,34 @@ async function handleMobileVerification(
     await waitForPortalReadyWithReload(page, job, {
         description: 'Post-OTP dashboard',
         selectors: ['#homePageLink', 'a:has-text("Logout")', 'a:has-text("Returns")'],
-        timeout: 30_000,
+        timeout: 20_000,
         reloadAttempts: 1,
     });
 }
 
 async function uploadTurnoverTaxZip(
     page: any,
-    job: Job<FilingJob>,
-    zipFilePath: string
+    job: Job<FilingJob>
 ): Promise<void> {
-    const resolvedZipPath = await ensureZipFileExists(zipFilePath);
+    const payload = job.data.payload;
+    if (!payload.totYear || !payload.totMonth || payload.totTurnover === undefined) {
+        throw new Error('Turnover Tax filing requires totYear, totMonth, and totTurnover in the queued job payload');
+    }
+
+    const outputDir = path.join(TMP_DIR, 'generated-zips');
+    const inputSettings = {
+        taxPayerPin: payload.kraPin,
+        returnPeriod: { year: payload.totYear, month: payload.totMonth },
+        turnover: payload.totTurnover,
+        returnType: 'Original' as const
+    };
+
+    await appendJobLog(job, `Generating ToT ZIP payload for period ${payload.totMonth}/${payload.totYear} with turnover ${payload.totTurnover}`, {
+        progress: 68,
+    });
+
+    const resolvedZipPath = await packageToTZip(inputSettings, outputDir);
+
     const fileInput = page.locator('input[type="file"]').first();
     await fileInput.waitFor({ timeout: 20_000 });
     await fileInput.setInputFiles(resolvedZipPath);
@@ -987,7 +1114,6 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         taxObligationType,
         ownsRentalProperty,
         rentalIncomeAmount,
-        zipFilePath,
         otpCode,
     } = payload;
     const isMriReturn = taxObligationType === 'monthly_rental_income';
@@ -1012,13 +1138,13 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
         browser = await chromium.launch({
             headless: isHeadless,
-            slowMo: isHeadless ? 0 : 200, // keep headed mode visible without doubling each action delay
+            slowMo: isHeadless ? 0 : PLAYWRIGHT_SLOW_MO,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-gpu',
                 '--start-maximized',
+                ...(isHeadless ? ['--disable-gpu'] : []),
             ],
         });
 
@@ -1026,7 +1152,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
                 '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            viewport: { width: 1280, height: 800 },
+            viewport: null,
             acceptDownloads: true,
             locale: 'en-KE',
             timezoneId: 'Africa/Nairobi',
@@ -1044,26 +1170,28 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await waitForPortalReadyWithReload(page, job, {
             description: 'KRA login page',
             selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],
-            timeout: 20_000,
+            timeout: 12_000,
             reloadAttempts: 1,
         });
 
         // Dump real element IDs/names so we can verify selectors
-        const loginElements = await page.$$eval(
-            'input, button, select, a',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (els: any[]) => els.map((el: any) => ({
-                tag: el.tagName,
-                id: el.id ?? '',
-                name: el.name ?? '',
-                type: el.type ?? '',
-                value: (el.value ?? '').slice(0, 30),
-                text: (el.textContent ?? '').trim().slice(0, 40),
-                onclick: (el.getAttribute('onclick') ?? '').slice(0, 60),
-                href: (el.getAttribute('href') ?? '').slice(0, 80),
-            }))
-        );
-        console.log(`[Worker][${jobId}] Login page elements:`, JSON.stringify(loginElements, null, 2));
+        if (KRA_DEBUG_ARTIFACTS) {
+            const loginElements = await page.$$eval(
+                'input, button, select, a',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (els: any[]) => els.map((el: any) => ({
+                    tag: el.tagName,
+                    id: el.id ?? '',
+                    name: el.name ?? '',
+                    type: el.type ?? '',
+                    value: (el.value ?? '').slice(0, 30),
+                    text: (el.textContent ?? '').trim().slice(0, 40),
+                    onclick: (el.getAttribute('onclick') ?? '').slice(0, 60),
+                    href: (el.getAttribute('href') ?? '').slice(0, 80),
+                }))
+            );
+            console.log(`[Worker][${jobId}] Login page elements:`, JSON.stringify(loginElements, null, 2));
+        }
 
         await navigationDelay();
 
@@ -1083,32 +1211,39 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             credentialUpdate = await handleExpiredPasswordReset(page, job, activePassword);
             activePassword = credentialUpdate.newPassword;
 
-            await setJobStep(job, 48, 'Returning to the main KRA portal after password reset');
-            await page.goto(KRA_PORTAL_URL, {
-                waitUntil: 'domcontentloaded',
-                timeout: 90_000,
-            });
-            await waitForPortalReadyWithReload(page, job, {
-                description: 'KRA login page after password reset',
-                selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],
-                timeout: 20_000,
-                reloadAttempts: 1,
-            });
+            const postResetState = await detectAuthenticatedPortalState(page, 20_000);
+            if (postResetState === 'mobile-verification') {
+                await handleMobileVerification(page, job, otpCode);
+            } else if (postResetState !== 'dashboard') {
+                await setJobStep(job, 48, 'KRA returned to login after the password reset; logging in with the generated password');
+                await page.goto(KRA_PORTAL_URL, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 90_000,
+                });
+                await waitForPortalReadyWithReload(page, job, {
+                    description: 'KRA login page after password reset',
+                    selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],
+                    timeout: 12_000,
+                    reloadAttempts: 1,
+                });
 
-            const relogin = await performKraLogin(page, job, kraPin, activePassword, {
-                pinProgress: 49,
-                pinMessage: 'Re-entering KRA PIN after password reset',
-                passwordProgress: 49,
-                passwordMessage: 'Entering the generated replacement password',
-                captchaProgress: 49,
-                captchaMessage: 'Solving KRA captcha for the second login attempt',
-                submitProgress: 49,
-                submitMessage: 'Submitting KRA login with the updated password',
-                otpCode,
-            });
+                const relogin = await performKraLogin(page, job, kraPin, activePassword, {
+                    pinProgress: 49,
+                    pinMessage: 'Re-entering KRA PIN after password reset',
+                    passwordProgress: 49,
+                    passwordMessage: 'Entering the generated replacement password',
+                    captchaProgress: 49,
+                    captchaMessage: 'Solving KRA captcha for the second login attempt',
+                    submitProgress: 49,
+                    submitMessage: 'Submitting KRA login with the updated password',
+                    otpCode,
+                });
 
-            if (relogin.passwordExpired) {
-                throw new Error('KRA still requested another password change after the automated reset');
+                if (relogin.passwordExpired) {
+                    throw new Error('KRA still requested another password change after the automated reset');
+                }
+            } else {
+                await appendJobLog(job, 'KRA kept the session logged in after the password reset, continuing without a second login.', { progress: 49 });
             }
         }
 
@@ -1118,25 +1253,27 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await setJobStep(job, 50, isTotReturn ? 'Opening the KRA ToT return form' : isMriReturn ? 'Opening the KRA MRI return form' : 'Opening the KRA nil return form');
 
         // Take a screenshot and dump the nav menu so we can discover the real selectors
-        const postLoginScreenshot = path.join(TMP_DIR, `post-login-${jobId}.png`);
-        await page.screenshot({ path: postLoginScreenshot, fullPage: false });
-        console.log(`[Worker][${jobId}] Post-login screenshot: ${postLoginScreenshot}`);
+        if (KRA_DEBUG_ARTIFACTS) {
+            const postLoginScreenshot = path.join(TMP_DIR, `post-login-${jobId}.png`);
+            await page.screenshot({ path: postLoginScreenshot, fullPage: true });
+            console.log(`[Worker][${jobId}] Post-login screenshot: ${postLoginScreenshot}`);
 
-        const navElements = await page.$$eval(
-            'a, li, td, th, span',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (els: any[]) => els
-                .map((el: any) => ({
-                    tag: el.tagName,
-                    id: el.id ?? '',
-                    text: (el.textContent ?? '').trim().slice(0, 50),
-                    href: (el.getAttribute('href') ?? '').slice(0, 80),
-                    onclick: (el.getAttribute('onclick') ?? '').slice(0, 80),
-                }))
-                .filter((el: any) => el.text.length > 0)
-                .slice(0, 60)
-        );
-        console.log(`[Worker][${jobId}] Post-login nav elements:`, JSON.stringify(navElements, null, 2));
+            const navElements = await page.$$eval(
+                'a, li, td, th, span',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (els: any[]) => els
+                    .map((el: any) => ({
+                        tag: el.tagName,
+                        id: el.id ?? '',
+                        text: (el.textContent ?? '').trim().slice(0, 50),
+                        href: (el.getAttribute('href') ?? '').slice(0, 80),
+                        onclick: (el.getAttribute('onclick') ?? '').slice(0, 80),
+                    }))
+                    .filter((el: any) => el.text.length > 0)
+                    .slice(0, 60)
+            );
+            console.log(`[Worker][${jobId}] Post-login nav elements:`, JSON.stringify(navElements, null, 2));
+        }
 
         // Try to find and click the Returns menu — KRA uses various selectors
         // Try: text match, href match, id match
@@ -1162,7 +1299,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await waitForPortalReadyWithReload(page, job, {
             description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : 'Nil return obligation page',
             selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select'],
-            timeout: 20_000,
+            timeout: 15_000,
             reloadAttempts: 1,
         });
 
@@ -1171,19 +1308,21 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         // ── Step 9: Select return type and tax obligation ────────────────────────
         await setJobStep(job, 60, isTotReturn ? 'Selecting ToT return type and tax obligation' : isMriReturn ? 'Selecting MRI return type and tax obligation' : 'Selecting nil return type and tax obligation');
 
-        const selectMetadata = await page.$$eval(
-            'select',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (els: any[]) => els.map((el: any) => ({
-                id: el.id ?? '',
-                name: el.name ?? '',
-                options: Array.from(el.options).map((option: any) => ({
-                    value: option.value ?? '',
-                    text: (option.textContent ?? '').trim(),
-                })),
-            }))
-        );
-        console.log(`[Worker][${jobId}] Return select metadata:`, JSON.stringify(selectMetadata, null, 2));
+        if (KRA_DEBUG_ARTIFACTS) {
+            const selectMetadata = await page.$$eval(
+                'select',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (els: any[]) => els.map((el: any) => ({
+                    id: el.id ?? '',
+                    name: el.name ?? '',
+                    options: Array.from(el.options).map((option: any) => ({
+                        value: option.value ?? '',
+                        text: (option.textContent ?? '').trim(),
+                    })),
+                }))
+            );
+            console.log(`[Worker][${jobId}] Return select metadata:`, JSON.stringify(selectMetadata, null, 2));
+        }
 
         const typeSelect = page.locator('tr:has-text("Type") select').first();
         await typeSelect.waitFor({ timeout: 10_000 });
@@ -1237,11 +1376,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await setJobStep(job, 70, isTotReturn ? 'Uploading the ToT ZIP file and accepting the declaration' : isMriReturn ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
 
         if (isTotReturn) {
-            if (!zipFilePath) {
-                throw new Error('Turnover Tax filing requires a zipFilePath in the queued job payload');
-            }
-
-            await uploadTurnoverTaxZip(page, job, zipFilePath);
+            await uploadTurnoverTaxZip(page, job);
         } else {
 
             // Use precise selectors — broad patterns like input[name*="to" i] match
@@ -1352,7 +1487,9 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 className: el.className ?? '',
             })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
         );
-        console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+        if (KRA_DEBUG_ARTIFACTS) {
+            console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+        }
 
         // Find the download link by its onclick/href attribute (the actual handler KRA uses)
         const downloadMeta = receiptPageLinks.find(
@@ -1446,7 +1583,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 const failScreenshot = path.join(TMP_DIR, `failure-${jobId}-${Date.now()}.png`);
                 const pages = browser.contexts().flatMap((context) => context.pages());
                 if (pages.length > 0) {
-                    await pages[0].screenshot({ path: failScreenshot });
+                    await pages[0].screenshot({ path: failScreenshot, fullPage: true });
                     console.log(`[Worker] Failure screenshot: ${failScreenshot}`);
                 }
             } catch (_) {

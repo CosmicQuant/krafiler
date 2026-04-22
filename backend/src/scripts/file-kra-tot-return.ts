@@ -5,6 +5,7 @@ import { chromium } from 'playwright-extra';
 import type { BrowserContext, Dialog, Download, Locator, Page } from 'playwright';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { storeReceiptLocally } from '../utils/storage';
+import { packageToTZip, ToTReturnInput } from './kra-tot-generator';
 
 chromium.use(StealthPlugin());
 
@@ -47,7 +48,10 @@ type SelectOption = {
 type TotFilingConfig = {
     kraPin: string;
     kraPassword: string;
-    zipFilePath: string;
+    zipFilePath?: string;
+    year?: number;
+    month?: number;
+    turnover?: number;
     otpCode?: string;
     headless: boolean;
     slowMo: number;
@@ -65,6 +69,10 @@ function getConfig(): TotFilingConfig {
     const kraPin = process.env.KRA_PIN?.trim() ?? '';
     const kraPassword = process.env.KRA_PASSWORD?.trim() ?? '';
     const zipFilePath = process.env.TOT_ZIP_PATH?.trim() ?? '';
+    const yearRaw = process.env.TOT_YEAR?.trim() ?? '';
+    const monthRaw = process.env.TOT_MONTH?.trim() ?? '';
+    const turnoverRaw = process.env.TOT_TURNOVER?.trim() ?? '';
+
     const headlessOverride = process.env.PLAYWRIGHT_HEADLESS;
     const headless = typeof headlessOverride === 'string'
         ? headlessOverride !== 'false'
@@ -78,14 +86,17 @@ function getConfig(): TotFilingConfig {
         throw new Error('KRA_PASSWORD is required');
     }
 
-    if (!zipFilePath) {
-        throw new Error('TOT_ZIP_PATH is required and must point to the pre-generated ZIP file');
+    if (!zipFilePath && (!yearRaw || !monthRaw || !turnoverRaw)) {
+        throw new Error('You must provide either TOT_ZIP_PATH or TOT_YEAR, TOT_MONTH, and TOT_TURNOVER');
     }
 
     return {
         kraPin,
         kraPassword,
-        zipFilePath,
+        zipFilePath: zipFilePath || undefined,
+        year: yearRaw ? parseInt(yearRaw, 10) : undefined,
+        month: monthRaw ? parseInt(monthRaw, 10) : undefined,
+        turnover: turnoverRaw ? parseFloat(turnoverRaw) : undefined,
         otpCode: process.env.KRA_OTP_CODE?.trim() || undefined,
         headless,
         slowMo: headless ? 0 : 200,
@@ -647,7 +658,24 @@ async function captureFailureScreenshot(page: Page | null, runId: string): Promi
 
 async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFilingResult> {
     const runId = createRunId();
-    const zipFilePath = await ensureZipFile(config.zipFilePath);
+    let zipFilePath = '';
+
+    if (config.zipFilePath) {
+        zipFilePath = await ensureZipFile(config.zipFilePath);
+    } else if (config.year && config.month && config.turnover !== undefined) {
+        const outputDir = path.join(TMP_DIR, 'generated-zips');
+        const inputSettings: ToTReturnInput = {
+            taxPayerPin: config.kraPin,
+            returnPeriod: { year: config.year, month: config.month },
+            turnover: config.turnover,
+            returnType: 'Original'
+        };
+        zipFilePath = await packageToTZip(inputSettings, outputDir);
+        console.log(`[TOT] Generated ZIP file for upload: ${zipFilePath}`);
+    } else {
+        throw new Error('No valid ZIP path or parameter configurations found.');
+    }
+
     const submissionDialogMessages: string[] = [];
     let browserPage: Page | null = null;
 

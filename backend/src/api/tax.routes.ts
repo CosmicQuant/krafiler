@@ -140,30 +140,26 @@ const validateFilingRequest = [
             return true;
         }),
 
-    body('zipFilePath')
-        .custom(async (value: unknown, { req }) => {
-            if (req.body.taxObligationType !== 'turnover_tax' && (value === undefined || value === null || value === '')) {
-                return true;
-            }
+    body('totYear')
+        .custom((value: unknown, { req }) => {
+            if (req.body.taxObligationType !== 'turnover_tax') return true;
+            if (!value || typeof value !== 'number') throw new Error('TOT Year is required and must be a number');
+            return true;
+        }),
 
-            if (req.body.taxObligationType === 'turnover_tax' && (typeof value !== 'string' || !value.trim())) {
-                throw new Error('zipFilePath is required for turnover tax returns');
-            }
+    body('totMonth')
+        .custom((value: unknown, { req }) => {
+            if (req.body.taxObligationType !== 'turnover_tax') return true;
+            if (!value || typeof value !== 'number' || value < 1 || value > 12) throw new Error('TOT Month must be between 1 and 12');
+            return true;
+        }),
 
-            if (typeof value !== 'string' || !value.trim()) {
-                throw new Error('zipFilePath must be a valid file path');
-            }
-
-            const resolvedPath = path.resolve(value.trim());
-            const stats = await fs.stat(resolvedPath).catch(() => null);
-            if (!stats?.isFile()) {
-                throw new Error(`zipFilePath does not exist: ${resolvedPath}`);
-            }
-
-            if (path.extname(resolvedPath).toLowerCase() !== '.zip') {
-                throw new Error('zipFilePath must point to a .zip file');
-            }
-
+    body('totTurnover')
+        .custom((value: unknown, { req }) => {
+            if (req.body.taxObligationType !== 'turnover_tax') return true;
+            if (value === undefined || value === null || value === '') throw new Error('TOT Turnover Amount is required');
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) throw new Error('TOT Turnover must be a valid positive number');
             return true;
         }),
 
@@ -194,7 +190,7 @@ router.post(
             return;
         }
 
-        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, zipFilePath, otpCode } =
+        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode } =
             req.body;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -229,9 +225,9 @@ router.post(
                         : rentalIncomeAmount
                             ? Number(rentalIncomeAmount)
                             : undefined,
-                    zipFilePath: typeof zipFilePath === 'string' && zipFilePath.trim()
-                        ? path.resolve(zipFilePath.trim())
-                        : undefined,
+                    totYear: typeof totYear === 'number' ? totYear : undefined,
+                    totMonth: typeof totMonth === 'number' ? totMonth : undefined,
+                    totTurnover: typeof totTurnover === 'number' ? totTurnover : undefined,
                     otpCode: typeof otpCode === 'string' && otpCode.trim()
                         ? otpCode.trim()
                         : undefined,

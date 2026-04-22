@@ -40,7 +40,7 @@ export const TAX_OBLIGATION_OPTIONS = [
     {
         value: 'turnover_tax',
         label: 'Turnover Tax (TOT)',
-        description: 'Transaction-based turnover tax filing that requires a prepared ZIP upload.',
+        description: 'Transaction-based turnover tax filing that calculates 1.5% tax directly from your Gross Turnover input.',
         filingMode: 'transactional',
     },
 ] as const;
@@ -56,7 +56,9 @@ export interface FilingFormData {
     taxObligationType: TaxObligationType;
     ownsRentalProperty: boolean;
     rentalIncomeAmount?: number;
-    zipFilePath?: string;
+    totYear?: number;
+    totMonth?: number;
+    totTurnover?: number;
     otpCode?: string;
 }
 

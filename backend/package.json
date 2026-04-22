@@ -8,12 +8,14 @@
         "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
         "worker": "ts-node-dev --respawn --transpile-only src/workers/kraFilingWorker.ts",
         "tot": "ts-node-dev --respawn --transpile-only src/scripts/file-kra-tot-return.ts",
+        "generate:tot": "ts-node src/scripts/kra-tot-generator.ts",
         "start": "node dist/server.js",
         "start:worker": "node dist/workers/kraFilingWorker.js",
         "start:tot": "node dist/scripts/file-kra-tot-return.js"
     },
     "dependencies": {
         "@types/sharp": "^0.31.1",
+        "adm-zip": "^0.5.17",
         "bullmq": "^5.7.0",
         "cors": "^2.8.5",
         "dotenv": "^16.4.5",
@@ -30,6 +32,7 @@
         "uuid": "^9.0.1"
     },
     "devDependencies": {
+        "@types/adm-zip": "^0.5.8",
         "@types/cors": "^2.8.17",
         "@types/express": "^4.17.21",
         "@types/node": "^20.12.7",

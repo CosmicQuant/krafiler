@@ -7,6 +7,7 @@ import {
     FilingStepLog,
     FilingStatusResponse,
     TAX_OBLIGATION_OPTIONS,
+    TaxObligationType,
 } from '../types';
 
 const NIL_FILING_OPTIONS = TAX_OBLIGATION_OPTIONS.filter((option) => option.filingMode === 'nil');
@@ -148,6 +149,22 @@ function getPreviousMonthRange(referenceDate = new Date()): { periodFrom: string
     };
 }
 
+function getDefaultFormValues(taxObligationType: TaxObligationType): FilingFormData {
+    return {
+        kraPin: '',
+        kraPassword: '',
+        periodFrom: '',
+        periodTo: '',
+        taxObligationType,
+        ownsRentalProperty: false,
+        rentalIncomeAmount: undefined,
+        totYear: new Date().getFullYear(),
+        totMonth: new Date().getMonth() === 0 ? 12 : new Date().getMonth(),
+        totTurnover: undefined,
+        otpCode: '',
+    };
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 /**
@@ -156,7 +173,13 @@ function getPreviousMonthRange(referenceDate = new Date()): { periodFrom: string
  * Collects KRA iTax credentials and filing metadata, POSTs them to the
  * filing endpoint, and then tracks the queued worker execution.
  */
-const KraNilReturnForm: React.FC = () => {
+interface KraNilReturnFormProps {
+    initialTaxObligationType?: TaxObligationType;
+}
+
+const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
+    initialTaxObligationType = 'income_tax_resident_individual',
+}) => {
     const { toasts, addToast } = useToasts();
     const [activeJobId, setActiveJobId] = useState<string | null>(null);
     const [jobStatus, setJobStatus] = useState<FilingStatusResponse | null>(null);
@@ -167,21 +190,10 @@ const KraNilReturnForm: React.FC = () => {
         control,
         watch,
         reset,
+        setValue,
         formState: { errors, isSubmitting },
     } = useForm<FilingFormData>({
-        defaultValues: {
-            kraPin: '',
-            kraPassword: '',
-            periodFrom: '',
-            periodTo: '',
-            taxObligationType: 'income_tax_resident_individual',
-            ownsRentalProperty: false,
-            rentalIncomeAmount: undefined,
-            totYear: new Date().getFullYear(),
-            totMonth: new Date().getMonth() === 0 ? 12 : new Date().getMonth(),
-            totTurnover: undefined,
-            otpCode: '',
-        },
+        defaultValues: getDefaultFormValues(initialTaxObligationType),
         mode: 'onBlur',
     });
 
@@ -200,6 +212,12 @@ const KraNilReturnForm: React.FC = () => {
         : isMriReturn
             ? 'Requires the rental income amount and uses the previous month period when dates are not supplied.'
             : 'Requires the nil filing period and any nil-return-specific prompts such as the rental property toggle.';
+
+    useEffect(() => {
+        setValue('taxObligationType', initialTaxObligationType);
+        setActiveJobId(null);
+        setJobStatus(null);
+    }, [initialTaxObligationType, setValue]);
 
     useEffect(() => {
         if (!activeJobId) {
@@ -301,7 +319,7 @@ const KraNilReturnForm: React.FC = () => {
                     processedOn: null,
                     finishedOn: null,
                 } : null);
-                reset();
+                reset(getDefaultFormValues(initialTaxObligationType));
             } else {
                 addToast(
                     result.message ?? 'Filing failed. Please try again.',

@@ -2,9 +2,16 @@ import { useState } from 'react';
 import KraNilReturnForm from './components/KraNilReturnForm';
 import UnifiedPayrollUploader from './components/UnifiedPayrollUploader';
 import LandingPage from './components/LandingPage';
+import type { TaxObligationType } from './types';
 
 function App() {
     const [activeTab, setActiveTab] = useState<'LANDING' | 'KRA' | 'PAYROLL'>('LANDING');
+    const [selectedKraObligation, setSelectedKraObligation] = useState<TaxObligationType>('vat');
+
+    const openKraWorkspace = (taxObligationType: TaxObligationType) => {
+        setSelectedKraObligation(taxObligationType);
+        setActiveTab('KRA');
+    };
 
     return (
         <div style={{ padding: activeTab === 'LANDING' ? '0' : '20px', fontFamily: 'sans-serif' }}>
@@ -73,10 +80,10 @@ function App() {
                             Developer View
                         </button>
                     </div>
-                    <LandingPage />
+                    <LandingPage onOpenKraWorkspace={openKraWorkspace} />
                 </div>
             )}
-            {activeTab === 'KRA' && <KraNilReturnForm />}
+            {activeTab === 'KRA' && <KraNilReturnForm initialTaxObligationType={selectedKraObligation} />}
             {activeTab === 'PAYROLL' && <UnifiedPayrollUploader />}
         </div>
     );

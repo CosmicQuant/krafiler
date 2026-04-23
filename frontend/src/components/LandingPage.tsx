@@ -11,13 +11,13 @@ import {
     Calendar,
     FileCheck2,
     Sparkles,
-    Layers3,
     Clock3
 } from 'lucide-react';
 import kraLogo from '../../assests/kra.png';
 import nssfLogo from '../../assests/nssflogo.png';
 import shaLogo from '../../assests/shalogo.png';
 import tourismFundLogo from '../../assests/tourismfundlogo.png';
+import { TAX_OBLIGATION_OPTIONS, type TaxObligationType } from '../types';
 
 type PayrollOptions = {
     paye: boolean;
@@ -30,7 +30,7 @@ const institutionLogos = [
         src: kraLogo,
         alt: 'KRA logo',
         title: 'KRA iTax',
-        summary: 'PAYE packs and monthly tax workflows',
+        summary: 'Nil, VAT, MRI and TOT filing workflows',
         imageClassName: 'h-10 w-auto'
     },
     {
@@ -51,15 +51,15 @@ const institutionLogos = [
         src: tourismFundLogo,
         alt: 'Tourism Fund logo',
         title: 'Tourism Fund',
-        summary: 'Levy workflows queued into the same stack',
+        summary: 'Tourism Fund E-levy workflow',
         imageClassName: 'h-10 w-auto'
     }
 ];
 
-const proofStats = [
-    { label: 'One upload', value: '1 CSV' },
-    { label: 'Core payroll outputs', value: '3 packs' },
-    { label: 'Monthly deadlines covered', value: '9th & 20th' }
+const heroSignals = [
+    'AI-guided workflows across KRA, NSSF, SHA and Tourism Fund',
+    'Pack generation, nil filing and return workflows in one desk',
+    'Built for faster monthly closes with live workflow visibility'
 ];
 
 const staggerContainer: Variants = {
@@ -89,11 +89,13 @@ const triggerBrowserDownload = (url: string, fileName: string) => {
     anchor.remove();
 };
 
-export default function LandingPage() {
+type LandingPageProps = {
+    onOpenKraWorkspace: (taxObligationType: TaxObligationType) => void;
+};
+
+export default function LandingPage({ onOpenKraWorkspace }: LandingPageProps) {
     const [kraPin, setKraPin] = useState('');
     const [totSales, setTotSales] = useState(50000);
-    const [totStatus, setTotStatus] = useState<null | 'generating' | 'done'>(null);
-    const [totResponse, setTotResponse] = useState<any>(null);
 
     const [payrollStatus, setPayrollStatus] = useState<null | 'processing' | 'done'>(null);
     const [payrollFile, setPayrollFile] = useState<File | null>(null);
@@ -101,12 +103,15 @@ export default function LandingPage() {
     const [payrollOptions, setPayrollOptions] = useState<PayrollOptions>({ paye: true, nssf: true, sha: true });
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const [nilObligation, setNilObligation] = useState('vat');
+    const [selectedFilingObligation, setSelectedFilingObligation] = useState<TaxObligationType>('vat');
 
     const selectedOutputCount = Object.values(payrollOptions).filter(Boolean).length;
     const selectedOutputLabel = selectedOutputCount === 0
         ? 'Choose at least one payroll output'
         : `${selectedOutputCount} payroll output${selectedOutputCount === 1 ? '' : 's'} selected`;
+    const selectedFilingOption = TAX_OBLIGATION_OPTIONS.find((option) => option.value === selectedFilingObligation);
+    const nilFilingOptions = TAX_OBLIGATION_OPTIONS.filter((option) => option.filingMode === 'nil');
+    const transactionalFilingOptions = TAX_OBLIGATION_OPTIONS.filter((option) => option.filingMode === 'transactional');
 
     useEffect(() => {
         return () => {
@@ -115,31 +120,6 @@ export default function LandingPage() {
             }
         };
     }, [payrollResponse]);
-
-    const handleTOTGeneration = async () => {
-        setTotStatus('generating');
-
-        try {
-            const res = await fetch('/api/tax/file-return', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    kraPin: kraPin || 'P052063835W',
-                    totYear: new Date().getFullYear(),
-                    totMonth: new Date().getMonth() + 1,
-                    totTurnover: totSales,
-                    taxObligationType: 'turnover_tax'
-                })
-            });
-
-            const data = await res.json();
-            setTotResponse(data);
-            setTotStatus('done');
-        } catch (err) {
-            console.error(err);
-            setTotStatus('done');
-        }
-    };
 
     const handlePayrollToggle = (key: keyof PayrollOptions) => {
         setPayrollOptions((current) => ({ ...current, [key]: !current[key] }));
@@ -204,10 +184,7 @@ export default function LandingPage() {
 
             <nav className="sticky top-0 z-50 border-b border-slate-200/70 bg-[#f4f5ef]/80 backdrop-blur-xl">
                 <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_20px_45px_rgba(15,23,42,0.22)]">
-                            <Layers3 className="h-5 w-5" />
-                        </div>
+                    <div>
                         <div>
                             <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Kwanta</span>
                             <span className="block text-xl font-black tracking-[-0.06em] text-slate-950">Compliance OS</span>
@@ -239,32 +216,37 @@ export default function LandingPage() {
                 <section className="mx-auto grid max-w-7xl gap-12 px-6 pb-12 pt-16 lg:grid-cols-[1.08fr_0.92fr] lg:items-center lg:pt-20">
                     <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.65, ease: 'easeOut' }}>
                         <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-red-200 bg-white/80 px-4 py-2 text-sm font-bold text-red-700 shadow-sm">
-                            <Sparkles className="h-4 w-4" /> Payroll, PAYE, NSSF, SHA, TOT and levy flows in one place
+                            <Sparkles className="h-4 w-4" /> AI-powered Kenyan compliance workspace
                         </div>
 
                         <h1 className="max-w-3xl text-5xl font-black tracking-[-0.08em] text-slate-950 sm:text-6xl xl:text-7xl">
-                            From one payroll export to a
-                            <span className="bg-[linear-gradient(120deg,#dc2626_0%,#0f172a_45%,#15803d_100%)] bg-clip-text text-transparent"> ready-to-file Kenyan compliance pack.</span>
+                            One
+                            <span className="bg-[linear-gradient(120deg,#dc2626_0%,#0f172a_45%,#15803d_100%)] bg-clip-text text-transparent"> AI-powered desk</span>
+                            {' '}for Kenyan payroll, tax and levy operations.
                         </h1>
 
                         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600 sm:text-xl">
-                            Kwanta turns raw payroll and sales data into submission-ready PAYE, NSSF, SHA and TOT outputs with the speed finance teams need before the 9th and 20th. Less portal friction, less spreadsheet cleanup, more certainty.
+                            Kwanta helps finance teams generate authority-ready payroll packs, move through supported KRA filing workflows, and keep Tourism Fund E-levy work inside the same operating surface. Replace portal hopping and spreadsheet churn with guided, AI-assisted monthly compliance execution.
                         </p>
 
                         <div className="mt-8 flex flex-col gap-4 sm:flex-row">
-                            <a href="#payroll-engine" className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-7 py-4 text-base font-bold text-white shadow-[0_24px_50px_rgba(15,23,42,0.22)] transition-all hover:-translate-y-1 hover:bg-slate-800">
-                                Build The Payroll Pack <ArrowRight className="h-5 w-5" />
-                            </a>
-                            <a href="#tax-engine" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white/80 px-7 py-4 text-base font-bold text-slate-900 transition-all hover:-translate-y-1 hover:border-red-300 hover:bg-white">
-                                Run TOT Filing <Percent className="h-5 w-5 text-red-600" />
+                            <button
+                                type="button"
+                                onClick={() => onOpenKraWorkspace('vat')}
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-7 py-4 text-base font-bold text-white shadow-[0_24px_50px_rgba(15,23,42,0.22)] transition-all hover:-translate-y-1 hover:bg-slate-800"
+                            >
+                                Launch AI Compliance Desk <ArrowRight className="h-5 w-5" />
+                            </button>
+                            <a href="#payroll-engine" className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white/80 px-7 py-4 text-base font-bold text-slate-900 transition-all hover:-translate-y-1 hover:border-red-300 hover:bg-white">
+                                Generate Packs & Filing Inputs <ArrowRight className="h-5 w-5 text-red-600" />
                             </a>
                         </div>
 
-                        <div className="mt-10 grid gap-4 sm:grid-cols-3">
-                            {proofStats.map((stat) => (
-                                <div key={stat.label} className="rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
-                                    <div className="text-2xl font-black tracking-[-0.06em] text-slate-950">{stat.value}</div>
-                                    <div className="mt-1 text-sm font-medium text-slate-500">{stat.label}</div>
+                        <div className="mt-8 grid gap-x-8 gap-y-3 sm:grid-cols-3">
+                            {heroSignals.map((signal) => (
+                                <div key={signal} className="flex items-start gap-3 text-sm font-medium leading-6 text-slate-700">
+                                    <span className="mt-2 h-2.5 w-2.5 flex-none rounded-full bg-green-600" />
+                                    <span>{signal}</span>
                                 </div>
                             ))}
                         </div>
@@ -281,7 +263,7 @@ export default function LandingPage() {
                             <div className="relative z-10">
                                 <div className="flex items-center justify-between gap-4">
                                     <div>
-                                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">Submission-ready cockpit</p>
+                                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">AI-guided compliance cockpit</p>
                                         <h2 className="mt-2 text-3xl font-black tracking-[-0.06em]">Every authority in one workflow</h2>
                                     </div>
                                     <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
@@ -290,13 +272,13 @@ export default function LandingPage() {
                                 </div>
 
                                 <div className="mt-7 grid gap-3">
-                                    {institutionLogos.slice(0, 3).map((institution, index) => (
+                                    {institutionLogos.map((institution, index) => (
                                         <motion.div
                                             key={institution.title}
                                             initial={{ opacity: 0, x: 24 }}
                                             animate={{ opacity: 1, x: 0 }}
                                             transition={{ duration: 0.55, delay: 0.12 + index * 0.08 }}
-                                            className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/6 p-4 backdrop-blur-sm"
+                                            className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/6 p-3.5 backdrop-blur-sm"
                                         >
                                             <div className="flex items-center gap-4">
                                                 <div className="rounded-2xl bg-white px-3 py-2 shadow-sm">
@@ -312,18 +294,18 @@ export default function LandingPage() {
                                     ))}
                                 </div>
 
-                                <div className="mt-7 grid grid-cols-3 gap-3">
+                                <div className="mt-6 grid grid-cols-3 gap-3">
                                     <div className="rounded-3xl border border-white/10 bg-white/6 p-4">
-                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Due 9th</div>
-                                        <div className="mt-2 text-lg font-black">Payroll Pack</div>
+                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Coverage</div>
+                                        <div className="mt-2 text-lg font-black">Payroll, Tax, Levy</div>
                                     </div>
                                     <div className="rounded-3xl border border-white/10 bg-white/6 p-4">
-                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Due 20th</div>
-                                        <div className="mt-2 text-lg font-black">TOT Filing</div>
+                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Workflow</div>
+                                        <div className="mt-2 text-lg font-black">Pack, File, Track</div>
                                     </div>
                                     <div className="rounded-3xl border border-white/10 bg-white/6 p-4">
-                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Visibility</div>
-                                        <div className="mt-2 text-lg font-black">Live Status</div>
+                                        <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Powered by</div>
+                                        <div className="mt-2 text-lg font-black">AI Guidance</div>
                                     </div>
                                 </div>
                             </div>
@@ -361,7 +343,7 @@ export default function LandingPage() {
                                     </div>
                                     <h2 className="mt-3 text-3xl font-black tracking-[-0.06em] text-slate-950">Unified payroll extraction, packaging and submission prep</h2>
                                     <p className="mt-2 max-w-3xl text-slate-600">
-                                        Upload once, choose the outputs you want, and generate the exact PAYE, NSSF and SHA files your team needs. NSSF and SHA already belong in the same workflow, so there is no extra “coming soon” step to wait for.
+                                        Upload once, choose the outputs you want, and generate the exact PAYE, NSSF and SHA files your team needs.
                                     </p>
                                 </div>
                                 <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm">
@@ -406,7 +388,7 @@ export default function LandingPage() {
                                                 summary: 'CSV and ZIP bundle aligned to iTax uploads',
                                                 src: kraLogo,
                                                 alt: 'KRA logo',
-                                                imageClassName: 'h-8 w-auto',
+                                                imageClassName: 'h-full w-full object-contain object-center',
                                                 activeClasses: 'border-red-300 bg-red-50 shadow-[0_18px_38px_rgba(220,38,38,0.08)]'
                                             },
                                             {
@@ -415,7 +397,7 @@ export default function LandingPage() {
                                                 summary: 'Workbook-ready pension contribution schedule',
                                                 src: nssfLogo,
                                                 alt: 'NSSF logo',
-                                                imageClassName: 'h-10 w-auto',
+                                                imageClassName: 'h-full w-full object-contain object-center',
                                                 activeClasses: 'border-green-300 bg-green-50 shadow-[0_18px_38px_rgba(34,197,94,0.08)]'
                                             },
                                             {
@@ -424,7 +406,7 @@ export default function LandingPage() {
                                                 summary: 'Structured workbook with mapped contribution lines',
                                                 src: shaLogo,
                                                 alt: 'SHA logo',
-                                                imageClassName: 'h-9 w-auto',
+                                                imageClassName: 'h-full w-full object-contain object-center',
                                                 activeClasses: 'border-sky-300 bg-sky-50 shadow-[0_18px_38px_rgba(14,165,233,0.08)]'
                                             }
                                         ].map((option) => {
@@ -435,18 +417,20 @@ export default function LandingPage() {
                                                     key={option.key}
                                                     type="button"
                                                     onClick={() => handlePayrollToggle(option.key)}
-                                                    className={`rounded-[1.5rem] border p-4 text-left transition-all hover:-translate-y-1 ${isActive ? option.activeClasses : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                                                    className={`overflow-hidden rounded-[1.5rem] border text-left transition-all hover:-translate-y-1 ${isActive ? option.activeClasses : 'border-slate-200 bg-white hover:border-slate-300'}`}
                                                 >
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="rounded-2xl bg-white px-3 py-2 shadow-sm">
-                                                            <img src={option.src} alt={option.alt} className={option.imageClassName} />
-                                                        </div>
-                                                        <div className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${isActive ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                                    <div className="relative border-b border-black/5 px-4 pb-4 pt-4">
+                                                        <div className={`absolute right-4 top-4 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] ${isActive ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-500'}`}>
                                                             {isActive ? 'Included' : 'Off'}
                                                         </div>
+                                                        <div className="mt-10 flex h-40 w-full items-center justify-center rounded-[1.25rem] bg-white px-5 py-5 shadow-sm">
+                                                            <img src={option.src} alt={option.alt} className={option.imageClassName} />
+                                                        </div>
                                                     </div>
-                                                    <div className="mt-4 text-base font-black tracking-[-0.03em] text-slate-950">{option.title}</div>
-                                                    <p className="mt-1 text-sm leading-6 text-slate-600">{option.summary}</p>
+                                                    <div className="px-4 pb-4 pt-4">
+                                                        <div className="text-base font-black tracking-[-0.03em] text-slate-950">{option.title}</div>
+                                                        <p className="mt-1 text-sm leading-6 text-slate-600">{option.summary}</p>
+                                                    </div>
                                                 </button>
                                             );
                                         })}
@@ -490,8 +474,16 @@ export default function LandingPage() {
                                         {payrollStatus === 'processing' ? 'Generating package...' : 'Generate submission-ready ZIP'}
                                     </button>
 
+                                    <button
+                                        type="button"
+                                        onClick={() => onOpenKraWorkspace('paye')}
+                                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-5 py-4 text-sm font-bold text-white transition-all hover:-translate-y-1 hover:bg-white/10"
+                                    >
+                                        <ArrowRight className="h-4 w-4" /> Open KRA filing workspace
+                                    </button>
+
                                     <p className="mt-4 text-sm leading-6 text-slate-400">
-                                        This run already covers PAYE, NSSF and SHA in the same packaging workflow. Select only what you want, then download one compliant bundle.
+                                        This run covers PAYE, NSSF and SHA packaging. Use the KRA filing workspace separately for the supported credentialed filing flows that already exist in the app.
                                     </p>
                                 </div>
 
@@ -543,7 +535,8 @@ export default function LandingPage() {
                                 </div>
                             </div>
 
-                            <p className="mt-5 text-sm leading-6 text-slate-600">Model turnover tax before submission, then dispatch the filing payload without leaving the same workspace.</p>
+                            <p className="mt-5 text-sm leading-6 text-slate-600">Model turnover tax before submission, then move directly into the credentialed KRA filing workflow for the actual return.</p>
+                            <p className="mt-2 text-sm leading-6 text-slate-500">The real TOT filing route requires full KRA credentials, so this section previews the tax and hands off to the supported workspace instead of attempting a partial submit.</p>
 
                             <div className="mt-7 space-y-6">
                                 <div>
@@ -568,21 +561,12 @@ export default function LandingPage() {
                                 </div>
 
                                 <button
-                                    onClick={handleTOTGeneration}
-                                    disabled={totStatus === 'generating'}
-                                    className={`flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-base font-black transition-all hover:-translate-y-1 ${totStatus === 'generating' ? 'bg-slate-100 text-slate-500' : 'bg-red-600 text-white shadow-[0_22px_44px_rgba(220,38,38,0.18)] hover:bg-red-700'}`}
+                                    type="button"
+                                    onClick={() => onOpenKraWorkspace('turnover_tax')}
+                                    className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-600 py-4 text-base font-black text-white shadow-[0_22px_44px_rgba(220,38,38,0.18)] transition-all hover:-translate-y-1 hover:bg-red-700"
                                 >
-                                    {totStatus === 'generating' ? <KwantaLoader /> : <CheckCircle className="h-5 w-5" />}
-                                    {totStatus === 'generating' ? 'Submitting TOT...' : 'File TOT instantly'}
+                                    <ArrowRight className="h-5 w-5" /> Open TOT filing workspace
                                 </button>
-
-                                <AnimatePresence>
-                                    {totStatus === 'done' && (
-                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">
-                                            {totResponse?.message || 'TOT filing dispatch triggered successfully.'}
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
                             </div>
                         </div>
 
@@ -594,19 +578,19 @@ export default function LandingPage() {
                                         <img src={tourismFundLogo} alt="Tourism Fund logo" className="h-10 w-auto" />
                                     </div>
                                     <div>
-                                        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Expansion lane</div>
+                                        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Supported KRA workspace</div>
                                         <h3 className="text-2xl font-black tracking-[-0.05em]">Monthly tax workflows beyond payroll</h3>
                                     </div>
                                 </div>
 
-                                <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300">The same operating surface can handle turnover tax, nil filings, VAT and levy work. Keep the compliance team on one rhythm instead of splitting work across portals and spreadsheets.</p>
+                                <p className="mt-5 max-w-2xl text-sm leading-7 text-slate-300">The same operating surface already covers VAT nil filing, PAYE nil filing, income tax nil filing, MRI filing and TOT filing. Tourism Fund is now represented in the authority map so the compliance surface can expand without breaking the visual system.</p>
 
                                 <div className="mt-7 grid gap-4 sm:grid-cols-2">
                                     {[
-                                        'VAT filing workspace',
-                                        'Monthly rental income',
-                                        'Digital services tax',
-                                        'Tourism levy submission'
+                                        'VAT nil filing',
+                                        'PAYE nil filing',
+                                        'Income tax nil filing',
+                                        'Monthly rental income and TOT'
                                     ].map((item) => (
                                         <div key={item} className="flex items-center justify-between rounded-[1.4rem] border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm transition-colors hover:bg-white/10">
                                             <span className="font-semibold text-white">{item}</span>
@@ -624,19 +608,65 @@ export default function LandingPage() {
                                 <div className="rounded-2xl bg-green-50 p-3 text-green-600">
                                     <CheckCircle className="h-5 w-5" />
                                 </div>
-                                Instant nil filing
+                                Launch the KRA filing workspace
                             </h3>
-                            <p className="mt-3 text-sm leading-6 text-slate-600">Need to clear a month with zero activity? Queue the nil return directly from the same dashboard.</p>
+                            <p className="mt-3 text-sm leading-6 text-slate-600">Choose any supported obligation here, then jump into the existing credentialed KRA workflow. Nil returns, MRI and TOT all route through the same real backend worker instead of a placeholder landing-page form.</p>
 
                             <div className="mt-6 space-y-4">
-                                <select value={nilObligation} onChange={(e) => setNilObligation(e.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500/40">
-                                    <option value="vat">VAT (Value Added Tax)</option>
-                                    <option value="paye">PAYE</option>
-                                    <option value="tot">Turnover Tax</option>
-                                    <option value="mri">Monthly Rental Income</option>
-                                </select>
-                                <button className="w-full rounded-2xl border border-slate-200 bg-white py-4 text-base font-black text-slate-950 transition-all hover:-translate-y-1 hover:border-green-300 hover:bg-green-50">
-                                    Submit nil return
+                                <div>
+                                    <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Nil filings</div>
+                                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                        {nilFilingOptions.map((option) => {
+                                            const isActive = selectedFilingObligation === option.value;
+
+                                            return (
+                                                <button
+                                                    key={option.value}
+                                                    type="button"
+                                                    onClick={() => setSelectedFilingObligation(option.value)}
+                                                    className={`rounded-[1.4rem] border px-4 py-4 text-left transition-all hover:-translate-y-1 ${isActive ? 'border-green-300 bg-green-50 shadow-[0_18px_38px_rgba(34,197,94,0.08)]' : 'border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white'}`}
+                                                >
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="text-sm font-black tracking-[-0.03em] text-slate-950">{option.label}</div>
+                                                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Nil</span>
+                                                    </div>
+                                                    <p className="mt-2 text-sm leading-6 text-slate-600">{option.description}</p>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Returns with transactions</div>
+                                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                        {transactionalFilingOptions.map((option) => {
+                                            const isActive = selectedFilingObligation === option.value;
+
+                                            return (
+                                                <button
+                                                    key={option.value}
+                                                    type="button"
+                                                    onClick={() => setSelectedFilingObligation(option.value)}
+                                                    className={`rounded-[1.4rem] border px-4 py-4 text-left transition-all hover:-translate-y-1 ${isActive ? 'border-amber-300 bg-amber-50 shadow-[0_18px_38px_rgba(245,158,11,0.08)]' : 'border-slate-200 bg-slate-50/80 hover:border-slate-300 hover:bg-white'}`}
+                                                >
+                                                    <div className="flex items-center justify-between gap-3">
+                                                        <div className="text-sm font-black tracking-[-0.03em] text-slate-950">{option.label}</div>
+                                                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Return</span>
+                                                    </div>
+                                                    <p className="mt-2 text-sm leading-6 text-slate-600">{option.description}</p>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => onOpenKraWorkspace(selectedFilingObligation)}
+                                    className="w-full rounded-2xl border border-slate-200 bg-white py-4 text-base font-black text-slate-950 transition-all hover:-translate-y-1 hover:border-green-300 hover:bg-green-50"
+                                >
+                                    Open {selectedFilingOption?.label ?? 'KRA'} workspace
                                 </button>
                             </div>
                         </div>

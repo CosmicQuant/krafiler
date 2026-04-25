@@ -18,6 +18,7 @@ import nssfLogo from '../../assests/nssflogo.png';
 import shaLogo from '../../assests/shalogo.png';
 import tourismFundLogo from '../../assests/tourismfundlogo.png';
 import { TAX_OBLIGATION_OPTIONS, type TaxObligationType } from '../types';
+import PricingSection from './PricingSection';
 
 type PayrollOptions = {
     paye: boolean;
@@ -195,6 +196,7 @@ export default function LandingPage({ onOpenKraWorkspace }: LandingPageProps) {
                         <a href="#payroll-engine" className="transition-colors hover:text-slate-950">Payroll Engine</a>
                         <a href="#tax-engine" className="transition-colors hover:text-slate-950">Tax Engine</a>
                         <a href="#nil-itr" className="transition-colors hover:text-slate-950">Nil & P9</a>
+                        <a href="#pricing" className="transition-colors hover:text-slate-950">Pricing</a>
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -693,6 +695,8 @@ export default function LandingPage({ onOpenKraWorkspace }: LandingPageProps) {
                             </div>
                         </div>
                     </motion.section>
+
+                    <PricingSection />
                 </motion.div>
             </main>
 

@@ -1,92 +1,80 @@
-import { useState } from 'react';
-import KraNilReturnForm from './components/KraNilReturnForm';
-import UnifiedPayrollUploader from './components/UnifiedPayrollUploader';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './components/LandingPage';
-import type { TaxObligationType } from './types';
+import UnifiedPayrollUploader from './components/UnifiedPayrollUploader';
+import IndividualDashboard from './components/IndividualDashboard';
+import AccountantDashboard from './components/AccountantDashboard';
+import KraNilReturnForm from './components/KraNilReturnForm';
+import { TaxObligationType } from './types';
+
+// Wrapper for the landing page so it handles Kra actions smoothly
+function LandingWrapper() {
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}>
+        <button
+          onClick={() => window.location.href='/payroll'}
+          style={{
+            padding: '8px 16px',
+            cursor: 'pointer',
+            border: '1px solid white',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            color: 'white',
+            fontWeight: 'bold',
+            marginRight: '10px'
+          }}
+        >
+          Payroll Engine
+        </button>
+        <button
+          onClick={() => window.location.href='/accountant'}
+          style={{
+            padding: '8px 16px',
+            cursor: 'pointer',
+            border: '1px solid white',
+            borderRadius: '4px',
+            backgroundColor: '#2563EB',
+            color: 'white',
+            fontWeight: 'bold',
+            marginRight: '10px'
+          }}
+        >
+          Pro Login
+        </button>
+        <button
+          onClick={() => window.location.href='/dashboard'}
+          style={{
+            padding: '8px 16px',
+            cursor: 'pointer',
+            border: '1px solid white',
+            borderRadius: '4px',
+            backgroundColor: '#059669',
+            color: 'white',
+            fontWeight: 'bold'
+          }}
+        >
+          Individual Login
+        </button>
+      </div>
+      <LandingPage onOpenKraWorkspace={() => window.location.href='/kra'} />
+    </div>
+  );
+}
 
 function App() {
-    const [activeTab, setActiveTab] = useState<'LANDING' | 'KRA' | 'PAYROLL'>('LANDING');
-    const [selectedKraObligation, setSelectedKraObligation] = useState<TaxObligationType>('vat');
-
-    const openKraWorkspace = (taxObligationType: TaxObligationType) => {
-        setSelectedKraObligation(taxObligationType);
-        setActiveTab('KRA');
-    };
-
-    return (
-        <div style={{ padding: activeTab === 'LANDING' ? '0' : '20px', fontFamily: 'sans-serif' }}>
-            {activeTab !== 'LANDING' && (
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', justifyContent: 'center' }}>
-                    <button
-                        onClick={() => setActiveTab('KRA')}
-                        style={{
-                            padding: '10px 20px',
-                            cursor: 'pointer',
-                            border: 'none',
-                            borderRadius: '4px',
-                            backgroundColor: activeTab === 'KRA' ? '#2563EB' : '#E5E7EB',
-                            color: activeTab === 'KRA' ? 'white' : 'black',
-                            fontWeight: 'bold'
-                        }}
-                    >
-                        KRA Return Filer (iTax / Playwright)
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('PAYROLL')}
-                        style={{
-                            padding: '10px 20px',
-                            cursor: 'pointer',
-                            border: 'none',
-                            borderRadius: '4px',
-                            backgroundColor: activeTab === 'PAYROLL' ? '#059669' : '#E5E7EB',
-                            color: activeTab === 'PAYROLL' ? 'white' : 'black',
-                            fontWeight: 'bold'
-                        }}
-                    >
-                        Axon Unified Payroll Engine
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('LANDING')}
-                        style={{
-                            padding: '10px 20px',
-                            cursor: 'pointer',
-                            border: 'none',
-                            borderRadius: '4px',
-                            backgroundColor: '#1E293B',
-                            color: 'white',
-                            fontWeight: 'bold'
-                        }}
-                    >
-                        UI Landing Page
-                    </button>
-                </div>
-            )}
-
-            {activeTab === 'LANDING' && (
-                <div style={{ position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}>
-                        <button
-                            onClick={() => setActiveTab('PAYROLL')}
-                            style={{
-                                padding: '8px 16px',
-                                cursor: 'pointer',
-                                border: '1px solid white',
-                                borderRadius: '4px',
-                                backgroundColor: 'rgba(0,0,0,0.5)',
-                                color: 'white',
-                                fontWeight: 'bold'
-                            }}
-                        >
-                            Developer View
-                        </button>
-                    </div>
-                    <LandingPage onOpenKraWorkspace={openKraWorkspace} />
-                </div>
-            )}
-            {activeTab === 'KRA' && <KraNilReturnForm initialTaxObligationType={selectedKraObligation} />}
-            {activeTab === 'PAYROLL' && <UnifiedPayrollUploader />}
-        </div>
-    );
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LandingWrapper />} />
+        <Route path="/kra" element={<KraNilReturnForm initialTaxObligationType="vat" />} />
+        <Route path="/accountant" element={<AccountantDashboard />} />
+        <Route path="/dashboard" element={<IndividualDashboard />} />
+        <Route path="/payroll" element={<div className="bg-gray-50 min-h-screen pt-12"><UnifiedPayrollUploader /></div>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
 export default App;

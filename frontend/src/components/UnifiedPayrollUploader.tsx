@@ -50,7 +50,8 @@ export default function UnifiedPayrollUploader() {
             });
 
             if (!response.ok) {
-                setStatus('Generation failed! Backend sent error status.');
+                const errData = await response.json().catch(() => ({}));
+                setStatus(`Generation failed! ${errData.error || 'Server error'}`);
                 return;
             }
 

@@ -6,6 +6,21 @@ import * as ExcelJS from 'exceljs';
 import * as fastCsv from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
 
+function normalizeCsvEncodingInPlace(filePath: string) {
+    const rawBuffer = fs.readFileSync(filePath);
+
+    if (rawBuffer.length >= 2 && rawBuffer[0] === 0xff && rawBuffer[1] === 0xfe) {
+        fs.writeFileSync(filePath, rawBuffer.slice(2).toString('utf16le'), 'utf8');
+        return;
+    }
+
+    if (rawBuffer.length >= 2 && rawBuffer[0] === 0xfe && rawBuffer[1] === 0xff) {
+        const swappedBuffer = Buffer.from(rawBuffer.slice(2));
+        swappedBuffer.swap16();
+        fs.writeFileSync(filePath, swappedBuffer.toString('utf16le'), 'utf8');
+    }
+}
+
 export interface CompanyConfig {
     employerPin: string;
     nssfEmployerNo: string;
@@ -66,7 +81,8 @@ export class AxonDataExtractionEngine {
 
     private stripApostrophe(value: string | undefined): string {
         if (!value) return '';
-        return value.startsWith("'") ? value.substring(1).trim() : value.trim();
+        const normalizedValue = value.replace(/^\uFEFF/, '').replace(/\u0000/g, '').trim();
+        return normalizedValue.startsWith("'") ? normalizedValue.substring(1).trim() : normalizedValue;
     }
 
     public async parseMasterCsv(inputCsvPath: string): Promise<EmployeeMasterRecord[]> {
@@ -134,8 +150,14 @@ export class AxonDataExtractionEngine {
     }
 
     public async generateSHAExcel(employees: EmployeeMasterRecord[]): Promise<string> {
-        const today = new Date().toISOString().split('T')[0];
-        const fileName = `${today}_SHA_Upload.xlsx`;
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, '0');
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const fileName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${this.config.employerPin}_SHA.xlsx`;
         const filePath = path.join(this.outputDir, fileName);
 
         const templatePath = path.join(__dirname, '../../templates/Payroll Template (6).xlsx');
@@ -195,8 +217,14 @@ export class AxonDataExtractionEngine {
     }
 
     public async generateNSSFExcel(employees: EmployeeMasterRecord[]): Promise<string> {
-        const today = new Date().toISOString().split('T')[0];
-        const fileName = `${today}_NSSF_Upload.xlsx`;
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, '0');
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const fileName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${this.config.employerPin}_NSSF.xlsx`;
         const filePath = path.join(this.outputDir, fileName);
 
         const templatePath = path.join(__dirname, '../../templates/GOLDENNSSF032026.xlsx');
@@ -368,6 +396,8 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
     console.log('--- Starting Axon Data Extraction & Generation Engine ---');
     const outputDir = path.join(path.dirname(inputCsvPath), 'output');
 
+    normalizeCsvEncodingInPlace(inputCsvPath);
+
     // Read Company Config directly from the first 3 rows of the CSV 
     // This allows clients to skip UI form filling
     const companyConfig = await new Promise<CompanyConfig>((resolve, reject) => {
@@ -376,9 +406,9 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         fs.createReadStream(inputCsvPath)
             .pipe(fastCsv.parse({ headers: false, trim: true }))
             .on('data', (row) => {
-                if (rowCount === 0) cfg.employerName = row[1] ? row[1].replace(/^'/, '').trim() : '';
-                if (rowCount === 1) cfg.employerPin = row[1] ? row[1].replace(/^'/, '').trim() : '';
-                if (rowCount === 2) cfg.nssfEmployerNo = row[1] ? row[1].replace(/^'/, '').trim() : '';
+                if (rowCount === 0) cfg.employerName = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                if (rowCount === 1) cfg.employerPin = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                if (rowCount === 2) cfg.nssfEmployerNo = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 rowCount++;
             })
             .on('end', () => {
@@ -409,7 +439,7 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         const payeZipPath = activeOptions.generatePaye ? await engine.generatePAYEZip(employees) : null;
 
         console.log('--- Compliance Files Generation Complete ---');
-        return { shaFilePath, nssfFilePath, payeZipPath };
+        return { shaFilePath, nssfFilePath, payeZipPath, companyConfig };
     } catch (error) {
         console.error('Error generating compliance files:', error);
         throw error;

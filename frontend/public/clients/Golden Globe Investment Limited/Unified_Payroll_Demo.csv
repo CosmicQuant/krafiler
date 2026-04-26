@@ -1,0 +1,6 @@
+employerName,Golden Globe Investment Limited
+employerPin,P052262687K
+nssfEmployerNo,N00000000
+metadata,Demo payroll export
+Payroll Number,Name of Employee,ID Number,PIN of Employee,NSSF No,SHA No,Phone,Residential Status,Type of Employee,Persons with Disability(PWD),Exemption Certificate,Total Cash Pay (A),Value of Car Benefit (B),Value of Meals (C),Non Cash Benefits (D),Type of Housing,Housing Benefit (F),Other Benefits (G),Total Gross Pay (Ksh) (H),Social Health Insurance Fund (I),NSSF Contribution (J),Other Pension Contribution (K),Post Retirement Medical Fund (L),Mortgage Interest (M),Affordable Housing Levy (N),Taxable Pay(Ksh) (O),Monthly Personal Relief (Ksh) (P),Amount of Insurance Relief (Q),PAYE Tax (Ksh) (R)
+1,John Doe,12345678,A123456789X,N123456789,SHA1234567,0712345678,Resident,Primary Employee,No,,85000,0,0,0,Benefit not given,0,0,85000,2550,2160,0,0,0,1275,85000,2400,0,14800

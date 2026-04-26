@@ -60,8 +60,8 @@ export default function TaxModuleForm({ taxType }: { taxType: string }) {
             {inputType === 'manual' && (
               <div className="space-y-4 animate-in fade-in">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">{['nssf', 'sha', 'elevy'].includes(taxType) ? 'Number of Employees' : 'Gross Sales / Revenue (KES)'}</label>
-                  <input type="number" placeholder={['nssf', 'sha', 'elevy'].includes(taxType) ? 'e.g. 15' : 'e.g. 500000'} className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">{['nssf', 'sha'].includes(taxType) ? 'Number of Employees' : 'Gross Sales / Revenue (KES)'}</label>
+                  <input type="number" placeholder={['nssf', 'sha'].includes(taxType) ? 'e.g. 15' : 'e.g. 500000'} className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                 </div>
                 {['nssf', 'sha'].includes(taxType) && (
                   <div>

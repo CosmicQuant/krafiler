@@ -12,6 +12,8 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import taxRoutes from './api/tax.routes';
 import payrollRoutes from './api/payroll.routes';
+import clientRoutes from './api/clients.routes';
+import { initDb } from './db/database';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
@@ -26,7 +28,7 @@ app.use(
     cors({
         origin: process.env.ALLOWED_ORIGIN ?? 'http://localhost:3000',
         credentials: true,
-        methods: ['GET', 'POST'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
         allowedHeaders: ['Content-Type', 'Authorization'],
     })
 );
@@ -62,6 +64,7 @@ app.use('/api/tax/file-return', filingLimiter);
 app.use('/api/tax/file-nil-return', filingLimiter);
 app.use('/api/tax', taxRoutes);
 app.use('/api/payroll', payrollRoutes);
+app.use('/api/clients', clientRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -89,9 +92,14 @@ app.use(
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-    console.log(`[Server] KRA Filing API running on http://localhost:${PORT}`);
-    console.log(`[Server] Environment: ${process.env.NODE_ENV ?? 'development'}`);
+initDb().then(() => {
+    app.listen(PORT, () => {
+        console.log(`[Server] KRA Filing API running on http://localhost:${PORT}`);
+        console.log(`[Server] Environment: ${process.env.NODE_ENV ?? 'development'}`);
+    });
+}).catch(err => {
+    console.error('Failed to init DB:', err);
+    process.exit(1);
 });
 
 export default app;

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { CheckCircle2, FileSpreadsheet, ShieldCheck, UploadCloud } from 'lucide-react';
+import { useState } from 'react';
 
 type PayrollOptions = {
     paye: boolean;
@@ -74,41 +75,96 @@ export default function UnifiedPayrollUploader() {
     };
 
     return (
-        <div style={{ maxWidth: '600px', margin: '40px auto', padding: '20px', fontFamily: 'system-ui, sans-serif', border: '1px solid #ccc', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', backgroundColor: 'white' }}>
-            <h2 style={{ borderBottom: '2px solid #eee', paddingBottom: '10px' }}>Unified Payroll Engine</h2>
-            <p style={{ color: '#555' }}>Upload your exported Axon Unified Payroll CSV here to generate 2026 Compliance files (SHA, NSSF, iTax PAYE).</p>
-
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', marginTop: '10px' }}>
-                    <label style={{ fontWeight: 'bold', marginBottom: '5px' }}>Upload CSV File</label>
-                    <input type="file" accept=".csv" onChange={e => setFile(e.target.files?.[0] || null)} style={{ padding: '8px' }} required />
+        <div className="mx-auto max-w-5xl rounded-[28px] bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,0.08)] lg:p-8">
+            <div className="grid gap-6 border-b border-slate-200 pb-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-start">
+                <div>
+                    <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Unified payroll engine</p>
+                    <h2 className="mt-3 text-3xl font-black tracking-[-0.05em] text-slate-950">Generate one practice-ready pack for payroll, NSSF, and SHA.</h2>
+                    <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-600">
+                        Upload the exported Axon payroll CSV for a client and generate the authority-ready outputs your team needs for PAYE, NSSF, and SHA processing.
+                    </p>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <label style={{ fontWeight: 'bold' }}>Choose outputs</label>
-                    {[
-                        { key: 'paye' as const, label: 'KRA PAYE ZIP' },
-                        { key: 'nssf' as const, label: 'NSSF workbook' },
-                        { key: 'sha' as const, label: 'SHA workbook' }
-                    ].map((option) => (
-                        <label key={option.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#334155' }}>
-                            <input
-                                type="checkbox"
-                                checked={options[option.key]}
-                                onChange={() => handleToggle(option.key)}
-                            />
-                            <span>{option.label}</span>
-                        </label>
-                    ))}
+                <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                    <div className="rounded-[24px] border border-slate-200 bg-[#f8faf5] p-4">
+                        <div className="inline-flex rounded-2xl bg-slate-950 p-3 text-white">
+                            <FileSpreadsheet className="h-4 w-4" />
+                        </div>
+                        <p className="mt-4 text-sm font-semibold text-slate-900">One source file</p>
+                        <p className="mt-2 text-xs leading-6 text-slate-600">Use the master payroll export already prepared by the client team.</p>
+                    </div>
+                    <div className="rounded-[24px] border border-slate-200 bg-[#f8faf5] p-4">
+                        <div className="inline-flex rounded-2xl bg-slate-950 p-3 text-white">
+                            <ShieldCheck className="h-4 w-4" />
+                        </div>
+                        <p className="mt-4 text-sm font-semibold text-slate-900">Choose outputs</p>
+                        <p className="mt-2 text-xs leading-6 text-slate-600">Produce only the PAYE, NSSF, or SHA files required for that client cycle.</p>
+                    </div>
+                    <div className="rounded-[24px] border border-slate-200 bg-[#f8faf5] p-4">
+                        <div className="inline-flex rounded-2xl bg-slate-950 p-3 text-white">
+                            <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        <p className="mt-4 text-sm font-semibold text-slate-900">Instant download</p>
+                        <p className="mt-2 text-xs leading-6 text-slate-600">The generated ZIP is streamed back to the browser as soon as the backend finishes packaging.</p>
+                    </div>
+                </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="mt-6 grid gap-6 lg:grid-cols-[1fr_0.8fr]">
+                <div className="rounded-[24px] border border-dashed border-slate-300 bg-[#fbfbf7] p-6">
+                    <div className="flex items-start gap-4">
+                        <div className="inline-flex rounded-2xl bg-slate-950 p-3 text-white">
+                            <UploadCloud className="h-5 w-5" />
+                        </div>
+                        <div>
+                            <p className="text-lg font-bold tracking-[-0.03em] text-slate-950">Attach exported payroll CSV</p>
+                            <p className="mt-2 text-sm leading-7 text-slate-600">Pick the client payroll file to generate the unified compliance package.</p>
+                        </div>
+                    </div>
+
+                    <label className="mt-6 block rounded-[22px] border border-slate-200 bg-white px-4 py-6 text-center text-sm font-medium text-slate-600 transition hover:border-slate-950 hover:text-slate-950">
+                        <span className="block font-semibold text-slate-900">{file ? file.name : 'Choose payroll CSV file'}</span>
+                        <span className="mt-2 block text-xs text-slate-500">CSV only. Recommended: client export direct from Axon.</span>
+                        <input type="file" accept=".csv" onChange={(event) => setFile(event.target.files?.[0] || null)} className="hidden" required />
+                    </label>
                 </div>
 
-                <button type="submit" disabled={selectedCount === 0} style={{ padding: '12px', marginTop: '10px', backgroundColor: selectedCount === 0 ? '#94A3B8' : '#1E293B', color: 'white', border: 'none', borderRadius: '4px', cursor: selectedCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
-                    Generate Unified Returns
-                </button>
+                <div className="rounded-[24px] border border-slate-200 bg-white p-6">
+                    <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Outputs</p>
+                    <div className="mt-4 space-y-3">
+                        {[
+                            { key: 'paye' as const, label: 'KRA PAYE ZIP', summary: 'Prepared package for PAYE upload and supporting payroll return files.' },
+                            { key: 'nssf' as const, label: 'NSSF workbook', summary: 'Employer-ready statutory workbook generated from the same payroll source.' },
+                            { key: 'sha' as const, label: 'SHA workbook', summary: 'Health contribution workbook generated for the client payroll period.' }
+                        ].map((option) => (
+                            <label key={option.key} className="flex cursor-pointer items-start gap-3 rounded-[20px] border border-slate-200 bg-[#fbfbf7] px-4 py-4 transition hover:border-slate-950">
+                                <input
+                                    type="checkbox"
+                                    checked={options[option.key]}
+                                    onChange={() => handleToggle(option.key)}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-950 focus:ring-slate-950"
+                                />
+                                <span className="block">
+                                    <span className="block text-sm font-semibold text-slate-950">{option.label}</span>
+                                    <span className="mt-1 block text-xs leading-6 text-slate-600">{option.summary}</span>
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+
+                    <div className="mt-5 rounded-[20px] bg-slate-950 px-4 py-4 text-sm text-white">
+                        <p className="font-semibold">{selectedCount === 0 ? 'No outputs selected' : `${selectedCount} output${selectedCount === 1 ? '' : 's'} selected`}</p>
+                        <p className="mt-2 text-white/70">Generate only the files you need for this client’s payroll cycle.</p>
+                    </div>
+
+                    <button type="submit" disabled={selectedCount === 0} className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-4 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+                        Generate unified returns
+                    </button>
+                </div>
             </form>
 
             {status && (
-                <div style={{ marginTop: '20px', padding: '10px', borderRadius: '4px', backgroundColor: status.includes('Success') ? '#d4edda' : '#f8d7da', color: status.includes('Success') ? '#155724' : '#721c24' }}>
+                <div className={`mt-6 rounded-[22px] px-5 py-4 text-sm font-medium ${status.includes('Success') ? 'bg-emerald-50 text-emerald-800' : status.includes('Generating') ? 'bg-slate-100 text-slate-700' : 'bg-red-50 text-red-700'}`}>
                     {status}
                 </div>
             )}

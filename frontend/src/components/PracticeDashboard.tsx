@@ -20,6 +20,7 @@ import {
     PlayCircle,
     RefreshCw,
     Rocket,
+  Upload,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -54,6 +55,11 @@ type ClientObligation = {
     shaFileUrl?: string;
     shaFileLabel?: string;
     lastGeneratedAt?: string;
+    payeAmount?: number;
+    nitaAmount?: number;
+    housingLevyAmount?: number;
+    nssfAmount?: number;
+    shaAmount?: number;
     // 9th/10th
     paye: TaxStatus;
     nssf: TaxStatus;
@@ -175,6 +181,7 @@ export default function PracticeDashboard() {
     const [newClientName, setNewClientName] = useState('');
     const [newClientPin, setNewClientPin] = useState('');
     const [newClientPassword, setNewClientPassword] = useState('');
+    const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
     const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
 
     useEffect(() => {
@@ -511,9 +518,11 @@ export default function PracticeDashboard() {
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3 text-xs overflow-visible">
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><span className="text-slate-400 font-semibold">PAYE</span> <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} /></div>
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><span className="text-slate-400 font-semibold">NSSF</span> <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} /></div>
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><span className="text-slate-400 font-semibold">SHA</span> <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">PAYE</span>{(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">NITA</span>{(client.nitaAmount !== undefined && client.nitaAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.nitaAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <StatusBadge status="due" /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">H. Levy</span>{(client.housingLevyAmount !== undefined && client.housingLevyAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.housingLevyAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <StatusBadge status="due" /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">NSSF</span>{(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">SHA</span>{(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} /></div>
                                 <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2"><span className="text-slate-400 font-semibold">eLevy</span> <StatusBadge status={client.eLevy} /></div>
                             </div>
                             
@@ -622,9 +631,11 @@ export default function PracticeDashboard() {
                         <tr>
                             <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
                             <th className="px-2 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider">Master CSV</th>
-                            <th className="px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center">PAYE</th>
-                            <th className="px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center">NSSF</th>
-                            <th className="px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center">SHA</th>
+                            <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>PAYE</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>NITA</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>H. Levy</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>NSSF</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>SHA</th>
                             <th className="px-2 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider">Latest Files</th>
                             <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider">Action</th>
                         </tr>
@@ -694,9 +705,36 @@ export default function PracticeDashboard() {
                                         </label>
                                     )}
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible"><InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} /></td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible"><InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} /></td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible"><InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} /></td>
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
+                                    <div className="flex flex-col items-center gap-1">
+                                        {(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
+                                        <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} />
+                                    </div>
+                                </td>
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
+                                    <div className="flex flex-col items-center gap-1">
+                                        {(client.nitaAmount !== undefined && client.nitaAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.nitaAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
+                                        <StatusBadge status="due" />
+                                    </div>
+                                </td>
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
+                                    <div className="flex flex-col items-center gap-1">
+                                        {(client.housingLevyAmount !== undefined && client.housingLevyAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.housingLevyAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
+                                        <StatusBadge status="due" />
+                                    </div>
+                                </td>
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
+                                    <div className="flex flex-col items-center gap-1">
+                                        {(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
+                                        <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} />
+                                    </div>
+                                </td>
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
+                                    <div className="flex flex-col items-center gap-1">
+                                        {(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
+                                        <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} />
+                                    </div>
+                                </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-3 sm:py-4">
                                     <div className="flex flex-col gap-1.5">
                                         {client.payeZipUrl ? (
@@ -743,43 +781,100 @@ export default function PracticeDashboard() {
         </div>
     );
 
-    const renderMatrixGrid = () => (
-        <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
-            <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
-                <table className="w-full text-left text-sm text-slate-300">
-                    <thead className="border-b border-slate-800 bg-slate-900 rounded-t-2xl text-xs uppercase text-slate-400">
-                        <tr>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">VAT</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">TOT</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">MRI</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">DST</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/50">
-                        {clients.filter(c => {
-                            return c.vat !== 'na' || c.tot !== 'na' || c.mri !== 'na' || c.dst !== 'na';
-                        }).map((client) => (
-                            <tr key={client.id} className="transition hover:bg-slate-800/50">
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
-                                    <div className="font-semibold text-white">{client.name}</div>
-                                    <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
-                                </td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.vat} /></td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.tot} /></td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.mri} /></td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.dst} /></td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right">
-                                    <button className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">Actions</button>
-                                </td>
+    const renderMatrixGrid = () => {
+        // Flatten clients into specific obligations for the VAT & Monthly Returns
+        const obligations: { client: any; type: string; status: TaxStatus }[] = [];
+        clients.forEach(c => {
+            if (c.vat !== 'na') obligations.push({ client: c, type: 'VAT', status: c.vat });
+            if (c.tot !== 'na') obligations.push({ client: c, type: 'TOT', status: c.tot });
+            if (c.dst !== 'na') obligations.push({ client: c, type: 'DST', status: c.dst });
+            if (c.mri !== 'na') obligations.push({ client: c, type: 'MRI', status: c.mri });
+        });
+
+        return (
+            <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+                <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
+                    <table className="w-full text-left text-sm text-slate-300">
+                        <thead className="border-b border-slate-800 bg-slate-900 rounded-t-2xl text-xs uppercase text-slate-400">
+                            <tr>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Client Info</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Obligation</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Required Data</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Computed Tax</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Status</th>
+                                <th className="px-4 py-4 font-semibold text-right uppercase tracking-wider">Actions</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/50">
+                            {obligations.map((ob, idx) => (
+                                <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50">
+                                    <td className="px-4 py-4">
+                                        <div className="font-semibold text-white">{ob.client.name}</div>
+                                        <div className="mt-1 text-xs text-slate-500">PIN: {ob.client.pin}</div>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-300">
+                                            {ob.type}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        {ob.type === 'VAT' && (
+                                            <div className="flex flex-col gap-2">
+                                                <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-blue-500/10 px-2 py-1.5 font-medium text-blue-400 hover:bg-blue-500/20 transition">
+                                                    <Upload className="h-3.5 w-3.5" /> Upload Sales CSV
+                                                </button>
+                                                <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-rose-500/10 px-2 py-1.5 font-medium text-rose-400 hover:bg-rose-500/20 transition">
+                                                    <Upload className="h-3.5 w-3.5" /> Upload Purchases CSV
+                                                </button>
+                                            </div>
+                                        )}
+                                        {(ob.type === 'TOT' || ob.type === 'DST') && (
+                                            <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-blue-500/10 px-3 py-1.5 font-medium text-blue-400 hover:bg-blue-500/20 transition w-full max-w-[160px]">
+                                                <Upload className="h-3.5 w-3.5" /> Upload Sales CSV
+                                            </button>
+                                        )}
+                                        {ob.type === 'MRI' && (
+                                            <div className="flex items-center gap-2 max-w-[200px]">
+                                                <span className="text-xs font-medium text-slate-500">KES</span>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Rent Amount"
+                                                    value={mriInputVals[ob.client.id] || ''}
+                                                    onChange={e => setMriInputVals(prev => ({ ...prev, [ob.client.id]: e.target.value }))}
+                                                    className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-emerald-500"
+                                                />
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        <span className="text-slate-500 text-xs italic">Pending Data</span>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        <StatusBadge status={ob.status} />
+                                    </td>
+                                    <td className="px-4 py-4 text-right">
+                                        <button className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition">
+                                            Process Return
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {obligations.length === 0 && (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-12 text-center">
+                                        <div className="flex flex-col items-center justify-center text-slate-500">
+                                            <TerminalSquare className="h-8 w-8 mb-3 opacity-20" />
+                                            <p>No active Monthly Return obligations configured for any clients.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     return (
         <div className="flex h-screen bg-slate-950 font-sans antialiased selection:bg-emerald-500/30">
@@ -814,14 +909,14 @@ export default function PracticeDashboard() {
                         </button>
                         
                         <div className="pt-6 pb-2 px-3">
-                            <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Split-Timeline Desks</p>
+                            <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Tax Filing Desks</p>
                         </div>
                         <button onClick={() => { setView('desk-9th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-9th' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
                             <span className="flex items-center gap-3"><Users className="h-4 w-4" /> Payroll Desk</span>
                             <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-amber-500/20 px-1 text-xs font-bold text-amber-500">{payrollPendingCount}</span>
                         </button>
                         <button onClick={() => { setView('desk-20th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-20th' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><TerminalSquare className="h-4 w-4" /> 20th Desk</span>
+                            <span className="flex items-center gap-3"><TerminalSquare className="h-4 w-4" /> VAT & Monthly Returns</span>
                             <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-amber-500/20 px-1 text-xs font-bold text-amber-500">{taxPendingCount}</span>
                         </button>
                         <button onClick={() => { setView('desk-elevy'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-elevy' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
@@ -883,7 +978,7 @@ export default function PracticeDashboard() {
                             <div>
                                 {view === 'overview' && <h1 className="text-3xl font-black text-white">Practice Overview</h1>}
                                 {view === 'desk-9th' && <h1 className="text-3xl font-black text-emerald-400">Payroll Pipeline</h1>}
-                                {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-400">20th Due-Date Pipeline</h1>}
+                                {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-400">Monthly Returns Pipeline</h1>}
                                 {view === 'desk-elevy' && <h1 className="text-3xl font-black text-fuchsia-400">Tourism Fund E-Levy Pipeline</h1>}
                                 {view === 'clients' && <h1 className="text-3xl font-black text-white">Client Portfolio</h1>}
                                 <p className="mt-2 text-sm text-slate-400">Manage bulk payroll processing for {payrollClients.length} active client{payrollClients.length === 1 ? '' : 's'}.</p>
@@ -922,7 +1017,7 @@ export default function PracticeDashboard() {
                                     </button>
                                     <button onClick={() => setView('desk-20th')} className="text-left rounded-2xl border border-slate-800 bg-slate-900/50 p-6 transition-all hover:bg-slate-800 hover:border-slate-700">
                                         <div className="flex items-center justify-between">
-                                            <p className="text-sm font-medium text-slate-400">20th Desk (Taxes)</p>
+                                            <p className="text-sm font-medium text-slate-400">VAT & Monthly Returns (Taxes)</p>
                                             <CalendarClock className="h-5 w-5 text-blue-500" />
                                         </div>
                                         <p className="mt-4 text-3xl font-black text-white">{taxPendingCount} <span className="text-lg font-normal text-slate-500">remittances</span></p>
@@ -1228,8 +1323,74 @@ export default function PracticeDashboard() {
                                         </div>
                                     )}
 
+                                
                                 </div>
                             </div>
+                            
+                            {/* Non-Payroll VAT/TOT/DST Modal Section */}
+                            {newClientObligations.some(ob => ['vat', 'tot', 'dst'].includes(ob)) && (
+                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3">
+                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
+                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
+                                                </h3>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST Setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Non-Payroll MRI Modal Section */}
+                            {newClientObligations.includes('mri') && (
+                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3">
+                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
+                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
+                                                </h3>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time Rent Amount (KES) manually per client directly in the desk interface before filing.</p>
+                                    </div>
+                                </div>
+                            )}
+
+                                                        {/* Non-Payroll VAT/TOT/DST Modal Section */}
+                            {newClientObligations.some(ob => ['vat', 'tot', 'dst'].includes(ob)) && (
+                                <div className="pt-4 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3">
+                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
+                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
+                                                </h3>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST Setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Non-Payroll MRI Modal Section */}
+                            {newClientObligations.includes('mri') && (
+                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
+                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3">
+                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
+                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
+                                                </h3>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time Rent Amount (KES) manually per client directly in the table before filing.</p>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="flex items-center justify-end gap-3 border-t border-slate-800 bg-slate-900/50 p-6 rounded-b-2xl">
                                 <button onClick={() => {
                                     setShowNewClientModal(false);

@@ -40,7 +40,12 @@ export async function initDb() {
             vat TEXT DEFAULT 'na',
             tot TEXT DEFAULT 'na',
             mri TEXT DEFAULT 'na',
-            dst TEXT DEFAULT 'na'
+            dst TEXT DEFAULT 'na',
+            payeAmount REAL,
+            nitaAmount REAL,
+            housingLevyAmount REAL,
+            nssfAmount REAL,
+            shaAmount REAL
         )
     `);
 
@@ -71,6 +76,16 @@ export async function initDb() {
         const sourceExcel = path.resolve(__dirname, '..', '..', 'Axon_Unified_Payroll_Template_v3.xlsx');
         if (fs.existsSync(sourceExcel)) {
             fs.copyFileSync(sourceExcel, path.join(frontendDir, 'Axon_Unified_Payroll_Template_v3.xlsx'));
+        }
+    }
+
+    // Dynamic schema evolution for the new amounts
+    const columns = ['payeAmount', 'nitaAmount', 'housingLevyAmount', 'nssfAmount', 'shaAmount'];
+    for (const col of columns) {
+        try {
+            await db.run(`ALTER TABLE clients ADD COLUMN ${col} REAL`);
+        } catch (e) {
+            // Already exist
         }
     }
 

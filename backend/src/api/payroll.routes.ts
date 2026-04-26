@@ -138,12 +138,22 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Reque
                     nssfFileUrl = COALESCE(?, nssfFileUrl),
                     nssfFileLabel = COALESCE(?, nssfFileLabel),
                     shaFileUrl = COALESCE(?, shaFileUrl),
-                    shaFileLabel = COALESCE(?, shaFileLabel)
+                    shaFileLabel = COALESCE(?, shaFileLabel),
+                    payeAmount = COALESCE(?, payeAmount),
+                    nitaAmount = COALESCE(?, nitaAmount),
+                    housingLevyAmount = COALESCE(?, housingLevyAmount),
+                    nssfAmount = COALESCE(?, nssfAmount),
+                    shaAmount = COALESCE(?, shaAmount)
                 WHERE id = ?
             `, [
                 payeInfo?.url || null, payeInfo?.label || null,
                 nssfInfo?.url || null, nssfInfo?.label || null,
                 shaInfo?.url || null,  shaInfo?.label || null,
+                outputPaths.summaryAmounts?.payeAmount || null,
+                outputPaths.summaryAmounts?.nitaAmount || null,
+                outputPaths.summaryAmounts?.housingLevyAmount || null,
+                outputPaths.summaryAmounts?.nssfAmount || null,
+                outputPaths.summaryAmounts?.shaAmount || null,
                 clientId
             ]);
         }

@@ -1,0 +1,124 @@
+const [isGeneratingZips, setIsGeneratingZips] = useState(false);
+    const [isGlobalUploading, setIsGlobalUploading] = useState(false);
+    const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
+    const [uploadingClientIds, setUploadingClientIds] = useState<Record<string, boolean>>({});
+    const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+    // New Client Modal State
+    const [showNewClientModal, setShowNewClientModal] = useState(false);
+    const [newClientObligations, setNewClientObligations] = useState<string[]>([]);
+    const [newClientName, setNewClientName] = useState('');
+    const [newClientPin, setNewClientPin] = useState('');
+    const [newClientPassword, setNewClientPassword] = useState('');
+    const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
+    const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
+
+    useEffect(() => {
+        fetchClients();
+    }, []);
+
+    const fetchClients = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/clients');
+            const data = await res.json();
+            setClients(data);
+        } catch (error) {
+            console.error('Failed to fetch clients', error);
+            setDashboardNotice({ tone: 'error', message: 'Failed to load clients from database.' });
+        }
+    };
+
+    const handleSaveClient = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/clients', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: newClientName,
+                    pin: newClientPin,
+                    password: newClientPassword,
+                    obligations: newClientObligations.join(', '),
+                })
+            });
+            if (res.ok) {
+                const newClient = await res.json();
+                if (newClientObligations.includes('paye') && newClientMasterCsv) {
+                    setDashboardNotice({ tone: 'info', message: 'Generating standardized master CSV...' });
+                    await handleUploadMasterCsv(newClient.id, newClientMasterCsv);
+                } else {
+                    setDashboardNotice({ tone: 'success', message: 'Client saved successfully.' });
+                    fetchClients();
+                }
+                setShowNewClientModal(false);
+                setNewClientName('');
+                setNewClientPin('');
+                setNewClientPassword('');
+                setNewClientObligations([]);
+                setNewClientMasterCsv(null);
+            } else {
+                setDashboardNotice({ tone: 'error', message: 'Failed to save client.' });
+            }
+        } catch (error) {
+            console.error('Save client error:', error);
+            setDashboardNotice({ tone: 'error', message: 'Failed to save client.' });
+        }
+    };
+
+    const handleGlobalMasterCsvUpload = async (file: File) => {
+        setIsGlobalUploading(true);
+        setDashboardNotice({ tone: 'info', message: 'Analyzing Master CSV...' });
+
+        try {
+            const formData = new FormData();
+            formData.append('payrollFile', file);
+            formData.append('generatePaye', 'true');
+            formData.append('generateNssf', 'true');
+            formData.append('generateSha', 'true');
+            
+            const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Failed to generate unified payroll files.');
+            }
+
+            const data = await response.json();
+            
+            if (data.masterZipUrl) {
+                const a = document.createElement('a');
+                a.href = data.masterZipUrl;
+                a.download = data.masterZipUrl.split('/').pop() || 'Payroll_Auto_Generated.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+
+            setDashboardNotice({ tone: 'success', message: 'Auto-generated payroll files successfully downloaded!' });
+            
+        } catch (error: any) {
+            setDashboardNotice({ tone: 'error', message: error.message || 'Error processing the Master CSV.' });
+        } finally {
+            setIsGlobalUploading(false);
+        }
+    };
+
+    const handleUploadMasterCsv = async (clientId: string, file: File) => {
+        setUploadingClientIds(current => ({ ...current, [clientId]: true }));
+        const formData = new FormData();
+        formData.append('masterCsv', file);
+        try {
+            const res = await fetch(`http://localhost:3001/api/clients/${clientId}/master-csv`, {
+                method: 'POST',
+                body: formData
+            });
+            if (res.ok) {
+                setDashboardNotice({ tone: 'success', message: 'Master CSV uploaded securely.' });
+                fetchClients(); // Refresh client data to show new URL
+            } else {
+                setDashboardNotice({ tone: 'error', message: 'Failed to upload CSV.' });
+            }
+        } catch (err) {
+            setDashboardNotic

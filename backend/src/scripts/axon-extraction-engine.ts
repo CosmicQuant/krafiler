@@ -438,8 +438,16 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         const nssfFilePath = activeOptions.generateNssf ? await engine.generateNSSFExcel(employees) : null;
         const payeZipPath = activeOptions.generatePaye ? await engine.generatePAYEZip(employees) : null;
 
+        const summaryAmounts = {
+            payeAmount: employees.reduce((sum, emp) => sum + (Number(emp.paye) || 0), 0),
+            nitaAmount: employees.length * 50, // Standard NITA deduction per employee
+            housingLevyAmount: employees.reduce((sum, emp) => sum + (Number(emp.ahl) || 0), 0),
+            nssfAmount: employees.reduce((sum, emp) => sum + (Number(emp.nssfContribution) || 0), 0),
+            shaAmount: employees.reduce((sum, emp) => sum + (Number(emp.shaContribution) || 0), 0)
+        };
+
         console.log('--- Compliance Files Generation Complete ---');
-        return { shaFilePath, nssfFilePath, payeZipPath, companyConfig };
+        return { shaFilePath, nssfFilePath, payeZipPath, companyConfig, summaryAmounts };
     } catch (error) {
         console.error('Error generating compliance files:', error);
         throw error;

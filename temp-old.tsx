@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import CompanyDetails from './CompanyDetails';
 import {
     Activity,
     Building2,
@@ -22,7 +21,6 @@ import {
     RefreshCw,
     Rocket,
   Upload,
-  Cloud,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -41,11 +39,9 @@ const plans: Record<PlanKey, PracticePlan> = {
     enterprise: { label: 'Enterprise Desk', capacity: 'Unlimited', used: 142 },
 };
 
-export type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
+type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
 
-export type ClientObligation = {
-    iTaxPassword?: string;
-    sector?: string;
+type ClientObligation = {
     id: string;
     name: string;
     pin: string;
@@ -170,11 +166,9 @@ const ZipIcon = ({ className }: { className?: string }) => (
 
 export default function PracticeDashboard() {
     const [view, setView] = useState<DashboardView>('desk-9th');
-    const [monthlyReturnFilter, setMonthlyReturnFilter] = useState<'ALL' | 'VAT' | 'TOT' | 'MRI' | 'DST'>('VAT');
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [selectedPlan, setSelectedPlan] = useState<PlanKey>('growth');
     const [clients, setClients] = useState<ClientObligation[]>([]);
-    const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
     const [isGeneratingZips, setIsGeneratingZips] = useState(false);
     const [isGlobalUploading, setIsGlobalUploading] = useState(false);
     const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
@@ -188,9 +182,6 @@ export default function PracticeDashboard() {
     const [newClientPin, setNewClientPin] = useState('');
     const [newClientPassword, setNewClientPassword] = useState('');
     const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
-    const [etimsConnections, setEtimsConnections] = useState<Record<string, boolean>>({});
-    const [etimsModalClient, setEtimsModalClient] = useState<any | null>(null);
-    const [etimsPassword, setEtimsPassword] = useState('');
     const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
 
     useEffect(() => {
@@ -635,19 +626,18 @@ export default function PracticeDashboard() {
                         </div>
                     ))}
                 </div>
-                <div className="overflow-x-auto">
-<table className="hidden lg:table w-full text-left text-sm text-slate-300">
+                <table className="hidden lg:table w-full text-left text-sm text-slate-300">
                     <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
                         <tr>
                             <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
-                            <th className="px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Master CSV</th>
-                            <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>PAYE</th>
-                              <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>NITA</th>
-                              <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>H. Levy</th>
-                              <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>NSSF</th>
-                              <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>SHA</th>
-                            <th className="px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Latest Files</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider w-32 min-w-[120px]">Action</th>
+                            <th className="px-2 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider">Master CSV</th>
+                            <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>PAYE</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>NITA</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>H. Levy</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>NSSF</th>
+                              <th className='px-1 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider text-center'>SHA</th>
+                            <th className="px-2 py-3 sm:px-3 sm:py-4 font-semibold uppercase tracking-wider">Latest Files</th>
+                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider">Action</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/50">
@@ -657,7 +647,7 @@ export default function PracticeDashboard() {
                                     <div className="font-semibold text-white">{client.name}</div>
                                     <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">
+                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-3 sm:py-4">
                                     {client.masterFileUrl ? (
                                         <div className="flex items-center gap-1.5 max-w-[160px] md:max-w-[240px]">
                                             <a href={client.masterFileUrl} target="_blank" rel="noreferrer" className="flex flex-1 items-center gap-2 truncate rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition">
@@ -715,37 +705,37 @@ export default function PracticeDashboard() {
                                         </label>
                                     )}
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
                                         <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} />
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.nitaAmount !== undefined && client.nitaAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.nitaAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
                                         <StatusBadge status="due" />
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.housingLevyAmount !== undefined && client.housingLevyAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.housingLevyAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
                                         <StatusBadge status="due" />
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
                                         <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} />
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
+                                <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-3 sm:py-4 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
                                         <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} />
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">
+                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-3 sm:py-4">
                                     <div className="flex flex-col gap-1.5">
                                         {client.payeZipUrl ? (
                                             <a href={client.payeZipUrl} target="_blank" rel="noreferrer" className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 hover:underline" title={client.payeZipLabel}>
@@ -787,14 +777,13 @@ export default function PracticeDashboard() {
                         ))}
                     </tbody>
                 </table>
-                </div>
             </div>
         </div>
     );
 
     const renderMatrixGrid = () => {
         // Flatten clients into specific obligations for the VAT & Monthly Returns
-        let obligations: { client: any; type: string; status: TaxStatus }[] = [];
+        const obligations: { client: any; type: string; status: TaxStatus }[] = [];
         clients.forEach(c => {
             if (c.vat !== 'na') obligations.push({ client: c, type: 'VAT', status: c.vat });
             if (c.tot !== 'na') obligations.push({ client: c, type: 'TOT', status: c.tot });
@@ -802,166 +791,80 @@ export default function PracticeDashboard() {
             if (c.mri !== 'na') obligations.push({ client: c, type: 'MRI', status: c.mri });
         });
 
-        // Filter obligations based on toggle
-        if (monthlyReturnFilter !== 'ALL') {
-            obligations = obligations.filter(ob => ob.type === monthlyReturnFilter);
-        }
-
-        const statsCount = {
-            ALL: obligations.length,
-            VAT: obligations.filter(ob => ob.type === 'VAT').length,
-            TOT: obligations.filter(ob => ob.type === 'TOT').length,
-            MRI: obligations.filter(ob => ob.type === 'MRI').length,
-            DST: obligations.filter(ob => ob.type === 'DST').length,
-        };
-
         return (
-            <div className="mt-8">
-                {/* 1. The Toggle UI */}
-                <div className="mb-6 flex flex-wrap gap-3 items-center">
-                    {['VAT', 'TOT', 'MRI', 'DST', 'ALL'].map(t => (
-                        <button
-                            key={t}
-                            onClick={() => setMonthlyReturnFilter(t as any)}
-                            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                                monthlyReturnFilter === t
-                                    ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
-                                    : 'border border-slate-700 bg-slate-800/50 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
-                            }`}
-                        >
-                            {t === 'ALL' ? 'All Returns' : `${t} Returns`}
-                        </button>
-                    ))}
-                </div>
-
-            {/* 2. The Matrix Table Wrapper */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+            <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
                 <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
                     <table className="w-full text-left text-sm text-slate-300">
                         <thead className="border-b border-slate-800 bg-slate-900 rounded-t-2xl text-xs uppercase text-slate-400">
                             <tr>
                                 <th className="px-4 py-4 font-semibold uppercase tracking-wider">Client Info</th>
-                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Return Data / Source</th>
-                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Tax Calculation details</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Obligation</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Required Data</th>
+                                <th className="px-4 py-4 font-semibold uppercase tracking-wider">Computed Tax</th>
                                 <th className="px-4 py-4 font-semibold uppercase tracking-wider">Status</th>
                                 <th className="px-4 py-4 font-semibold text-right uppercase tracking-wider">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/50">
-                            {obligations.map((ob, idx) => {
-                                const isEtimsConnected = etimsConnections[ob.client.id];
-                                
-                                return (
-                                <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50 group">
+                            {obligations.map((ob, idx) => (
+                                <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50">
                                     <td className="px-4 py-4">
                                         <div className="font-semibold text-white">{ob.client.name}</div>
-                                        <div className="mt-1 flex items-center gap-2">
-                                            <span className="text-xs text-slate-500">PIN: {ob.client.pin}</span>
-                                            <span className="inline-flex rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-300">
-                                                {ob.type}
-                                            </span>
-                                        </div>
+                                        <div className="mt-1 text-xs text-slate-500">PIN: {ob.client.pin}</div>
                                     </td>
-                                    <td className="px-4 py-4 align-top pt-5">
-                                        {(ob.type === 'VAT' || ob.type === 'TOT') && (
-                                            <div>
-                                                {isEtimsConnected ? (
-                                                    <div className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/10 px-4 py-2 mt-1 text-xs font-semibold text-emerald-400 border border-emerald-500/20">
-                                                        <CheckCircle2 className="h-4 w-4" /> eTIMS Connected
-                                                    </div>
-                                                ) : (
-                                                    <button 
-                                                        onClick={() => setEtimsModalClient(ob.client)}
-                                                        className="inline-flex items-center gap-2 rounded-xl bg-blue-500/10 px-4 py-2.5 mt-1 text-xs font-bold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition shadow-sm border border-blue-500/20"
-                                                    >
-                                                        <Cloud className="h-4 w-4" /> Connect eTIMS Data
-                                                    </button>
-                                                )}
+                                    <td className="px-4 py-4">
+                                        <span className="inline-flex rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-300">
+                                            {ob.type}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-4">
+                                        {ob.type === 'VAT' && (
+                                            <div className="flex flex-col gap-2">
+                                                <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-blue-500/10 px-2 py-1.5 font-medium text-blue-400 hover:bg-blue-500/20 transition">
+                                                    <Upload className="h-3.5 w-3.5" /> Upload Sales CSV
+                                                </button>
+                                                <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-rose-500/10 px-2 py-1.5 font-medium text-rose-400 hover:bg-rose-500/20 transition">
+                                                    <Upload className="h-3.5 w-3.5" /> Upload Purchases CSV
+                                                </button>
                                             </div>
                                         )}
-                                        {ob.type === 'DST' && (
-                                            <button className="text-xs flex items-center justify-center gap-1.5 rounded-xl mt-1 bg-fuchsia-500/10 px-4 py-2.5 font-bold text-fuchsia-400 hover:bg-fuchsia-500/20 transition w-full max-w-[200px] border border-fuchsia-500/20">
-                                                <Upload className="h-4 w-4" /> Upload Sales CSV
+                                        {(ob.type === 'TOT' || ob.type === 'DST') && (
+                                            <button className="text-xs flex items-center justify-center gap-1.5 rounded bg-blue-500/10 px-3 py-1.5 font-medium text-blue-400 hover:bg-blue-500/20 transition w-full max-w-[160px]">
+                                                <Upload className="h-3.5 w-3.5" /> Upload Sales CSV
                                             </button>
                                         )}
                                         {ob.type === 'MRI' && (
-                                            <div className="flex flex-col gap-1.5 max-w-[240px]">
-                                                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Monthly Rental Income</label>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-medium text-slate-500">KES</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="Rent Amount"
-                                                        value={mriInputVals[ob.client.id] || ''}
-                                                        onChange={e => setMriInputVals(prev => ({ ...prev, [ob.client.id]: e.target.value }))}
-                                                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white placeholder-slate-500 outline-none focus:border-rose-500 transition shadow-inner"
-                                                    />
-                                                </div>
+                                            <div className="flex items-center gap-2 max-w-[200px]">
+                                                <span className="text-xs font-medium text-slate-500">KES</span>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Rent Amount"
+                                                    value={mriInputVals[ob.client.id] || ''}
+                                                    onChange={e => setMriInputVals(prev => ({ ...prev, [ob.client.id]: e.target.value }))}
+                                                    className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-emerald-500"
+                                                />
                                             </div>
                                         )}
                                     </td>
-                                    <td className="px-4 py-4 min-w-[280px]">
-                                        {ob.type === 'VAT' && (
-                                            <div className="flex flex-col gap-2 rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-slate-600 transition">
-                                                <div className="flex justify-between items-center text-xs">
-                                                    <span className="text-slate-400 font-medium">Input VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Purchases)</span></span>
-                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {isEtimsConnected ? '68,400.00' : '0.00'}</span>
-                                                </div>
-                                                <div className="flex justify-between items-center text-xs">
-                                                    <span className="text-slate-400 font-medium">Output VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Sales)</span></span>
-                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {isEtimsConnected ? '124,500.00' : '0.00'}</span>
-                                                </div>
-                                                <div className="border-t border-slate-700/80 my-1 pt-2.5 flex justify-between items-center text-xs">
-                                                    <span className="font-bold text-blue-400">VAT Payable <span className="font-normal text-[10px] ml-1 opacity-70">(Remaining)</span></span>
-                                                    <span className="font-black text-[13px] text-blue-400 drop-shadow-sm">KES {isEtimsConnected ? '56,100.00' : '0.00'}</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {ob.type === 'TOT' && (
-                                            <div className="flex flex-col gap-2 rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-slate-600 transition">
-                                                <div className="flex justify-between items-center text-xs">
-                                                    <span className="text-slate-400 font-medium">Total Sales <span className="font-normal text-[10px] ml-1 text-slate-500">(eTIMS)</span></span>
-                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {isEtimsConnected ? '450,000.00' : '0.00'}</span>
-                                                </div>
-                                                <div className="border-t border-slate-700/80 my-1 pt-2.5 flex justify-between items-center text-xs">
-                                                    <span className="font-bold text-blue-400">1.5% Computed TOT</span>
-                                                    <span className="font-black text-[13px] text-blue-400 drop-shadow-sm">KES {isEtimsConnected ? '6,750.00' : '0.00'}</span>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {ob.type === 'MRI' && (
-                                            <div className="flex flex-col rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-rose-900/30 transition">
-                                                <div className="flex justify-between items-center text-xs">
-                                                    <span className="font-bold text-rose-400">7.5% Computed Tax</span>
-                                                    <span className="font-black text-[13px] text-rose-400 drop-shadow-sm">
-                                                        KES {mriInputVals[ob.client.id] && !isNaN(parseFloat(mriInputVals[ob.client.id])) 
-                                                            ? (parseFloat(mriInputVals[ob.client.id]) * 0.075).toLocaleString(undefined, {minimumFractionDigits: 2}) 
-                                                            : '0.00'}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {ob.type === 'DST' && (
-                                            <span className="text-slate-500 text-xs italic">Pending CSV Data</span>
-                                        )}
+                                    <td className="px-4 py-4">
+                                        <span className="text-slate-500 text-xs italic">Pending Data</span>
                                     </td>
-                                    <td className="px-4 py-4 pt-5 align-top">
+                                    <td className="px-4 py-4">
                                         <StatusBadge status={ob.status} />
                                     </td>
-                                    <td className="px-4 py-4 pt-5 align-top text-right">
-                                        <button className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition shadow-sm drop-shadow mt-1">
+                                    <td className="px-4 py-4 text-right">
+                                        <button className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition">
                                             Process Return
                                         </button>
                                     </td>
                                 </tr>
-                                );
-                            })}
+                            ))}
                             {obligations.length === 0 && (
                                 <tr>
-                                    <td colSpan={5} className="px-4 py-12 text-center">
+                                    <td colSpan={6} className="px-4 py-12 text-center">
                                         <div className="flex flex-col items-center justify-center text-slate-500">
                                             <TerminalSquare className="h-8 w-8 mb-3 opacity-20" />
-                                            <p>No returns found for this filter.</p>
+                                            <p>No active Monthly Return obligations configured for any clients.</p>
                                         </div>
                                     </td>
                                 </tr>
@@ -970,7 +873,6 @@ export default function PracticeDashboard() {
                     </table>
                 </div>
             </div>
-        </div>
         );
     };
 
@@ -1010,7 +912,7 @@ export default function PracticeDashboard() {
                             <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Tax Filing Desks</p>
                         </div>
                         <button onClick={() => { setView('desk-9th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-9th' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><Users className="h-4 w-4" /> Payroll Processing</span>
+                            <span className="flex items-center gap-3"><Users className="h-4 w-4" /> Payroll Desk</span>
                             <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-amber-500/20 px-1 text-xs font-bold text-amber-500">{payrollPendingCount}</span>
                         </button>
                         <button onClick={() => { setView('desk-20th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-20th' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
@@ -1100,8 +1002,7 @@ export default function PracticeDashboard() {
                         </div>
                     )}
 
-                    {selectedClient && <div className="mt-10"><CompanyDetails client={selectedClient} onBack={() => setSelectedClient(null)} onSave={(updated) => { setClients(clients.map(c => c.id === updated.id ? updated : c)); setSelectedClient(null); }} /></div>}
-                    {!selectedClient && view === 'overview' && (
+                    {view === 'overview' && (
                         <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_350px]">
                             {/* Left Col: Summary / Stats */}
                             <div className="space-y-6">
@@ -1109,7 +1010,7 @@ export default function PracticeDashboard() {
                                 <div className="grid gap-4 sm:grid-cols-2">
                                     <button onClick={() => setView('desk-9th')} className="text-left rounded-2xl border border-slate-800 bg-slate-900/50 p-6 transition-all hover:bg-slate-800 hover:border-slate-700">
                                         <div className="flex items-center justify-between">
-                                        <p className="text-sm font-medium text-slate-400">Payroll Processing</p>
+                                        <p className="text-sm font-medium text-slate-400">Payroll Desk</p>
                                             <CalendarClock className="h-5 w-5 text-emerald-500" />
                                         </div>
                                         <p className="mt-4 text-3xl font-black text-white">{payrollPendingCount} <span className="text-lg font-normal text-slate-500">pending packs</span></p>
@@ -1227,14 +1128,14 @@ export default function PracticeDashboard() {
                         </div>
                     )}
 
-                    {!selectedClient && view === 'desk-9th' && (
+                    {view === 'desk-9th' && (
                         <div className="mt-10">
                             {renderGlobalPayrollUpload()}
                             {render9thDeskGrid()}
                         </div>
                     )}
 
-                    {!selectedClient && view === 'desk-20th' && (
+                    {view === 'desk-20th' && (
                         <div className="mt-10">
                             <div className="grid gap-6 sm:grid-cols-4">
                                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
@@ -1260,7 +1161,7 @@ export default function PracticeDashboard() {
                         </div>
                     )}
 
-                    {!selectedClient && view === 'desk-elevy' && (
+                    {view === 'desk-elevy' && (
                         <div className="mt-10">
                             <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
                                 <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
@@ -1296,46 +1197,7 @@ export default function PracticeDashboard() {
             </div>
 
             {/* Onboard Client Modal */}
-                                {view === 'clients' && !selectedClient && (
-                        <div className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
-                            <div className="overflow-x-auto pb-8">
-                                <table className="w-full text-left text-sm text-slate-300">
-                                    <thead className="border-b border-slate-800 bg-slate-900/50">
-                                        <tr>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">Firm / Client</th>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">KRA PIN</th>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">Active Obligations</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-800/50">
-                                        {clients.map(client => (
-                                            <tr key={client.id} className="transition hover:bg-slate-800/50">
-                                                <td className="px-4 py-4">
-                                                    <button onClick={() => setSelectedClient(client)} className="flex items-center gap-3 text-left hover:opacity-80">
-                                                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><Building2 className="h-5 w-5" /></div>
-                                                        <div className="font-bold text-white hover:text-emerald-400 hover:underline">{client.name}</div>
-                                                    </button>
-                                                </td>
-                                                <td className="px-4 py-4 font-mono text-slate-400">{client.pin}</td>
-                                                <td className="px-4 py-4">
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {Object.entries({ vat: client.vat, tot: client.tot, mri: client.mri, paye: client.paye, nssf: client.nssf, sha: client.sha, eLevy: client.eLevy }).map(([obs, status]) => {
-                                                            if (status !== 'na' && status) {
-                                                                return <span key={obs} className="inline-flex rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">{obs}</span>;
-                                                            }
-                                                            return null;
-                                                        })}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-
-                    {showNewClientModal && (
+            {showNewClientModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
                     <div className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
                         <div className="flex items-center justify-between border-b border-slate-800 p-6">

@@ -1,0 +1,212 @@
+import { useState } from 'react';
+import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive } from 'lucide-react';
+import { ClientObligation } from './PracticeDashboard'; // I need to move the type or define it here or assume `any`.
+
+interface CompanyDetailsProps {
+    client: ClientObligation; // We'll pass the client from PracticeDashboard
+    onBack: () => void;
+    onSave: (updatedClient: ClientObligation) => void;
+}
+
+export default function CompanyDetails({ client, onBack, onSave }: CompanyDetailsProps) {
+    const [formData, setFormData] = useState({ ...client });
+    const [vatInput, setVatInput] = useState('');
+    const [vatOutput, setVatOutput] = useState('');
+    const [totSales, setTotSales] = useState('');
+
+    const calculatedVat = (parseFloat(vatOutput) || 0) - (parseFloat(vatInput) || 0);
+    const calculatedTot = (parseFloat(totSales) || 0) * 0.015;
+
+    const handleSave = () => {
+        onSave(formData);
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <button onClick={onBack} className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition">
+                    <ArrowLeft className="h-4 w-4" /> Back to Dashboard
+                </button>
+                <button onClick={handleSave} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
+                    <Save className="h-4 w-4" /> Save Changes
+                </button>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
+                {/* Main Details Form */}
+                <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 backdrop-blur">
+                        <div className="flex items-center gap-3 mb-6">
+                            <Building2 className="h-6 w-6 text-emerald-500" />
+                            <h2 className="text-xl font-bold text-white">Company Profile</h2>
+                        </div>
+                        
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-400">Company Name</label>
+                                <input
+                                    type="text"
+                                    value={formData.name || ''}
+                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500 focus:bg-slate-800 transition"
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-400">KRA PIN</label>
+                                <input
+                                    type="text"
+                                    value={formData.pin || ''}
+                                    onChange={e => setFormData({ ...formData, pin: e.target.value.toUpperCase() })}
+                                    maxLength={11}
+                                    className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500 focus:bg-slate-800 transition"
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-400">iTax Password</label>
+                                <input
+                                    type="password"
+                                    value={formData.iTaxPassword || ''}
+                                    onChange={e => setFormData({ ...formData, iTaxPassword: e.target.value })}
+                                    className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500 focus:bg-slate-800 transition"
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-400">Industry / Sector</label>
+                                <input
+                                    type="text"
+                                    value={formData.sector || ''}
+                                    onChange={e => setFormData({ ...formData, sector: e.target.value })}
+                                    placeholder="e.g. Technology, Retail"
+                                    className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500 focus:bg-slate-800 transition"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Conditional Tax Sections based on Obligations */}
+                    {client.vat !== 'na' && (
+                        <div className="rounded-2xl border border-blue-500/20 bg-slate-900/50 p-6 backdrop-blur">
+                            <div className="flex items-center gap-3 mb-6">
+                                <Percent className="h-6 w-6 text-blue-400" />
+                                <h2 className="text-xl font-bold text-white">VAT Calculator</h2>
+                            </div>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label className="mb-1.5 block text-xs font-bold text-slate-400">Total Output TAX (Sales)</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Ksh."
+                                        value={vatOutput}
+                                        onChange={e => setVatOutput(e.target.value)}
+                                        className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500 focus:bg-slate-800 transition"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="mb-1.5 block text-xs font-bold text-slate-400">Total Input TAX (Purchases)</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Ksh."
+                                        value={vatInput}
+                                        onChange={e => setVatInput(e.target.value)}
+                                        className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500 focus:bg-slate-800 transition"
+                                    />
+                                </div>
+                            </div>
+                            <div className="mt-4 flex items-center justify-between rounded-xl bg-blue-500/10 p-4 border border-blue-500/20">
+                                <span className="text-sm font-semibold text-blue-100">Payable VAT (Output - Input):</span>
+                                <span className={`text-lg font-black ${calculatedVat > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                    {calculatedVat > 0 ? `Ksh. ${calculatedVat.toLocaleString()}` : calculatedVat < 0 ? `(Refund) Ksh. ${Math.abs(calculatedVat).toLocaleString()}` : "Ksh. 0"}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {client.tot !== 'na' && (
+                        <div className="rounded-2xl border border-amber-500/20 bg-slate-900/50 p-6 backdrop-blur">
+                            <div className="flex items-center gap-3 mb-6">
+                                <Calculator className="h-6 w-6 text-amber-400" />
+                                <h2 className="text-xl font-bold text-white">TOT (Turnover Tax) Calculator</h2>
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-400">Gross Monthly Sales (Turnover)</label>
+                                <input
+                                    type="number"
+                                    placeholder="Ksh."
+                                    value={totSales}
+                                    onChange={e => setTotSales(e.target.value)}
+                                    className="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 outline-none focus:border-amber-500 focus:bg-slate-800 transition"
+                                />
+                            </div>
+                            <div className="mt-4 flex items-center justify-between rounded-xl bg-amber-500/10 p-4 border border-amber-500/20">
+                                <span className="text-sm font-semibold text-amber-100">Calculated TOT (1.5%):</span>
+                                <span className="text-lg font-black text-amber-400">
+                                    Ksh. {calculatedTot.toLocaleString()}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Right Sidebar: Payroll & Files */}
+                <div className="space-y-6">
+                    {(client.paye !== 'na' || client.nssf !== 'na' || client.sha !== 'na') && (
+                        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 backdrop-blur">
+                            <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-400">Payroll Data</h3>
+                            <div className="space-y-3">
+                                {client.masterFileUrl ? (
+                                    <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800 p-3">
+                                        <div className="flex items-center gap-3">
+                                            <FileSpreadsheet className="h-5 w-5 text-emerald-500" />
+                                            <div className="flex flex-col">
+                                                <span className="text-xs font-semibold text-white">Master CSV</span>
+                                                <span className="text-[10px] text-slate-400">Uploaded</span>
+                                            </div>
+                                        </div>
+                                        <a href={client.masterFileUrl} download className="text-xs text-blue-400 hover:underline">View</a>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 p-4">
+                                        <span className="text-xs font-medium text-slate-500">No Master CSV</span>
+                                    </div>
+                                )}
+
+                                {client.payeZipUrl ? (
+                                    <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800 p-3">
+                                        <div className="flex items-center gap-3">
+                                            <FileArchive className="h-5 w-5 text-amber-500" />
+                                            <div className="flex flex-col">
+                                                <span className="text-xs font-semibold text-white">Generated PAYE</span>
+                                                <span className="text-[10px] text-slate-400">Ready to file</span>
+                                            </div>
+                                        </div>
+                                        <a href={client.payeZipUrl} download className="text-xs text-blue-400 hover:underline">ZIP</a>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 p-4">
+                                        <span className="text-xs font-medium text-slate-500">No Payroll ZIP</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 backdrop-blur">
+                        <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-400">Active Obligations</h3>
+                        <div className="flex flex-wrap gap-2">
+                            {['vat', 'tot', 'mri', 'dst', 'paye', 'nssf', 'sha', 'eLevy'].map(obs => {
+                                if (client[obs as keyof ClientObligation] !== 'na' && client[obs as keyof ClientObligation]) {
+                                    return (
+                                        <span key={obs} className="inline-flex rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold uppercase text-slate-300 border border-slate-700">
+                                            {obs}
+                                        </span>
+                                    );
+                                }
+                                return null;
+                            })}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}

@@ -69,11 +69,13 @@ const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     vat: [
         /^value\s*added\s*tax$/i,
         /^vat$/i,
+        /^Value\s*Added\s*Tax\s*\(VAT\)$/i,
         /value\s*added\s*tax/i,
     ],
     paye: [
         /^pay\s*as\s*you\s*earn$/i,
         /^paye$/i,
+        /^Income\s*Tax\s*-\s*PAYE$/i,
         /pay\s*as\s*you\s*earn/i,
     ],
     turnover_tax: [
@@ -209,7 +211,8 @@ async function waitForPortalReadyWithReload(
 
     for (let attempt = 0; attempt <= reloadAttempts; attempt += 1) {
         try {
-            await page.waitForLoadState('domcontentloaded', { timeout });
+            await page.waitForLoadState('domcontentloaded', { timeout: timeout * 2 }).catch(() => {});
+            await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
 
             // Check for KRA error page (session timeout / re-submit) early
             const errorSelectors = [
@@ -1360,18 +1363,22 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             console.log(`[Worker][${jobId}] Return select metadata:`, JSON.stringify(selectMetadata, null, 2));
         }
 
-        const typeSelect = page.locator('tr:has-text("Type") select').first();
-        await typeSelect.waitFor({ timeout: 10_000 });
-        const typeSelectDisabled = await typeSelect.isDisabled();
-        if (typeSelectDisabled) {
-            const currentType = await typeSelect.evaluate((select: any) => ({
-                value: String(select.value ?? '').trim(),
-                text: String(select.options?.[select.selectedIndex]?.textContent ?? '').trim(),
-            }));
-            console.log(`[Worker][${jobId}] Return type is locked by KRA: ${currentType.text} [${currentType.value}]`);
-        } else {
-            const typeChoice = await selectOptionByTextPatterns(typeSelect, [/^self$/i]);
-            console.log(`[Worker][${jobId}] Selected return type: ${typeChoice.text} [${typeChoice.value}]`);
+        const typeSelectLocator = page.locator('tr').filter({ hasText: 'Type' }).locator('select').locator('visible=true').first();
+        try {
+            await typeSelectLocator.waitFor({ state: 'visible', timeout: 10_000 });
+            const typeSelectDisabled = await typeSelectLocator.isDisabled();
+            if (typeSelectDisabled) {
+                const currentType = await typeSelectLocator.evaluate((select: any) => ({
+                    value: String(select.value ?? '').trim(),
+                    text: String(select.options?.[select.selectedIndex]?.textContent ?? '').trim(),
+                }));
+                console.log(`[Worker][${jobId}] Return type is locked by KRA: ${currentType.text} [${currentType.value}]`);
+            } else {
+                const typeChoice = await selectOptionByTextPatterns(typeSelectLocator, [/^self$/i]);
+                console.log(`[Worker][${jobId}] Selected return type: ${typeChoice.text} [${typeChoice.value}]`);
+            }
+        } catch (e: any) {
+            console.log(`[Worker][${jobId}] Type select dropdown not visible or error:`, e.message);
         }
 
         const obligationSelect = page.locator('select#regType, select[name="obligationId"]').first();

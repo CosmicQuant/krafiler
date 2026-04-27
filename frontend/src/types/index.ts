@@ -59,6 +59,7 @@ export interface FilingFormData {
     totYear?: number;
     totMonth?: number;
     totTurnover?: number;
+    payeZipUrl?: string;
     otpCode?: string;
 }
 

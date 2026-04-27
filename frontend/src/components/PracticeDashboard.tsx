@@ -177,7 +177,14 @@ export default function PracticeDashboard() {
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
     const [isGeneratingZips, setIsGeneratingZips] = useState(false);
     const [isGlobalUploading, setIsGlobalUploading] = useState(false);
+// @ts-ignore
+const [etimsConnections, setEtimsConnections] = useState<Record<string, boolean>>({});
+// @ts-ignore
+const [etimsModalClient, setEtimsModalClient] = useState<any>(null);
+// @ts-ignore
+const [etimsPassword, setEtimsPassword] = useState('');
     const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
+    const [activeJobs, setActiveJobs] = useState<Record<string, { id: string, state: string, progress: number, message: string, failedReason?: string }>>({});
     const [uploadingClientIds, setUploadingClientIds] = useState<Record<string, boolean>>({});
     const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -188,10 +195,7 @@ export default function PracticeDashboard() {
     const [newClientPin, setNewClientPin] = useState('');
     const [newClientPassword, setNewClientPassword] = useState('');
     const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
-    const [etimsConnections, setEtimsConnections] = useState<Record<string, boolean>>({});
-    const [etimsModalClient, setEtimsModalClient] = useState<any | null>(null);
-    const [etimsPassword, setEtimsPassword] = useState('');
-    const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
+                const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
 
     useEffect(() => {
         fetchClients();
@@ -378,6 +382,45 @@ export default function PracticeDashboard() {
         setDashboardNotice({ tone: 'success', message: `Updated ${field.toUpperCase()} status.` });
     };
 
+    
+    useEffect(() => {
+        const checkJobs = async () => {
+            const currentJobs = { ...activeJobs };
+            let hasChanges = false;
+
+            for (const [clientId, job] of Object.entries(currentJobs)) {
+                if (job.state === 'completed' || job.state === 'failed') continue;
+
+                try {
+                    const res = await fetch(`http://localhost:3001/api/tax/filing-status/${job.id}`);
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    
+                    const newMessage = data.lastStep ? data.lastStep.log : 'Processing...';
+                    if (currentJobs[clientId].state !== data.state || currentJobs[clientId].progress !== data.progress || currentJobs[clientId].message !== newMessage) {
+                        currentJobs[clientId] = {
+                            id: data.jobId,
+                            state: data.state,
+                            progress: data.progress || 0,
+                            message: newMessage,
+                            failedReason: data.failedReason || ''
+                        };
+                        hasChanges = true;
+                    }
+                } catch (e) {
+                     // suppress network errors so UI doesn't crash
+                }
+            }
+
+            if (hasChanges) {
+                setActiveJobs((prev) => ({ ...prev, ...currentJobs }));
+            }
+        };
+
+        const interval = setInterval(checkJobs, 2000);
+        return () => clearInterval(interval);
+    }, [activeJobs]);
+    
     const handleGenerateClientZip = async (client: ClientObligation) => {
         setGeneratingClientIds((current) => ({ ...current, [client.id]: true }));
         setDashboardNotice({ tone: 'info', message: `Generating payroll ZIP for ${client.name}...` });
@@ -436,6 +479,79 @@ export default function PracticeDashboard() {
         } finally {
             setGeneratingClientIds({});
             setIsGeneratingZips(false);
+        }
+    };
+
+
+    const handleAutoFile = async (client: ClientObligation) => {
+        try {
+            let activeClient = client;
+            if (!activeClient.payeZipUrl && (activeClient.masterFileUrl || activeClient.payrollSourceUrl)) {
+                setDashboardNotice({ tone: 'info', message: `Generating required ZIP files before filing for ${client.name}...` });
+                
+                const sourceUrl = activeClient.masterFileUrl || activeClient.payrollSourceUrl;
+                const sourceResponse = await fetch(sourceUrl as string, { cache: 'no-store' });
+                if (!sourceResponse.ok) throw new Error(`Could not load payroll CSV`);
+                const payrollFile = await sourceResponse.blob();
+                
+                const formData = new FormData();
+                formData.append('payrollFile', payrollFile, `${client.name.replace(/\s+/g, '_')}_Unified_Payroll.csv`);
+                formData.append('generatePaye', 'true');
+                formData.append('generateNssf', 'true');
+                formData.append('generateSha', 'true');
+                formData.append('clientName', client.name);
+                formData.append('clientId', client.id);
+
+                const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                if (!response.ok) throw new Error('Failed to generate payroll ZIP.');
+                const data = await response.json();
+                
+                activeClient = {
+                    ...activeClient,
+                    payeZipUrl: data.paye?.url
+                };
+
+                setClients((current) => current.map(c => 
+                    c.id === client.id ? { ...c, payeZipUrl: data.paye?.url } : c
+                ));
+            }
+
+            if (!activeClient.payeZipUrl) {
+                throw new Error("No PAYE ZIP available to upload.");
+            }
+
+            setDashboardNotice({ tone: 'info', message: `Dispatching KRA filing job for ${client.name}...` });
+            
+            const payload = {
+                kraPin: activeClient.pin,
+                kraPassword: (activeClient as any).password || activeClient.iTaxPassword || "1234",
+                periodFrom: "2026-01-01", // mock Date format YYYY-MM-DD
+                periodTo: "2026-01-31", // mock Date format YYYY-MM-DD
+                taxObligationType: "paye",
+                payeZipUrl: activeClient.payeZipUrl,
+                ownsRentalProperty: false
+            };
+
+            const res = await fetch('http://localhost:3001/api/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                 const err = await res.json().catch(()=>({}));
+                 throw new Error(err.message || err.error || 'Failed to queue filing job.');
+            }
+
+            const dataResp = await res.json();
+            setDashboardNotice({ tone: 'success', message: `Auto-filing job queued successfully for ${client.name}.` });
+            setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'Queueing job...', failedReason: '' } }));
+        } catch(e: any) {
+            setDashboardNotice({ tone: 'error', message: e.message });
         }
     };
 
@@ -614,7 +730,27 @@ export default function PracticeDashboard() {
                                     )}
                                 </div>
                                 
-                                <div className="flex flex-col sm:flex-row gap-2 mt-2">
+                                
+                                {activeJobs[client.id] && (
+                                    <div className="w-full mt-3 mb-3 bg-slate-900 border border-slate-700 rounded-lg p-2">
+                                        <div className="flex items-center justify-between gap-2 mb-1">
+                                            <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
+                                                {activeJobs[client.id].state === 'completed' ? '✓ Finished' : activeJobs[client.id].state === 'failed' ? '⚠ Failed' : '⚙ Filing...'}
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-mono">{activeJobs[client.id].progress}%</span>
+                                        </div>
+                                        <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
+                                            <div 
+                                                className={`h-1.5 rounded-full transition-all duration-500 ${activeJobs[client.id].state === 'completed' ? 'bg-emerald-500' : activeJobs[client.id].state === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`}
+                                                style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
+                                            ></div>
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                                            {activeJobs[client.id].state === 'failed' ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span> : activeJobs[client.id].message}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="flex flex-col sm:flex-row gap-2">
                                     <button
                                         onClick={() => void handleGenerateClientZip(client)}
                                         disabled={!(client.masterFileUrl || client.payrollSourceUrl) || Boolean(generatingClientIds[client.id]) || isGeneratingZips}
@@ -624,8 +760,8 @@ export default function PracticeDashboard() {
                                         <span className="truncate">{(client.masterFileUrl || client.payrollSourceUrl) ? (generatingClientIds[client.id] ? 'Generating...' : 'Auto Gen ZIP') : 'No CSV'}</span>
                                     </button>
                                     <button
-                                        onClick={() => setDashboardNotice({ tone: 'info', message: `Auto-filing scheduled for ${client.name}.` })}
-                                        disabled={!client.payeZipUrl && !client.nssfFileUrl && !client.shaFileUrl}
+                                        onClick={() => handleAutoFile(client)}
+                                        disabled={!client.masterFileUrl && !client.payrollSourceUrl && !client.payeZipUrl}
                                         className="flex items-center justify-center w-full gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-xs font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
                                     >
                                         <Rocket className="h-4 w-4 shrink-0" /> <span className="truncate">Auto-File</span>
@@ -807,14 +943,7 @@ export default function PracticeDashboard() {
             obligations = obligations.filter(ob => ob.type === monthlyReturnFilter);
         }
 
-        const statsCount = {
-            ALL: obligations.length,
-            VAT: obligations.filter(ob => ob.type === 'VAT').length,
-            TOT: obligations.filter(ob => ob.type === 'TOT').length,
-            MRI: obligations.filter(ob => ob.type === 'MRI').length,
-            DST: obligations.filter(ob => ob.type === 'DST').length,
-        };
-
+        
         return (
             <div className="mt-8">
                 {/* 1. The Toggle UI */}

@@ -1057,6 +1057,24 @@ async function handleMobileVerification(
     });
 }
 
+async function uploadPayeTaxZip(page: any, job: any): Promise<void> {
+    const payload = job.data.payload;
+    if (!payload.payeZipUrl) {
+        throw new Error('PAYE Upload filing requires payeZipUrl in the queued job payload');
+    }
+    await appendJobLog(job, `Downloading PAYE ZIP file from ${payload.payeZipUrl}`, { progress: 68 });
+    const res = await fetch(payload.payeZipUrl);
+    if (!res.ok) throw new Error(`Failed to fetch PAYE ZIP: ${res.statusText}`);
+    const zipPath = require('path').join(TMP_DIR, `paye-${job.data.jobId}.zip`);
+    await require('fs').promises.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    const fileInput = page.locator('input[type="file"]').first();
+    await fileInput.waitFor({ timeout: 20_000 });
+    await fileInput.setInputFiles(zipPath);
+    const termsCheckbox = page.locator('input[type="checkbox"]:near(:text("Terms and Conditions")), input[type="checkbox"][name*="agree" i], input[type="checkbox"][id*="agree" i], input[type="checkbox"]').first();
+    await termsCheckbox.check();
+    await appendJobLog(job, `Uploaded PAYE ZIP file and accepted the declaration`, { progress: 70 });
+}
+
 async function uploadTurnoverTaxZip(
     page: any,
     job: Job<FilingJob>
@@ -1118,6 +1136,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
     } = payload;
     const isMriReturn = taxObligationType === 'monthly_rental_income';
     const isTotReturn = taxObligationType === 'turnover_tax';
+    const isPayeUpload = taxObligationType === 'paye' && !!(payload as any).payeZipUrl;
 
     console.log(`[Worker] Starting job ${jobId} for PIN ${kraPin}`);
     await appendJobLog(job, 'Job accepted by worker');
@@ -1135,7 +1154,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
     try {
         // ── Step 2: Launch browser with stealth configuration ────────────────────
         await setJobStep(job, 5, 'Launching browser session');
-        const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
+        const isHeadless = false;
         browser = await chromium.launch({
             headless: isHeadless,
             slowMo: isHeadless ? 0 : PLAYWRIGHT_SLOW_MO,
@@ -1291,13 +1310,30 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             await page.getByText('Returns', { exact: true }).first().hover();
         }
 
-        const filingLinkSelector = isMriReturn || isTotReturn
-            ? 'a[href*="eReturns"], a:has-text("File Return")'
-            : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nil-return"], a:has-text("Nil Return")';
-        const filingLink = await page.waitForSelector(filingLinkSelector, { timeout: 10_000 });
-        await filingLink.click();
+        const filingLinkSelector = isMriReturn || isTotReturn || isPayeUpload
+        ? 'a[href*="showEReturns"], a.mainMenu[href*="showEReturns"], a:has-text("File Return")'
+        : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nil-return"], a:has-text("Nil Return")';
+        
+        try {
+            const filingLink = await page.waitForSelector(filingLinkSelector, { timeout: 10_000 });
+            await filingLink.click({ force: true });
+        } catch (error) {
+            console.log(`[Worker][${jobId}] Falling back to evaluate script for File Return click.`);
+            if (isMriReturn || isTotReturn || isPayeUpload) {
+                await page.evaluate(() => {
+                    const el = document.querySelector('a[href*="showEReturns"], a.mainMenu[href*="showEReturns"]') as HTMLElement;
+                    if (el) el.click();
+                    else (window as any).showEReturns();
+                });
+            } else {
+                await page.evaluate(() => {
+                    const el = document.querySelector('a[href*="nilReturn"], a:has-text("Nil Return")') as HTMLElement;
+                    if (el) el.click();
+                });
+            }
+        }
         await waitForPortalReadyWithReload(page, job, {
-            description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : 'Nil return obligation page',
+        description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : isPayeUpload ? 'PAYE return obligation page' : 'Nil return obligation page',
             selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select'],
             timeout: 15_000,
             reloadAttempts: 1,
@@ -1306,7 +1342,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await navigationDelay();
 
         // ── Step 9: Select return type and tax obligation ────────────────────────
-        await setJobStep(job, 60, isTotReturn ? 'Selecting ToT return type and tax obligation' : isMriReturn ? 'Selecting MRI return type and tax obligation' : 'Selecting nil return type and tax obligation');
+        await setJobStep(job, 60, isTotReturn ? 'Selecting ToT return type and tax obligation' : isMriReturn ? 'Selecting MRI return type and tax obligation' : isPayeUpload ? 'Selecting PAYE return type and preparing upload' : 'Selecting nil return type and tax obligation');
 
         if (KRA_DEBUG_ARTIFACTS) {
             const selectMetadata = await page.$$eval(
@@ -1373,11 +1409,13 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await navigationDelay();
 
         // ── Step 10: Fill return details ─────────────────────────────────────────
-        await setJobStep(job, 70, isTotReturn ? 'Uploading the ToT ZIP file and accepting the declaration' : isMriReturn ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
+        await setJobStep(job, 70, isTotReturn ? 'Uploading the ToT ZIP file and accepting the declaration' : isPayeUpload ? 'Uploading the PAYE ZIP file and accepting the declaration' : isMriReturn ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
 
-        if (isTotReturn) {
-            await uploadTurnoverTaxZip(page, job);
-        } else {
+    if (isTotReturn) {
+        await uploadTurnoverTaxZip(page, job);
+    } else if (isPayeUpload) {
+        await uploadPayeTaxZip(page, job);
+    } else {
 
             // Use precise selectors — broad patterns like input[name*="to" i] match
             // hidden fields such as <input name="token_key"> causing fill() failures.

@@ -5,6 +5,7 @@ import archiver from 'archiver';
 import * as ExcelJS from 'exceljs';
 import * as fastCsv from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
+import { calculatePayrollFields } from '../utils/payroll-calculations';
 
 function normalizeCsvEncodingInPlace(filePath: string) {
     const rawBuffer = fs.readFileSync(filePath);
@@ -92,64 +93,122 @@ export class AxonDataExtractionEngine {
     public async parseMasterCsv(inputCsvPath: string): Promise<EmployeeMasterRecord[]> {
         return new Promise((resolve, reject) => {
             const employees: EmployeeMasterRecord[] = [];
+            const rawRows: string[][] = [];
 
             fs.createReadStream(inputCsvPath)
                 .pipe(fastCsv.parse({
-                    headers: headers => headers.map(h => h ? h.replace(/^'/, '').trim() : h),
-                    skipLines: 6,
+                    headers: false,
+                    ignoreEmpty: true,
                     trim: true
                 }))
-                .on('data', (row) => {
-                    // Extract and clean fields based on instructions
-                    const fullName = this.stripApostrophe(row['Name of Employee'] || row['Name']);
-
-                    // Skip empty rows (vital when exporting from 500-row templates)
-                    if (!fullName) return;
-
-                    const nameParts = fullName.split(' ');
-                    const firstName = nameParts.length > 0 ? nameParts[0] : '';
-                    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
-
-                    const parseNum = (val: string | undefined) => parseFloat(this.stripApostrophe(val)) || 0;
-
-                    const emp: EmployeeMasterRecord = {
-                        payrollNumber: this.stripApostrophe(row['Payroll Number'] || row['PayrollNo'] || row['EMP NO']),
-                        firstName: firstName,
-                        lastName: lastName,
-                        fullName: fullName,
-                        identityType: '1', // Defaulting to National ID 
-                        idNo: this.stripApostrophe(row['ID Number'] || row['ID No'] || row['ID']),
-                        kraPin: this.stripApostrophe(row['PIN of Employee'] || row['PIN'] || row['KRA PIN']),
-                        nssfNo: this.stripApostrophe(row['NSSF No'] || row['NSSF (J)'] || row['NSSF']),
-                        nhifNo: this.stripApostrophe(row['SHA No'] || row['SHIF (I)'] || row['SHIF'] || row['NHIF']),
-                        phone: this.stripApostrophe(row['Phone'] || row['Mobile'] || ''),
-                        residentialStatus: this.stripApostrophe(row['Residential Status'] || 'Resident'),
-                        typeOfEmployee: this.stripApostrophe(row['Type of Employee'] || 'Primary Employee'),
-                        pwd: this.stripApostrophe(row['Persons with Disability(PWD)'] || 'No'),
-                        exemptionCert: this.stripApostrophe(row['Exemption Certificate'] || ''),
-                        totalCashPay: parseNum(row['Total Cash Pay (A)'] || row['Total Cash Pay']),
-                        carBenefit: parseNum(row['Value of Car Benefit (B)'] || row['Value of Car Benefit']),
-                        meals: parseNum(row['Value of Meals (C)'] || row['Value of Meals']),
-                        nonCash: parseNum(row['Non Cash Benefits (D)'] || row['Non Cash Benefits']),
-                        typeOfHousing: this.stripApostrophe(row['Type of Housing'] || 'Benefit not given'),
-                        housingBenefit: parseNum(row['Housing Benefit (F)'] || row['Housing Benefit']),
-                        otherBenefits: parseNum(row['Other Benefits (G)'] || row['Other Benefits']),
-                        grossSalary: parseNum(row['Total Gross Pay (Ksh) (H)'] || row['Gross Pay (H)'] || row['Gross Pay']),
-                        shaContribution: parseNum(row['Social Health Insurance Fund (I)'] || row['SHIF (I)'] || row['SHIF']),
-                        nssfContribution: parseNum(row['NSSF Contribution (J)'] || row['NSSF Contribution']),
-                        otherPension: parseNum(row['Other Pension Contribution (K)'] || row['Other Pension Contribution']),
-                        postRetMedical: parseNum(row['Post Retirement Medical Fund (L)'] || row['Post Retirement Medical Fund']),
-                        mortgage: parseNum(row['Mortgage Interest (M)'] || row['Mortgage Interest']),
-                        ahl: parseNum(row['Affordable Housing Levy (N)'] || row['Affordable Housing Levy']),
-                        taxablePay: parseNum(row['Taxable Pay(Ksh) (O)'] || row['Taxable Pay(Ksh)'] || row['Taxable Pay']),
-                        personalRelief: parseNum(row['Monthly Personal Relief (Ksh) (P)'] || row['Monthly Personal Relief (Ksh)'] || row['Monthly Personal Relief']),
-                        insuranceRelief: parseNum(row['Amount of Insurance Relief (Q)'] || row['Amount of Insurance Relief']),
-                        paye: parseNum(row['PAYE Tax (Ksh) (R)'] || row['PAYE (R)'] || row['PAYE'])
-                    };
-                    employees.push(emp);
+                .on('data', (row: string[]) => {
+                    rawRows.push((row || []).map(value => this.stripApostrophe(value)));
                 })
                 .on('error', (error) => reject(error))
-                .on('end', () => resolve(employees));
+                .on('end', () => {
+                    try {
+                        const headerRowIndex = rawRows.findIndex((row) => {
+                            const normalizedRow = row.map(value => value.trim().toLowerCase());
+                            return normalizedRow.includes('payroll number')
+                                && (normalizedRow.includes('name of employee') || normalizedRow.includes('name'));
+                        });
+
+                        if (headerRowIndex === -1) {
+                            throw new Error('Could not locate the employee header row in the master CSV.');
+                        }
+
+                        const headers = rawRows[headerRowIndex].map((value) => value.trim());
+
+                        for (const row of rawRows.slice(headerRowIndex + 1)) {
+                            if (!row.some(value => value.trim())) {
+                                continue;
+                            }
+
+                            const record = headers.reduce<Record<string, string | undefined>>((accumulator, header, index) => {
+                                if (header) {
+                                    accumulator[header] = row[index];
+                                }
+                                return accumulator;
+                            }, {});
+
+                            const fullName = this.stripApostrophe(record['Name of Employee'] || record['Name']);
+                            if (!fullName) {
+                                continue;
+                            }
+
+                            const nameParts = fullName.split(' ');
+                            const firstName = nameParts.length > 0 ? nameParts[0] : '';
+                            const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+                            const parseNum = (val: string | undefined) => parseFloat(this.stripApostrophe(val)) || 0;
+                            const rawTotalCashPay = parseNum(record['Total Cash Pay (A)'] || record['Total Cash Pay']);
+                            const carBenefit = parseNum(record['Value of Car Benefit (B)'] || record['Value of Car Benefit']);
+                            const meals = parseNum(record['Value of Meals (C)'] || record['Value of Meals']);
+                            const nonCash = parseNum(record['Non Cash Benefits (D)'] || record['Non Cash Benefits']);
+                            const housingBenefit = parseNum(record['Housing Benefit (F)'] || record['Housing Benefit']);
+                            const otherBenefits = parseNum(record['Other Benefits (G)'] || record['Other Benefits']);
+                            const otherPension = parseNum(record['Other Pension Contribution (K)'] || record['Other Pension Contribution']);
+                            const postRetMedical = parseNum(record['Post Retirement Medical Fund (L)'] || record['Post Retirement Medical Fund']);
+                            const mortgage = parseNum(record['Mortgage Interest (M)'] || record['Mortgage Interest']);
+                            const insuranceRelief = parseNum(record['Amount of Insurance Relief (Q)'] || record['Amount of Insurance Relief']);
+                            const fallbackGrossSalary = parseNum(record['Total Gross Pay (Ksh) (H)'] || record['Gross Pay (H)'] || record['Gross Pay']);
+                            const totalCashPay = rawTotalCashPay || Math.max(0, fallbackGrossSalary - carBenefit - meals - nonCash - housingBenefit - otherBenefits);
+                            const pwd = this.stripApostrophe(record['Persons with Disability(PWD)'] || 'No');
+                            const calculatedFields = calculatePayrollFields({
+                                employeeName: fullName,
+                                totalCashPay,
+                                carBenefit,
+                                meals,
+                                nonCash,
+                                housingBenefit,
+                                otherBenefits,
+                                pwd,
+                                otherPension,
+                                postRetMedical,
+                                mortgage,
+                                insuranceRelief,
+                            });
+
+                            employees.push({
+                                payrollNumber: this.stripApostrophe(record['Payroll Number'] || record['PayrollNo'] || record['EMP NO']),
+                                firstName: firstName,
+                                lastName: lastName,
+                                fullName: fullName,
+                                identityType: '1',
+                                idNo: this.stripApostrophe(record['ID Number'] || record['ID No'] || record['ID']),
+                                kraPin: this.stripApostrophe(record['PIN of Employee'] || record['PIN'] || record['KRA PIN']),
+                                nssfNo: this.stripApostrophe(record['NSSF No'] || record['NSSF (J)'] || record['NSSF']),
+                                nhifNo: this.stripApostrophe(record['SHA No'] || record['SHIF (I)'] || record['SHIF'] || record['NHIF']),
+                                phone: this.stripApostrophe(record['Phone'] || record['Mobile'] || ''),
+                                residentialStatus: this.stripApostrophe(record['Residential Status'] || 'Resident'),
+                                typeOfEmployee: this.stripApostrophe(record['Type of Employee'] || 'Primary Employee'),
+                                pwd: pwd,
+                                exemptionCert: this.stripApostrophe(record['Exemption Certificate'] || ''),
+                                totalCashPay: totalCashPay,
+                                carBenefit: carBenefit,
+                                meals: meals,
+                                nonCash: nonCash,
+                                typeOfHousing: this.stripApostrophe(record['Type of Housing'] || 'Benefit not given'),
+                                housingBenefit: housingBenefit,
+                                otherBenefits: otherBenefits,
+                                grossSalary: calculatedFields.grossSalary,
+                                shaContribution: calculatedFields.shaContribution,
+                                nssfContribution: calculatedFields.nssfContribution,
+                                otherPension: otherPension,
+                                postRetMedical: postRetMedical,
+                                mortgage: mortgage,
+                                ahl: calculatedFields.ahl,
+                                taxablePay: calculatedFields.taxablePay,
+                                personalRelief: calculatedFields.personalRelief,
+                                insuranceRelief: calculatedFields.insuranceRelief,
+                                paye: calculatedFields.paye
+                            });
+                        }
+
+                        resolve(employees);
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
         });
     }
 
@@ -386,7 +445,7 @@ export class AxonDataExtractionEngine {
                 const resStatCode = emp.residentialStatus.toLowerCase().includes('resident') && !emp.residentialStatus.toLowerCase().includes('non') ? 'RES' : 'NRES';
 
                 // Fields map to the B_Employees_Dtls_Simp standard EXACTLY as expected by iTax
-                return `${emp.kraPin},${emp.fullName},${emp.residentialStatus},${emp.typeOfEmployee},${emp.pwd},${emp.exemptionCert},${emp.totalCashPay},${emp.carBenefit},${emp.meals},${emp.nonCash},${emp.typeOfHousing},,${emp.housingBenefit || emp.otherBenefits || 0},${emp.grossSalary},${emp.shaContribution},${emp.nssfContribution},${emp.otherPension},${emp.postRetMedical},${emp.mortgage},${emp.ahl},${emp.taxablePay},${emp.personalRelief},${emp.insuranceRelief},${emp.paye},0,${typeEmpCode},0,${resStatCode},DTEMP`;
+                return `${emp.kraPin},${emp.fullName},${emp.residentialStatus},${emp.typeOfEmployee},${emp.pwd},${emp.exemptionCert},${emp.totalCashPay},${emp.carBenefit},${emp.meals},${emp.nonCash},${emp.typeOfHousing},,${emp.housingBenefit || emp.otherBenefits || 0},${emp.grossSalary},${emp.shaContribution},${emp.nssfContribution},${emp.otherPension},${emp.postRetMedical},${emp.mortgage},${emp.ahl},${emp.taxablePay},${emp.personalRelief},${emp.insuranceRelief},${emp.paye},${emp.paye},${typeEmpCode},0,${resStatCode},DTEMP`;
             }).join('\n');
 
             archive.append(simpRows, { name: 'B_Employees_Dtls_Simp.csv' });
@@ -414,12 +473,13 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
                 if (rowCount === 1) cfg.employerPin = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 if (rowCount === 2) cfg.nssfEmployerNo = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 if (rowCount === 3) {
-                    cfg.nssfLoginId = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
-                    cfg.nssfPassword = row[3] ? String(row[3]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                    cfg.nssfPassword = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 }
                 if (rowCount === 4) {
                     cfg.shaLoginId = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
-                    cfg.shaPassword = row[3] ? String(row[3]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                }
+                if (rowCount === 5) {
+                    cfg.shaPassword = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 }
                 rowCount++;
             })

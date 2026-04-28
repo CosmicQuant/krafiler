@@ -2,12 +2,22 @@
 import * as path from 'path';
 import * as ExcelJS from 'exceljs';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { calculatePayrollFields } from '../utils/payroll-calculations';
 
 // Initialize Gemini
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = new GoogleGenerativeAI(apiKey);
 
 export interface StandardMapping {
+    // Preamble Extraction
+    companyName: string | null;
+    companyPin: string | null;
+    companyNssf: string | null;
+    companyNssfPassword: string | null;
+    companySha: string | null;
+    companyShaPassword: string | null;
+
+    // Header Mapping
     firstName: string | null;
     lastName: string | null;
     employeeName: string | null; // Added to catch single-column names
@@ -17,6 +27,17 @@ export interface StandardMapping {
     idNumber: string | null;
     grossSalary: string | null;
 }
+
+const EMPLOYEE_HEADER_KEYS: Array<keyof StandardMapping> = [
+    'employeeName',
+    'firstName',
+    'lastName',
+    'kraPin',
+    'nssfNo',
+    'shaNo',
+    'idNumber',
+    'grossSalary'
+];
 
 export async function processAndStandardizePayroll(
     inputFilePath: string,
@@ -60,14 +81,26 @@ export async function processAndStandardizePayroll(
             sampleData += cleanRow.join(' | ') + '\n';
         }
 
-        // 2. Call Gemini to map headers
+        // 2. Call Gemini to map headers and extract preamble
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
         
         const prompt = `
         You are a highly intelligent payroll data extraction AI.
         A user uploaded a payroll file (could be unstructured). 
-        Analyze the first 15 rows provided below and identify which column headers correspond to our standard required fields.
-        Our required fields are:
+        Analyze the first 15 rows provided below.
+        
+        TASK 1: Extract Preamble Values
+        Find any explicit VALUES for the company/employer listed at the top of the file. 
+        - companyName: The actual name of the company.
+        - companyPin: The KRA PIN of the company.
+        - companyNssf: The company's NSSF number/login.
+        - companyNssfPassword: The company's NSSF password.
+        - companySha: The company's SHA/SHIF/NHIF login.
+        - companyShaPassword: The company's SHA password.
+        Return the exact string values found for these, or null if not present.
+
+        TASK 2: Map Headers
+        Identify which exact column header texts correspond to our standard required employee fields.
         - employeeName (Full Name of Employee, OR generic 'Name' column)
         - firstName (First Name of Employee - only if split from Last Name)
         - lastName (Last Name or Surname of Employee - only if split from First Name)
@@ -77,9 +110,9 @@ export async function processAndStandardizePayroll(
         - idNumber (National ID Number)
         - grossSalary (Gross Monthly Salary)
 
-        Return ONLY a raw JSON object detailing the exact column header name (from the file's header row) that maps to each required field. 
-        If a field is completely missing or cannot be deduced, set its value to null.
-        DO NOT invent column names. ONLY use the exact string present in the sample data.
+        Return ONLY a single raw JSON object containing ALL properties from both Task 1 and Task 2.
+        For Task 2 (Headers), DO NOT invent column names. ONLY use the exact string present in the sample data.
+        If a field is completely missing, set its value to null.
 
         Sample Data (first 15 rows with | separator):
         ${sampleData}
@@ -99,20 +132,27 @@ export async function processAndStandardizePayroll(
             const rowVals = sheet.getRow(i).values as any[];
             let foundHeaders = 0;
             const tempMap: Record<string, number> = {};
+            const matchedKeys = new Set<string>();
 
             rowVals.forEach((val, idx) => {
                 if (!val) return;
                 const cellStr = String(val).trim().toLowerCase();
-                
-                Object.entries(mapping).forEach(([key, mappedHeader]) => {
-                    if (mappedHeader && cellStr === mappedHeader.trim().toLowerCase()) {
+
+                EMPLOYEE_HEADER_KEYS.forEach((key) => {
+                    const mappedHeader = mapping[key];
+                    if (!mappedHeader || matchedKeys.has(key)) {
+                        return;
+                    }
+
+                    if (cellStr === mappedHeader.trim().toLowerCase()) {
+                        matchedKeys.add(key);
                         foundHeaders++;
                         tempMap[key] = idx; // idx corresponds to column number
                     }
                 });
             });
 
-            if (foundHeaders > 0) {
+            if (foundHeaders >= 2) {
                 headerRowIndex = i;
                 columnIndices = tempMap;
                 break;
@@ -127,18 +167,20 @@ export async function processAndStandardizePayroll(
         const newWb = new ExcelJS.Workbook();
         const standardSheet = newWb.addWorksheet('Master Payroll Data');
 
-        // Insert the 7-row Preamble (Matches standard UI expectation)
+        // Insert the 7-row Preamble (Matches exactly the Axon_Unified_Payroll_Template_v4.xlsx format)
         // Row 1:
-        standardSheet.addRow(['COMPANY NAME:', client.name || '']);
+        standardSheet.addRow(['COMPANY NAME:', mapping.companyName || client.name || '']);
         // Row 2:
-        standardSheet.addRow(['COMPANY KRA PIN:', client.kraPin || '']);
+        standardSheet.addRow(['COMPANY KRA PIN:', mapping.companyPin || client.kraPin || '']);
         // Row 3:
-        standardSheet.addRow(['COMPANY NSSF NO:', client.nssfNo || '']);
+        standardSheet.addRow(['COMPANY NSSF NO:', mapping.companyNssf || client.nssfNo || '']);
         // Row 4:
-        standardSheet.addRow(['NSSF LOGIN ID', client.nssfLoginId || '', 'NSSF PASSWORD', client.nssfPassword || '']);
+        standardSheet.addRow(['COMPANY NSSF PASSWORD:', mapping.companyNssfPassword || client.nssfPassword || '']);
         // Row 5:
-        standardSheet.addRow(['SHA LOGIN ID', client.shaLoginId || '', 'SHA PASSWORD', client.shaPassword || '']);
+        standardSheet.addRow(['COMPANY SHA LOGIN:', mapping.companySha || client.shaLoginId || '']);
         // Row 6:
+        standardSheet.addRow(['COMPANY SHA PASSWORD:', mapping.companyShaPassword || client.shaPassword || '']);
+        // Row 7:
         standardSheet.addRow([]);
 
         // Row 7 (Headers): Uses our exact 30 standard template headers
@@ -156,6 +198,7 @@ export async function processAndStandardizePayroll(
 
         // 5. Populate Data Rows and Map logic
         // Starts reading data strictly from after the headerRowIndex
+        let employeeCounter = 1;
         for (let i = headerRowIndex + 1; i <= sheet.rowCount; i++) {
             const rawRow = sheet.getRow(i).values as any[];
             if (!rawRow || rawRow.length === 0) continue;
@@ -170,7 +213,7 @@ export async function processAndStandardizePayroll(
             const newRow = new Array(30).fill('');
             
             // Map our specific AI extracted features
-            newRow[0] = `EMP${i}`; // Payroll Number (Auto generate if empty)
+            newRow[0] = String(employeeCounter++); // Payroll Number (Sequential pure numbers)
             newRow[1] = columnIndices['kraPin'] ? String(rawRow[columnIndices['kraPin']] || '') : 'NOT_PROVIDED';
             newRow[2] = columnIndices['idNumber'] ? String(rawRow[columnIndices['idNumber']] || '') : '0';
             newRow[3] = 'National ID';
@@ -196,6 +239,34 @@ export async function processAndStandardizePayroll(
             newRow[16] = 0; // Housing Benefit (F)
             newRow[17] = 0; // Other Benefits (G)
             
+            const calculatedFields = calculatePayrollFields({
+                employeeName: fullName,
+                totalCashPay: gross,
+                carBenefit: Number(newRow[12]) || 0,
+                meals: Number(newRow[13]) || 0,
+                nonCash: Number(newRow[14]) || 0,
+                housingBenefit: Number(newRow[16]) || 0,
+                otherBenefits: Number(newRow[17]) || 0,
+                pwd: String(newRow[9] || ''),
+                otherPension: 0,
+                postRetMedical: 0,
+                mortgage: 0,
+                insuranceRelief: 0,
+            });
+
+            newRow[18] = calculatedFields.grossSalary;
+            newRow[19] = calculatedFields.shaContribution;
+            newRow[20] = calculatedFields.nssfContribution;
+            newRow[21] = 0; // Other Pension Contribution (K)
+            newRow[22] = 0; // Post Retirement Medical Fund (L)
+            newRow[23] = 0; // Mortgage Interest (M)
+            newRow[24] = calculatedFields.ahl;
+            newRow[25] = calculatedFields.taxablePay;
+            newRow[26] = calculatedFields.personalRelief;
+            newRow[27] = calculatedFields.insuranceRelief;
+            newRow[28] = calculatedFields.paye;
+            newRow[29] = calculatedFields.selfAssessedPaye;
+
             // Add the row to sheet
             standardSheet.addRow(newRow);
         }

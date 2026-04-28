@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+﻿import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import archiver from 'archiver';
@@ -26,6 +26,10 @@ export interface CompanyConfig {
     nssfEmployerNo: string;
     employerName: string;
     periodMMYYYY: string;
+    nssfLoginId?: string;
+    nssfPassword?: string;
+    shaLoginId?: string;
+    shaPassword?: string;
 }
 
 export interface EmployeeMasterRecord {
@@ -92,7 +96,7 @@ export class AxonDataExtractionEngine {
             fs.createReadStream(inputCsvPath)
                 .pipe(fastCsv.parse({
                     headers: headers => headers.map(h => h ? h.replace(/^'/, '').trim() : h),
-                    skipLines: 4,
+                    skipLines: 6,
                     trim: true
                 }))
                 .on('data', (row) => {
@@ -401,14 +405,22 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
     // Read Company Config directly from the first 3 rows of the CSV 
     // This allows clients to skip UI form filling
     const companyConfig = await new Promise<CompanyConfig>((resolve, reject) => {
-        const cfg: CompanyConfig = { employerName: '', employerPin: '', nssfEmployerNo: '', periodMMYYYY: '' };
+        const cfg: CompanyConfig = { employerName: '', employerPin: '', nssfEmployerNo: '', periodMMYYYY: '', nssfLoginId: '', nssfPassword: '', shaLoginId: '', shaPassword: '' };
         let rowCount = 0;
         fs.createReadStream(inputCsvPath)
             .pipe(fastCsv.parse({ headers: false, trim: true }))
             .on('data', (row) => {
-                if (rowCount === 0) cfg.employerName = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                                if (rowCount === 0) cfg.employerName = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 if (rowCount === 1) cfg.employerPin = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
                 if (rowCount === 2) cfg.nssfEmployerNo = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                if (rowCount === 3) {
+                    cfg.nssfLoginId = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                    cfg.nssfPassword = row[3] ? String(row[3]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                }
+                if (rowCount === 4) {
+                    cfg.shaLoginId = row[1] ? String(row[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                    cfg.shaPassword = row[3] ? String(row[3]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                }
                 rowCount++;
             })
             .on('end', () => {
@@ -453,3 +465,4 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         throw error;
     }
 }
+

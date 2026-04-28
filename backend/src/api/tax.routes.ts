@@ -191,7 +191,7 @@ router.post(
         }
 
         const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl } =
-            req.body;
+            req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
             ? getPreviousMonthIsoRange()
@@ -231,7 +231,7 @@ router.post(
                     otpCode: typeof otpCode === 'string' && otpCode.trim()
                         ? otpCode.trim()
                         : undefined,
-                    payeZipUrl: payeZipUrl || undefined,
+                    ...(payeZipUrl && { payeZipUrl }),
                 },
                 createdAt: new Date().toISOString(),
             };

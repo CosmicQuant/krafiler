@@ -486,7 +486,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
     const handleAutoFile = async (client: ClientObligation) => {
         try {
             let activeClient = client;
-            if (!activeClient.payeZipUrl && (activeClient.masterFileUrl || activeClient.payrollSourceUrl)) {
+            if (activeClient.masterFileUrl || activeClient.payrollSourceUrl) {
                 setDashboardNotice({ tone: 'info', message: `Generating required ZIP files before filing for ${client.name}...` });
                 
                 const sourceUrl = activeClient.masterFileUrl || activeClient.payrollSourceUrl;
@@ -901,7 +901,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     </div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right">
-                                    <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+                                    <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 mb-2">
                                         <button
                                             onClick={() => void handleGenerateClientZip(client)}
                                             disabled={!(client.masterFileUrl || client.payrollSourceUrl) || Boolean(generatingClientIds[client.id]) || isGeneratingZips}
@@ -911,13 +911,32 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             {(client.masterFileUrl || client.payrollSourceUrl) ? (generatingClientIds[client.id] ? 'Generating...' : 'Auto Gen ZIP') : 'No CSV'}
                                         </button>
                                         <button
-                                            onClick={() => setDashboardNotice({ tone: 'info', message: `Auto-filing scheduled for ${client.name}.` })}
-                                            disabled={!client.payeZipUrl && !client.nssfFileUrl && !client.shaFileUrl}
+                                            onClick={() => handleAutoFile(client)}
+                                            disabled={!(client.masterFileUrl || client.payrollSourceUrl || client.payeZipUrl)}
                                             className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
                                         >
                                             <Rocket className="h-3 w-3" /> Auto-File
                                         </button>
                                     </div>
+                                    {activeJobs[client.id] && (
+                                        <div className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-left">
+                                            <div className="flex items-center justify-between gap-2 mb-1">
+                                                <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
+                                                    {activeJobs[client.id].state === 'completed' ? '✓ Finished' : activeJobs[client.id].state === 'failed' ? '⚠️ Failed' : '⚙ Filing...'}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400 font-mono">{activeJobs[client.id].progress}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
+                                                <div 
+                                                    className={`h-1.5 rounded-full transition-all duration-500 ${activeJobs[client.id].state === 'completed' ? 'bg-emerald-500' : activeJobs[client.id].state === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`}
+                                                    style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
+                                                ></div>
+                                            </div>
+                                            <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                                                {activeJobs[client.id].state === 'failed' ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span> : activeJobs[client.id].message}
+                                            </div>
+                                        </div>
+                                    )}
                                 </td>
                             </tr>
                         ))}
@@ -1420,12 +1439,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                             </div>
                         </div>
                     )}
-                    </div>
-                </main>
-            </div>
-
-            {/* Onboard Client Modal */}
-                                {view === 'clients' && !selectedClient && (
+                                 {view === 'clients' && !selectedClient && (
                         <div className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
                             <div className="overflow-x-auto pb-8">
                                 <table className="w-full text-left text-sm text-slate-300">
@@ -1463,6 +1477,12 @@ const [etimsPassword, setEtimsPassword] = useState('');
                             </div>
                         </div>
                     )}
+       </div>
+                </main>
+            </div>
+
+            
+                                
 
                     {showNewClientModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">

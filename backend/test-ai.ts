@@ -1,0 +1,1 @@
+import * as dotenv from 'dotenv'; dotenv.config(); import { processAndStandardizePayroll } from './src/scripts/ai-mapper'; processAndStandardizePayroll('uploads/payroll_1777368568116.csv', {name: 'Test', kraPin: 'P0'}, './uploads', 'test.csv').then(console.log).catch(console.error);

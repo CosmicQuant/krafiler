@@ -1,0 +1,13 @@
+COMPANY NAME:,Golden Karafuu Investment Limited
+COMPANY KRA PIN:,
+COMPANY NSSF NO:,
+NSSF LOGIN ID,,NSSF PASSWORD,
+SHA LOGIN ID,,SHA PASSWORD,
+
+Payroll Number,PIN of Employee,ID Number,Identity Type,Name of Employee,SHA No,NSSF No,Residential Status,Type of Employee,Persons with Disability(PWD),Exemption Certificate,Total Cash Pay (A),Value of Car Benefit (B),Value of Meals (C),Non Cash Benefits (D),Type of Housing,Housing Benefit (F),Other Benefits (G),Total Gross Pay (Ksh) (H),Social Health Insurance Fund (I),NSSF Contribution (J),Other Pension Contribution (K),Post Retirement Medical Fund (L),Mortgage Interest (M),Affordable Housing Levy (N),Taxable Pay(Ksh) (O),Monthly Personal Relief (Ksh) (P),Amount of Insurance Relief (Q),PAYE Tax (Ksh) (R),Self Assessed PAYE Tax (Ksh) (S)
+EMP6,'A006487410Q,'21974712,National ID,CONSOLATA WANYONYI,'CR9768259264492-0,123456789,Resident,Primary Employee,No,0,13000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,
+EMP7,'A019012543E,'25777823,National ID,SULEIMAN MWALIGUNZU,'CR9768259264492-0,123456789,Resident,Primary Employee,No,0,15000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,
+EMP8,'A008994040C,'528246,National ID,BRIAN VULIMWA,'CR3039079816869-0,123456789,Resident,Primary Employee,No,0,20000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,
+EMP9,'A022910283Z,'33926980,National ID,BRIAN WANYONYI,'CR9768259264492-0,'2021466055,Resident,Primary Employee,No,0,10000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,
+EMP10,'A013554210D,'11099182,National ID,Ali Mwalimu Kassim,'CR9768259264492-0,'2021466055,Resident,Primary Employee,No,0,16000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,
+EMP11,'A017444897K,'35919639,National ID,Kevin Baraza,'CR9768259264492-0,'2046011233,Resident,Primary Employee,No,0,15000,0,0,0,Benefit not given,0,0,,,,,,,,,,,,

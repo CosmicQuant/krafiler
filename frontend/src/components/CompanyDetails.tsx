@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive } from 'lucide-react';
+import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud } from 'lucide-react';
 import { ClientObligation } from './PracticeDashboard'; // I need to move the type or define it here or assume `any`.
 
 interface CompanyDetailsProps {
@@ -13,6 +13,34 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
     const [vatInput, setVatInput] = useState('');
     const [vatOutput, setVatOutput] = useState('');
     const [totSales, setTotSales] = useState('');
+    const [isUploadingCSV, setIsUploadingCSV] = useState(false);
+
+    const handleUploadCSV = async (file: File) => {
+        setIsUploadingCSV(true);
+        const data = new FormData();
+        data.append('masterCsv', file);
+        try {
+            const res = await fetch(`http://localhost:3001/api/clients/${client.id}/master-csv`, {
+                method: 'POST',
+                body: data
+            });
+            if (res.ok) {
+                const responseData = await res.json();
+                setFormData(prev => ({
+                    ...prev,
+                    masterFileUrl: responseData.masterFileUrl,
+                    masterFileLabel: responseData.masterFileLabel
+                }));
+            } else {
+                alert('Failed to upload Master CSV.');
+            }
+        } catch (err) {
+            console.error('Upload failed:', err);
+            alert('Network error while uploading Master CSV.');
+        } finally {
+            setIsUploadingCSV(false);
+        }
+    };
 
     const calculatedVat = (parseFloat(vatOutput) || 0) - (parseFloat(vatInput) || 0);
     const calculatedTot = (parseFloat(totSales) || 0) * 0.015;
@@ -153,21 +181,52 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                         <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 backdrop-blur">
                             <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-400">Payroll Data</h3>
                             <div className="space-y-3">
-                                {client.masterFileUrl ? (
-                                    <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800 p-3">
-                                        <div className="flex items-center gap-3">
-                                            <FileSpreadsheet className="h-5 w-5 text-emerald-500" />
-                                            <div className="flex flex-col">
-                                                <span className="text-xs font-semibold text-white">Master CSV</span>
-                                                <span className="text-[10px] text-slate-400">Uploaded</span>
+                                {formData.masterFileUrl ? (
+                                    <div className="flex flex-col gap-2">
+                                        <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800 p-3">
+                                            <div className="flex items-center gap-3 truncate">
+                                                <FileSpreadsheet className="h-5 w-5 shrink-0 text-emerald-500" />
+                                                <div className="flex flex-col truncate">
+                                                    <span className="text-xs font-semibold text-white truncate">{formData.masterFileLabel || 'Master CSV'}</span>
+                                                    <span className="text-[10px] text-slate-400">Uploaded ready for processing</span>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <a href={formData.masterFileUrl} download className="text-xs font-medium text-blue-400 hover:underline">View</a>
+                                                <label className="cursor-pointer text-xs font-medium text-slate-400 hover:text-white hover:underline">
+                                                    {isUploadingCSV ? '...' : 'Replace'}
+                                                    <input 
+                                                        type="file" 
+                                                        className="hidden" 
+                                                        accept=".csv,.xlsx" 
+                                                        onChange={(e) => {
+                                                            if (e.target.files?.[0]) handleUploadCSV(e.target.files[0]);
+                                                        }}
+                                                    />
+                                                </label>
                                             </div>
                                         </div>
-                                        <a href={client.masterFileUrl} download className="text-xs text-blue-400 hover:underline">View</a>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 p-4">
-                                        <span className="text-xs font-medium text-slate-500">No Master CSV</span>
-                                    </div>
+                                    <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-800/30 p-6 text-center hover:bg-slate-800/50 transition">
+                                        {isUploadingCSV ? (
+                                            <span className="text-xs font-medium text-slate-500 animate-pulse">Uploading...</span>
+                                        ) : (
+                                            <>
+                                                <Cloud className="mb-2 h-6 w-6 text-slate-500" />
+                                                <span className="text-xs font-medium text-slate-300">Upload Master CSV</span>
+                                                <span className="mt-1 text-[10px] text-slate-500">Auto-generates ZIPs & records</span>
+                                            </>
+                                        )}
+                                        <input 
+                                            type="file" 
+                                            className="hidden" 
+                                            accept=".csv,.xlsx" 
+                                            onChange={(e) => {
+                                                if (e.target.files?.[0]) handleUploadCSV(e.target.files[0]);
+                                            }}
+                                        />
+                                    </label>
                                 )}
 
                                 {client.payeZipUrl ? (

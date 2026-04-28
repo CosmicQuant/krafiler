@@ -14,6 +14,7 @@
         "start:tot": "node dist/scripts/file-kra-tot-return.js"
     },
     "dependencies": {
+        "@google/generative-ai": "^0.24.1",
         "@types/sharp": "^0.31.1",
         "adm-zip": "^0.5.17",
         "archiver": "^7.0.1",

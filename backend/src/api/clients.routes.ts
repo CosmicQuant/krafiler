@@ -3,6 +3,7 @@ import multer from 'multer';
 import { openDb } from '../db/database';
 import path from 'path';
 import fs from 'fs/promises';
+import { processAndStandardizePayroll } from '../scripts/ai-mapper';
 
 const router = Router();
 const upload = multer({ dest: path.resolve(__dirname, '..', '..', 'tmp') });
@@ -38,18 +39,27 @@ router.post('/:id/master-csv', upload.single('masterCsv'), async (req, res) => {
         const targetDir = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', client.name);
         await fs.mkdir(targetDir, { recursive: true });
         
-        const targetPath = path.join(targetDir, file.originalname);
-        await fs.rename(file.path, targetPath);
+        // Pass through AI mapping
+        const result = await processAndStandardizePayroll(file.path, client, targetDir, file.originalname);
+        
+        // Delete the original uploaded temp file
+        await fs.unlink(file.path).catch(() => {});
 
-        const fileUrl = `/clients/${encodeURIComponent(client.name)}/${file.originalname}`;
+        if (!result.success) {
+            return res.status(500).json({ message: result.message });
+        }
+
+        const filename = path.basename(result.mappedFile);
+        const fileUrl = `/clients/${encodeURIComponent(client.name)}/${filename}`;
+        const finalLabel = `${filename} (AI Standardized)`;
 
         await db.run('UPDATE clients SET masterFileUrl = ?, masterFileLabel = ? WHERE id = ?', [
             fileUrl,
-            file.originalname,
+            finalLabel,
             clientId
         ]);
 
-        res.json({ message: 'Master CSV updated successfully', masterFileUrl: fileUrl, masterFileLabel: file.originalname });
+        res.json({ message: 'Master CSV updated and mapped successfully via AI', masterFileUrl: fileUrl, masterFileLabel: finalLabel });
     } catch (err) {
         console.error('Error updating master CSV:', err);
         res.status(500).json({ message: 'Internal server error' });

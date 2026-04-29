@@ -175,7 +175,7 @@ function getFilingProgressTone(job: ActiveDashboardJob) {
 
 
 
-function StatusBadge({ status, generatedAt }: { status: TaxStatus; generatedAt?: string }) {
+function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: { status: TaxStatus; generatedAt?: string; lastFiledDate?: string; receiptUrl?: string }) {
     if (status === 'na') return <span className="text-slate-600">-</span>;
     if (status === 'done') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Done</span>;
     if (status === 'generated') return (
@@ -184,7 +184,18 @@ function StatusBadge({ status, generatedAt }: { status: TaxStatus; generatedAt?:
             {generatedAt && <span className="mt-1 text-[9px] font-medium text-slate-500 opacity-80">{generatedAt}</span>}
         </span>
     );
-    if (status === 'filed') return <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400"><CheckCircle2 className="h-3 w-3" /> Filed</span>;
+    if (status === 'filed') return (
+        <span className="inline-flex flex-col items-center">
+            {receiptUrl ? (
+                <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Download Returns Receipt">
+                    <CheckCircle2 className="h-3 w-3" /> Filed
+                </a>
+            ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400"><CheckCircle2 className="h-3 w-3" /> Filed</span>
+            )}
+            {lastFiledDate && <span className="mt-1 text-[10px] font-medium text-slate-400">{lastFiledDate}</span>}
+        </span>
+    );
     if (status === 'paid') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Paid</span>;
     return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-400"><Clock className="h-3 w-3" /> Due</span>;
 }
@@ -192,21 +203,25 @@ function StatusBadge({ status, generatedAt }: { status: TaxStatus; generatedAt?:
 function InteractiveStatusBadge({ 
     status, 
     generatedAt,
+    lastFiledDate,
+    receiptUrl,
     onUpdateStatus 
 }: { 
     status: TaxStatus; 
     generatedAt?: string;
+    lastFiledDate?: string;
+    receiptUrl?: string;
     onUpdateStatus: (newStatus: TaxStatus) => void 
 }) {
     if (status === 'na' || status === 'done' || status === 'due') {
-        return <StatusBadge status={status} />;
+        return <StatusBadge status={status} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />;
     }
 
     return (
         <div className="group relative inline-flex flex-col items-center justify-center">
-            <button className="cursor-pointer transition" type="button">
-                <StatusBadge status={status} generatedAt={generatedAt} />
-            </button>
+            <div className="cursor-pointer transition" role="button" tabIndex={0}>
+                <StatusBadge status={status} generatedAt={generatedAt} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />
+            </div>
             <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 hidden flex-col w-32 scale-95 opacity-0 group-hover:flex group-hover:scale-100 group-hover:opacity-100 items-center justify-center transition-all origin-top duration-200">
                 <div className="rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1.5 text-xs overflow-hidden flex flex-col gap-1 w-full">
                     <button 
@@ -877,11 +892,11 @@ const [etimsPassword, setEtimsPassword] = useState('');
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3 text-xs overflow-visible">
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">PAYE</span>{(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">PAYE</span>{(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} lastFiledDate={client.payeLastFiledDate} receiptUrl={client.payeReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} /></div>
                                 <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">NITA</span>{(client.nitaAmount !== undefined && client.nitaAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.nitaAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <StatusBadge status="due" /></div>
                                 <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">H. Levy</span>{(client.housingLevyAmount !== undefined && client.housingLevyAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.housingLevyAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <StatusBadge status="due" /></div>
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">NSSF</span>{(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} /></div>
-                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">SHA</span>{(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">NSSF</span>{(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} lastFiledDate={client.nssfLastFiledDate} receiptUrl={client.nssfReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} /></div>
+                                <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible"><div className="flex flex-col"><span className="text-slate-400 font-semibold">SHA</span>{(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] text-slate-400">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] text-slate-500">KES 0</span>}</div> <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} lastFiledDate={client.shaLastFiledDate} receiptUrl={client.shaReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} /></div>
                                 <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2"><span className="text-slate-400 font-semibold">eLevy</span> <StatusBadge status={client.eLevy} /></div>
                             </div>
                             
@@ -1102,7 +1117,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.payeAmount !== undefined && client.payeAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.payeAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
-                                        <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} />
+                                        <InteractiveStatusBadge status={client.paye} generatedAt={client.lastGeneratedAt} lastFiledDate={client.payeLastFiledDate} receiptUrl={client.payeReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'paye', s)} />
                                     </div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
@@ -1120,13 +1135,13 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.nssfAmount !== undefined && client.nssfAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.nssfAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
-                                        <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} />
+                                        <InteractiveStatusBadge status={client.nssf} generatedAt={client.lastGeneratedAt} lastFiledDate={client.nssfLastFiledDate} receiptUrl={client.nssfReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'nssf', s)} />
                                     </div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                                     <div className="flex flex-col items-center gap-1">
                                         {(client.shaAmount !== undefined && client.shaAmount !== null) ? <span className="text-[10px] font-bold text-slate-300">KES {client.shaAmount.toLocaleString()}</span> : <span className="text-[10px] font-bold text-slate-500">KES 0</span>}
-                                        <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} />
+                                        <InteractiveStatusBadge status={client.sha} generatedAt={client.lastGeneratedAt} lastFiledDate={client.shaLastFiledDate} receiptUrl={client.shaReceiptUrl} onUpdateStatus={(s) => handleUpdateSingleStatus(client.id, 'sha', s)} />
                                     </div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">

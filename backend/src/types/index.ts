@@ -42,6 +42,7 @@ export interface NilReturnPayload {
     /** The gross turnover amount for the period */
     totTurnover?: number;
     otpCode?: string;
+    payeZipUrl?: string;
 }
 
 export interface FilingJob {
@@ -50,6 +51,8 @@ export interface FilingJob {
     payload: NilReturnPayload;
     createdAt: string;
     credentialUpdate?: CredentialUpdate;
+    cancelRequestedAt?: string;
+    cancelledAt?: string;
 }
 
 export interface FilingStepLog {
@@ -92,10 +95,14 @@ export interface FileNilReturnRequest {
     totMonth?: number;
     totTurnover?: number;
     otpCode?: string;
+    payeZipUrl?: string;
 }
 
 export interface FileNilReturnResponse {
     success: boolean;
     message: string;
     jobId?: string;
+    duplicate?: boolean;
+    jobState?: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
+    cancelRequested?: boolean;
 }

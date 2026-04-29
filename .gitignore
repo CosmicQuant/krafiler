@@ -24,3 +24,18 @@ redis/redis.zip
 
 .DS_Store
 Thumbs.db
+# Data 
+*.sqlite
+*.sqlite-journal
+*.rdb
+
+# Uploads & Artifacts
+backend/tmp/
+backend/test_output/
+backend/*.zip
+backend/uploads/output/
+
+# Frontend artifacts
+frontend/public/clients/**/*.zip
+frontend/public/clients/**/*.xlsx
+frontend/public/clients/**/*.csv

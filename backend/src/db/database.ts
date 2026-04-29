@@ -89,6 +89,35 @@ export async function initDb() {
         }
     }
 
+    // Dynamic schema evolution for the obligation states
+    const obligationCols = ['paye', 'nssf', 'sha', 'eLevy', 'vat', 'tot', 'mri', 'dst'];
+    for (const col of obligationCols) {
+        try {
+            await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT DEFAULT 'na'`);
+        } catch (e) {
+            // Already exist
+        }
+    }
+
+    // Dynamic schema evolution for the last filed tracking
+    const lastFiledCols = [
+        'payeLastFiledDate', 'payeReceiptUrl',
+        'nssfLastFiledDate', 'nssfReceiptUrl',
+        'shaLastFiledDate', 'shaReceiptUrl',
+        'eLevyLastFiledDate', 'eLevyReceiptUrl',
+        'vatLastFiledDate', 'vatReceiptUrl',
+        'totLastFiledDate', 'totReceiptUrl',
+        'mriLastFiledDate', 'mriReceiptUrl',
+        'dstLastFiledDate', 'dstReceiptUrl'
+    ];
+    for (const col of lastFiledCols) {
+         try {
+             await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT`);
+         } catch (e) {
+             // Already exist
+         }
+    }
+
     console.log('Database initialized');
     return db;
 }

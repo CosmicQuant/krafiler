@@ -111,16 +111,70 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
+        const obsList = (obligations || '').split(',').map((s: string) => s.trim());
+        const paye = obsList.includes('paye') ? 'due' : 'na';
+        const nssf = obsList.includes('nssf') ? 'due' : 'na';
+        const sha = obsList.includes('sha') ? 'due' : 'na';
+        const vat = obsList.includes('vat') ? 'due' : 'na';
+        const tot = obsList.includes('tot') ? 'due' : 'na';
+        const mri = obsList.includes('mri') ? 'due' : 'na';
+        const eLevy = obsList.includes('eLevy') ? 'due' : 'na';
+        const dst = obsList.includes('dst') ? 'due' : 'na';
+
         const db = await openDb();
         const result = await db.run(
-            `INSERT INTO clients (name, pin, password, obligations) VALUES (?, ?, ?, ?)`,
-            [name, pin, password, obligations || '']
+            `INSERT INTO clients (name, pin, password, obligations, paye, nssf, sha, vat, tot, mri, eLevy, dst) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, pin, password, obligations || '', paye, nssf, sha, vat, tot, mri, eLevy, dst]
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
         res.status(201).json(newClient);
     } catch (err) {
         console.error('Error adding client:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Update client
+router.put('/:id', async (req, res) => {
+    try {
+        const { name, pin, password, obligations } = req.body;
+        const clientId = req.params.id;
+
+        if (!name || !pin || !password) {
+            return res.status(400).json({ message: 'Missing required fields' });
+        }
+
+        const obsList = (obligations || '').split(',').map((s: string) => s.trim());
+        const paye = obsList.includes('paye') ? 'due' : 'na';
+        const nssf = obsList.includes('nssf') ? 'due' : 'na';
+        const sha = obsList.includes('sha') ? 'due' : 'na';
+        const vat = obsList.includes('vat') ? 'due' : 'na';
+        const tot = obsList.includes('tot') ? 'due' : 'na';
+        const mri = obsList.includes('mri') ? 'due' : 'na';
+        const eLevy = obsList.includes('eLevy') ? 'due' : 'na';
+        const dst = obsList.includes('dst') ? 'due' : 'na';
+
+        const db = await openDb();
+        await db.run(
+            `UPDATE clients 
+             SET name = ?, pin = ?, password = ?, obligations = ?,
+                 paye = CASE WHEN paye = 'na' THEN ? ELSE paye END,
+                 nssf = CASE WHEN nssf = 'na' THEN ? ELSE nssf END,
+                 sha = CASE WHEN sha = 'na' THEN ? ELSE sha END,
+                 vat = CASE WHEN vat = 'na' THEN ? ELSE vat END,
+                 tot = CASE WHEN tot = 'na' THEN ? ELSE tot END,
+                 mri = CASE WHEN mri = 'na' THEN ? ELSE mri END,
+                 eLevy = CASE WHEN eLevy = 'na' THEN ? ELSE eLevy END,
+                 dst = CASE WHEN dst = 'na' THEN ? ELSE dst END
+             WHERE id = ?`,
+            [name, pin, password, obligations || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
+        );
+        
+        const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        res.json(updatedClient);
+    } catch (err) {
+        console.error('Error updating client:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

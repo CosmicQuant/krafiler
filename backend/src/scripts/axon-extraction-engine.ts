@@ -66,6 +66,7 @@ export interface EmployeeMasterRecord {
     personalRelief: number;
     insuranceRelief: number;
     paye: number;
+    selfAssessedPaye: number;
 }
 
 export class AxonDataExtractionEngine {
@@ -88,6 +89,17 @@ export class AxonDataExtractionEngine {
         if (!value) return '';
         const normalizedValue = value.replace(/^\uFEFF/, '').replace(/\u0000/g, '').trim();
         return normalizedValue.startsWith("'") ? normalizedValue.substring(1).trim() : normalizedValue;
+    }
+
+    private normalizeOptionalCertificateValue(value: string | undefined): string {
+        const normalizedValue = this.stripApostrophe(value);
+        if (!normalizedValue) {
+            return '';
+        }
+
+        return /^(0+(?:\.0+)?)|n\/?a|none|null|-$/i.test(normalizedValue)
+            ? ''
+            : normalizedValue;
     }
 
     public async parseMasterCsv(inputCsvPath: string): Promise<EmployeeMasterRecord[]> {
@@ -182,7 +194,7 @@ export class AxonDataExtractionEngine {
                                 residentialStatus: this.stripApostrophe(record['Residential Status'] || 'Resident'),
                                 typeOfEmployee: this.stripApostrophe(record['Type of Employee'] || 'Primary Employee'),
                                 pwd: pwd,
-                                exemptionCert: this.stripApostrophe(record['Exemption Certificate'] || ''),
+                                exemptionCert: this.normalizeOptionalCertificateValue(record['Exemption Certificate']),
                                 totalCashPay: totalCashPay,
                                 carBenefit: carBenefit,
                                 meals: meals,
@@ -200,7 +212,8 @@ export class AxonDataExtractionEngine {
                                 taxablePay: calculatedFields.taxablePay,
                                 personalRelief: calculatedFields.personalRelief,
                                 insuranceRelief: calculatedFields.insuranceRelief,
-                                paye: calculatedFields.paye
+                                paye: calculatedFields.paye,
+                                selfAssessedPaye: calculatedFields.selfAssessedPaye,
                             });
                         }
 
@@ -334,7 +347,7 @@ export class AxonDataExtractionEngine {
             row1.getCell(5).value = emp.kraPin; // E
             row1.getCell(6).value = emp.nssfNo ? Number(emp.nssfNo) : ''; // F: Number
             row1.getCell(7).value = '101'; // G: String triggers triangle natively
-            row1.getCell(8).value = Math.min(gross, 9000); // H: No triangle means number natively
+            row1.getCell(8).value = gross; // H: NSSF expects full income on both 101 and 102 rows
             row1.getCell(9).value = '1'; // I: String trigger
             row1.getCell(10).value = tier1Member.toString(); // J: String trigger
             row1.getCell(11).value = tier1Employer.toString(); // K: String trigger
@@ -352,7 +365,7 @@ export class AxonDataExtractionEngine {
                 row2.getCell(5).value = emp.kraPin;
                 row2.getCell(6).value = emp.nssfNo ? Number(emp.nssfNo) : '';
                 row2.getCell(7).value = '102'; // String trigger
-                row2.getCell(8).value = Math.max(0, Math.min(gross - 9000, 108000 - 9000)); // Number
+                row2.getCell(8).value = gross; // Number
                 row2.getCell(9).value = '1'; // String trigger
                 row2.getCell(10).value = tier2Member.toString(); // String trigger
                 row2.getCell(11).value = tier2Employer.toString(); // String trigger
@@ -411,6 +424,7 @@ export class AxonDataExtractionEngine {
             const totNITA = totEmp * 50;
             const totAHL = employees.reduce((sum, emp) => sum + (emp.ahl || 0), 0);
             const totTax = employees.reduce((sum, emp) => sum + (emp.paye || 0), 0);
+            const totSelfAssessedTax = employees.reduce((sum, emp) => sum + (emp.selfAssessedPaye || 0), 0);
             const totPayable = totNITA + totAHL + totTax;
 
             const monthCode = this.config.periodMMYYYY.substring(0, 2) || mm;
@@ -422,7 +436,7 @@ export class AxonDataExtractionEngine {
             const rtnPrdFrom = `01/${monthCode}/${yearStr}`;
             const rtnPrdTo = `${lastDay}/${monthCode}/${yearStr}`;
 
-            let singleCellValue = `ClcTaxDue.EmpTO%V_@0@P_@ClcTaxDue.FringeBenfTO%V_@0@P_@ClcTaxDue.LumpSumTO%V_@0@P_@ClcTaxDue.TaxDedEmpWithoutPin%V_@0@P_@ClcTaxDue.totalHousingContribution%V_@${totAHL}@P_@ClcTaxDue.totalNITAContribution%V_@${totNITA}@P_@ClcTaxDue.TotEmpRcrds%V_@${totEmp}@P_@ClcTaxDue.TotNITALevyMemb%V_@${totEmp}@P_@ClcTaxDue.TotPybl%V_@${totPayable}@P_@ClcTaxDue.TotTaxPybl%V_@${totTax}@P_@DtlsArrSalPdBftsPayeDedFrmEmpListTO%V_@0@P_@DtlsSalPdBftsPayeDedFrmEmpListTO%V_@0@P_@DtlsSalPdBftsSelfPayTaxListTO%V_@0@P_@FringeBenfTaxCalcListTO%V_@0@P_@labelForYearChangeSecB%V_@Mortgage Interest (M)@P_@RetInf.arrearStartDate%V_@01/02/2021@P_@RetInf.DatePaymentStartDate%V_@01/01/${yearStr}@P_@RetInf.DepositStartDate%V_@01/02/${parseInt(yearStr) - 1}@P_@RtnInf.EntityCode%V_@HOET@P_@RtnInf.EntityType%V_@Head Office@P_@RtnInf.isAddAssmt%V_@N@P_@RtnInf.Month%V_@${monthName}@P_@RtnInf.MonthCode%V_@${monthCode}@P_@RtnInf.ReturnType%V_@Original@P_@RtnInf.ReturnTypeCd%V_@1@P_@RtnInf.RtnMonth%V_@${monthCode}@P_@RtnInf.RtnPrdFrom%V_@${rtnPrdFrom}@P_@RtnInf.RtnPrdTo%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToAct%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToActStart%V_@${rtnPrdFrom}@P_@RtnInf.RtnYear%V_@${yearStr}@P_@RtnInf.TaxPayersPIN%V_@${this.config.employerPin}@P_@TaxPdOnLumpSumPdAftrTrmtnListTO%V_@0@P_@templateInfo.formId%V_@60@P_@templateInfo.moduleId%V_@2@P_@templateInfo.obligId%V_@7@P_@templateInfo.ofcVrsn%V_@EXCEL 1997-2003@P_@templateInfo.tempType%V_@XLS@P_@templateInfo.tempVrsn%V_@30.0.2`;
+            let singleCellValue = `ClcTaxDue.EmpTO%V_@${totSelfAssessedTax}@P_@ClcTaxDue.FringeBenfTO%V_@0@P_@ClcTaxDue.LumpSumTO%V_@0@P_@ClcTaxDue.TaxDedEmpWithoutPin%V_@0@P_@ClcTaxDue.totalHousingContribution%V_@${totAHL}@P_@ClcTaxDue.totalNITAContribution%V_@${totNITA}@P_@ClcTaxDue.TotEmpRcrds%V_@${totEmp}@P_@ClcTaxDue.TotNITALevyMemb%V_@${totEmp}@P_@ClcTaxDue.TotPybl%V_@${totPayable}@P_@ClcTaxDue.TotTaxPybl%V_@${totTax}@P_@DtlsArrSalPdBftsPayeDedFrmEmpListTO%V_@0@P_@DtlsSalPdBftsPayeDedFrmEmpListTO%V_@${totTax}@P_@DtlsSalPdBftsSelfPayTaxListTO%V_@${totSelfAssessedTax}@P_@FringeBenfTaxCalcListTO%V_@0@P_@labelForYearChangeSecB%V_@Mortgage Interest (M)@P_@RetInf.arrearStartDate%V_@01/02/2021@P_@RetInf.DatePaymentStartDate%V_@01/01/${yearStr}@P_@RetInf.DepositStartDate%V_@01/02/${parseInt(yearStr) - 1}@P_@RtnInf.EntityCode%V_@HOET@P_@RtnInf.EntityType%V_@Head Office@P_@RtnInf.isAddAssmt%V_@N@P_@RtnInf.Month%V_@${monthName}@P_@RtnInf.MonthCode%V_@${monthCode}@P_@RtnInf.ReturnType%V_@Original@P_@RtnInf.ReturnTypeCd%V_@1@P_@RtnInf.RtnMonth%V_@${monthCode}@P_@RtnInf.RtnPrdFrom%V_@${rtnPrdFrom}@P_@RtnInf.RtnPrdTo%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToAct%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToActStart%V_@${rtnPrdFrom}@P_@RtnInf.RtnYear%V_@${yearStr}@P_@RtnInf.TaxPayersPIN%V_@${this.config.employerPin}@P_@TaxPdOnLumpSumPdAftrTrmtnListTO%V_@0@P_@templateInfo.formId%V_@60@P_@templateInfo.moduleId%V_@2@P_@templateInfo.obligId%V_@7@P_@templateInfo.ofcVrsn%V_@EXCEL 1997-2003@P_@templateInfo.tempType%V_@XLS@P_@templateInfo.tempVrsn%V_@30.0.2`;
 
             const singleCellHash = crypto.createHash('sha256').update(singleCellValue).digest('hex');
             const multiCellHash = crypto.createHash('sha256').update('').digest('hex');
@@ -433,6 +447,7 @@ export class AxonDataExtractionEngine {
 <MultiCellValue/>
 <SingleCellHash>${singleCellHash}</SingleCellHash>
 <MultiCellHash>${multiCellHash}</MultiCellHash>
+<SheetCode>PAYE_RET</SheetCode>
 </Sheet>`;
 
             archive.append(xmlContent, { name: xmlFileName });
@@ -445,7 +460,7 @@ export class AxonDataExtractionEngine {
                 const resStatCode = emp.residentialStatus.toLowerCase().includes('resident') && !emp.residentialStatus.toLowerCase().includes('non') ? 'RES' : 'NRES';
 
                 // Fields map to the B_Employees_Dtls_Simp standard EXACTLY as expected by iTax
-                return `${emp.kraPin},${emp.fullName},${emp.residentialStatus},${emp.typeOfEmployee},${emp.pwd},${emp.exemptionCert},${emp.totalCashPay},${emp.carBenefit},${emp.meals},${emp.nonCash},${emp.typeOfHousing},,${emp.housingBenefit || emp.otherBenefits || 0},${emp.grossSalary},${emp.shaContribution},${emp.nssfContribution},${emp.otherPension},${emp.postRetMedical},${emp.mortgage},${emp.ahl},${emp.taxablePay},${emp.personalRelief},${emp.insuranceRelief},${emp.paye},${emp.paye},${typeEmpCode},0,${resStatCode},DTEMP`;
+                return `${emp.kraPin},${emp.fullName},${emp.residentialStatus},${emp.typeOfEmployee},${emp.pwd},${emp.exemptionCert},${emp.totalCashPay},${emp.carBenefit},${emp.meals},${emp.nonCash},${emp.typeOfHousing},,${emp.housingBenefit || emp.otherBenefits || 0},${emp.grossSalary},${emp.shaContribution},${emp.nssfContribution},${emp.otherPension},${emp.postRetMedical},${emp.mortgage},${emp.ahl},${emp.taxablePay},${emp.personalRelief},${emp.insuranceRelief},${emp.paye},${emp.selfAssessedPaye},${typeEmpCode},0,${resStatCode},DTEMP`;
             }).join('\n');
 
             archive.append(simpRows, { name: 'B_Employees_Dtls_Simp.csv' });

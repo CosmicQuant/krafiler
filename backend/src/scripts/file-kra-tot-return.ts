@@ -14,6 +14,8 @@ const TMP_DIR = path.join(
     process.env.TEMP_DIR ?? (process.platform === 'win32' ? 'C:\\Temp' : '/tmp'),
     'kra-receipts'
 );
+const KRA_BROWSER_PROFILE_DIR = process.env.KRA_BROWSER_PROFILE_DIR ?? path.join(TMP_DIR, 'browser-profile');
+const KRA_REUSE_BROWSER_PROFILE = process.env.KRA_REUSE_BROWSER_PROFILE !== 'false';
 const TOT_OBLIGATION_PATTERNS = [
     /^turnover\s*tax$/i,
     /^tot$/i,
@@ -685,7 +687,7 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
 
         try {
             await fs.mkdir(TMP_DIR, { recursive: true });
-            browser = await chromium.launch({
+            const launchOptions = {
                 headless: config.headless,
                 slowMo: config.slowMo,
                 args: [
@@ -695,9 +697,9 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
                     '--disable-gpu',
                     '--start-maximized',
                 ],
-            });
+            };
 
-            context = await browser.newContext({
+            const contextOptions = {
                 userAgent:
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
                     '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -705,9 +707,35 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
                 acceptDownloads: true,
                 locale: 'en-KE',
                 timezoneId: 'Africa/Nairobi',
-            });
+            };
 
-            const page = await context.newPage();
+            if (KRA_REUSE_BROWSER_PROFILE) {
+                await fs.mkdir(KRA_BROWSER_PROFILE_DIR, { recursive: true });
+                context = await chromium.launchPersistentContext(KRA_BROWSER_PROFILE_DIR, {
+                    ...launchOptions,
+                    ...contextOptions,
+                });
+                await context.clearCookies().catch(() => undefined);
+                await context.addInitScript(() => {
+                    try {
+                        window.localStorage.clear();
+                    } catch {
+                        // Ignore storage clear failures for opaque origins like about:blank.
+                    }
+
+                    try {
+                        window.sessionStorage.clear();
+                    } catch {
+                        // Ignore storage clear failures for opaque origins like about:blank.
+                    }
+                });
+                console.log(`[TOT] Using persistent KRA browser profile cache at ${KRA_BROWSER_PROFILE_DIR}`);
+            } else {
+                browser = await chromium.launch(launchOptions);
+                context = await browser.newContext(contextOptions);
+            }
+
+            const page = context.pages()[0] || await context.newPage();
             browserPage = page;
 
             page.on('dialog', async (dialog: Dialog) => {
@@ -753,7 +781,14 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
             await download.saveAs(tempReceiptPath);
 
             const { receiptPath } = await storeReceiptLocally(tempReceiptPath, runId);
-            await browser.close();
+            if (context) {
+                await context.close();
+                context = null;
+            }
+            if (browser) {
+                await browser.close();
+                browser = null;
+            }
 
             return {
                 success: true,
@@ -771,9 +806,11 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
                 console.warn(`[TOT] Recoverable portal failure on attempt ${attempt}: ${(error as Error).message}`);
                 if (context) {
                     await context.close().catch(() => undefined);
+                    context = null;
                 }
                 if (browser) {
                     await browser.close().catch(() => undefined);
+                    browser = null;
                 }
                 browserPage = null;
                 continue;
@@ -781,9 +818,11 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
 
             if (context) {
                 await context.close().catch(() => undefined);
+                context = null;
             }
             if (browser) {
                 await browser.close().catch(() => undefined);
+                browser = null;
             }
 
             const message = error instanceof Error ? error.message : String(error);

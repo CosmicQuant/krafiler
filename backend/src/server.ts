@@ -7,6 +7,7 @@
 
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -55,6 +56,9 @@ const filingLimiter = rateLimit({
 
 // Limit body size to prevent large-payload DoS attacks
 app.use(express.json({ limit: '10kb' }));
+
+// Serve receipts statically
+app.use('/api/receipts', express.static(path.resolve(__dirname, '..', '..', 'receipts')));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 

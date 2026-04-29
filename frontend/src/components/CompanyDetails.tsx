@@ -20,7 +20,7 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
         const data = new FormData();
         data.append('masterCsv', file);
         try {
-            const res = await fetch(`http://localhost:3001/api/clients/${client.id}/master-csv`, {
+            const res = await fetch(`/api/clients/${client.id}/master-csv`, {
                 method: 'POST',
                 body: data
             });

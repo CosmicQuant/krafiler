@@ -69,6 +69,9 @@ export interface FilingResponse {
     success: boolean;
     message: string;
     jobId?: string;
+    duplicate?: boolean;
+    jobState?: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
+    cancelRequested?: boolean;
 }
 
 export interface FilingStepLog {
@@ -92,7 +95,7 @@ export interface FilingResult {
 
 export interface FilingStatusResponse {
     jobId: string;
-    state: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'unknown';
+    state: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'unknown' | 'cancelling' | 'cancelled';
     progress: number | object;
     attemptsMade: number;
     failedReason: string | null;

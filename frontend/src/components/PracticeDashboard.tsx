@@ -41,6 +41,8 @@ const plans: Record<PlanKey, PracticePlan> = {
     enterprise: { label: 'Enterprise Desk', capacity: 'Unlimited', used: 142 },
 };
 
+const apiFetch = (path: string, init?: RequestInit) => fetch(`/api${path}`, init);
+
 export type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
 
 export type ClientObligation = {
@@ -74,7 +76,102 @@ export type ClientObligation = {
     tot: TaxStatus;
     mri: TaxStatus;
     dst: TaxStatus;
+
+    payeLastFiledDate?: string;
+    payeReceiptUrl?: string;
+    nssfLastFiledDate?: string;
+    nssfReceiptUrl?: string;
+    shaLastFiledDate?: string;
+    shaReceiptUrl?: string;
+    eLevyLastFiledDate?: string;
+    eLevyReceiptUrl?: string;
+    vatLastFiledDate?: string;
+    vatReceiptUrl?: string;
+    totLastFiledDate?: string;
+    totReceiptUrl?: string;
+    mriLastFiledDate?: string;
+    mriReceiptUrl?: string;
+    dstLastFiledDate?: string;
+    dstReceiptUrl?: string;
 };
+
+type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
+
+type ActiveDashboardJob = {
+    id: string;
+    state: FilingJobState;
+    progress: number;
+    message: string;
+    failedReason?: string;
+};
+
+function isPendingFilingJob(job?: ActiveDashboardJob | null) {
+    return !!job && (job.state === 'waiting' || job.state === 'active' || job.state === 'delayed' || job.state === 'cancelling');
+}
+
+function isTerminalFilingJob(job?: ActiveDashboardJob | null) {
+    return !!job && (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled');
+}
+
+function getAutoFileLabel(job?: ActiveDashboardJob | null) {
+    if (!job) {
+        return 'Auto-File';
+    }
+
+    if (job.state === 'waiting' || job.state === 'delayed') {
+        return 'Queued...';
+    }
+
+    if (job.state === 'active') {
+        return 'Filing...';
+    }
+
+    if (job.state === 'cancelling') {
+        return 'Cancelling...';
+    }
+
+    return 'Auto-File';
+}
+
+function getFilingStatusLabel(job: ActiveDashboardJob) {
+    if (job.state === 'completed') {
+        return '✓ Finished';
+    }
+
+    if (job.state === 'failed') {
+        return '⚠ Failed';
+    }
+
+    if (job.state === 'cancelled') {
+        return '■ Cancelled';
+    }
+
+    if (job.state === 'cancelling') {
+        return '◌ Cancelling';
+    }
+
+    return '⚙ Filing...';
+}
+
+function getFilingProgressTone(job: ActiveDashboardJob) {
+    if (job.state === 'completed') {
+        return 'bg-emerald-500';
+    }
+
+    if (job.state === 'failed') {
+        return 'bg-red-500';
+    }
+
+    if (job.state === 'cancelled') {
+        return 'bg-slate-500';
+    }
+
+    if (job.state === 'cancelling') {
+        return 'bg-amber-500';
+    }
+
+    return 'bg-blue-500';
+}
 
 
 
@@ -184,7 +281,8 @@ const [etimsModalClient, setEtimsModalClient] = useState<any>(null);
 // @ts-ignore
 const [etimsPassword, setEtimsPassword] = useState('');
     const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
-    const [activeJobs, setActiveJobs] = useState<Record<string, { id: string, state: string, progress: number, message: string, failedReason?: string }>>({});
+    const [activeJobs, setActiveJobs] = useState<Record<string, ActiveDashboardJob>>({});
+    const [cancellingClientIds, setCancellingClientIds] = useState<Record<string, boolean>>({});
     const [uploadingClientIds, setUploadingClientIds] = useState<Record<string, boolean>>({});
     const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -195,7 +293,39 @@ const [etimsPassword, setEtimsPassword] = useState('');
     const [newClientPin, setNewClientPin] = useState('');
     const [newClientPassword, setNewClientPassword] = useState('');
     const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
-                const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
+    const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
+    const [isSavingClient, setIsSavingClient] = useState(false);
+    const [newClientModalError, setNewClientModalError] = useState<string | null>(null);
+    const [editingClientId, setEditingClientId] = useState<number | null>(null);
+
+    const resetNewClientForm = () => {
+        setEditingClientId(null);
+        setShowNewClientModal(false);
+        setNewClientName('');
+        setNewClientPin('');
+        setNewClientPassword('');
+        setNewClientObligations([]);
+        setNewClientMasterCsv(null);
+        setNewClientModalError(null);
+    };
+
+    const openNewClientModal = (clientToEdit?: any) => {
+        if (clientToEdit?.id) {
+            setEditingClientId(clientToEdit.id);
+            setNewClientName(clientToEdit.name);
+            setNewClientPin(clientToEdit.pin);
+            setNewClientPassword(clientToEdit.password);
+            setNewClientObligations(clientToEdit.obligations ? clientToEdit.obligations.split(',').map((s: string) => s.trim()) : []);
+        } else {
+            setEditingClientId(null);
+            setNewClientName('');
+            setNewClientPin('');
+            setNewClientPassword('');
+            setNewClientObligations([]);
+        }
+        setNewClientModalError(null);
+        setShowNewClientModal(true);
+    };
 
     useEffect(() => {
         fetchClients();
@@ -203,48 +333,80 @@ const [etimsPassword, setEtimsPassword] = useState('');
 
     const fetchClients = async () => {
         try {
-            const res = await fetch('http://localhost:3001/api/clients');
+            const res = await apiFetch('/clients');
             const data = await res.json();
             setClients(data);
         } catch (error) {
             console.error('Failed to fetch clients', error);
-            setDashboardNotice({ tone: 'error', message: 'Failed to load clients from database.' });
+            setDashboardNotice({
+                tone: 'error',
+                message: error instanceof TypeError
+                    ? 'Could not load clients because the backend API is unavailable.'
+                    : 'Failed to load clients from database.',
+            });
         }
     };
 
     const handleSaveClient = async () => {
+        if (isSavingClient) {
+            return;
+        }
+
+        const name = newClientName.trim();
+        const pin = newClientPin.trim().toUpperCase();
+        const password = newClientPassword.trim();
+
+        if (!name || !pin || !password) {
+            setNewClientModalError('Client name, KRA PIN, and KRA password are required before saving.');
+            return;
+        }
+
+        setIsSavingClient(true);
+        setNewClientModalError(null);
+
         try {
-            const res = await fetch('http://localhost:3001/api/clients', {
-                method: 'POST',
+            const isEdit = editingClientId !== null;
+            const url = isEdit ? `/clients/${editingClientId}` : '/clients';
+            const res = await apiFetch(url, {
+                method: isEdit ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: newClientName,
-                    pin: newClientPin,
-                    password: newClientPassword,
+                    name,
+                    pin,
+                    password,
                     obligations: newClientObligations.join(', '),
                 })
             });
+
             if (res.ok) {
-                const newClient = await res.json();
+                const updatedOrNewData = await res.json();
                 if (newClientObligations.includes('paye') && newClientMasterCsv) {
                     setDashboardNotice({ tone: 'info', message: 'Generating standardized master CSV...' });
-                    await handleUploadMasterCsv(newClient.id, newClientMasterCsv);
+                    await handleUploadMasterCsv(updatedOrNewData.id, newClientMasterCsv);
                 } else {
-                    setDashboardNotice({ tone: 'success', message: 'Client saved successfully.' });
-                    fetchClients();
+                    setDashboardNotice({ tone: 'success', message: isEdit ? 'Client updated successfully.' : 'Client saved successfully.' });
+                    await fetchClients();
                 }
-                setShowNewClientModal(false);
-                setNewClientName('');
-                setNewClientPin('');
-                setNewClientPassword('');
-                setNewClientObligations([]);
-                setNewClientMasterCsv(null);
+                resetNewClientForm();
             } else {
-                setDashboardNotice({ tone: 'error', message: 'Failed to save client.' });
+                const errorPayload = await res.json().catch(async () => ({
+                    error: await res.text().catch(() => 'Failed to save client.'),
+                }));
+                const message = errorPayload.message || errorPayload.error || 'Failed to save client.';
+                setNewClientModalError(message);
+                setDashboardNotice({ tone: 'error', message });
             }
         } catch (error) {
             console.error('Save client error:', error);
-            setDashboardNotice({ tone: 'error', message: 'Failed to save client.' });
+            const message = error instanceof TypeError
+                ? 'Could not reach the backend API. Start or restart the backend server on port 3001 and try again.'
+                : error instanceof Error
+                    ? error.message
+                    : 'Failed to save client.';
+            setNewClientModalError(message);
+            setDashboardNotice({ tone: 'error', message });
+        } finally {
+            setIsSavingClient(false);
         }
     };
 
@@ -259,7 +421,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
             formData.append('generateNssf', 'true');
             formData.append('generateSha', 'true');
             
-            const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+            const response = await apiFetch('/payroll/generate-unified', {
                 method: 'POST',
                 body: formData,
             });
@@ -294,7 +456,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
         const formData = new FormData();
         formData.append('masterCsv', file);
         try {
-            const res = await fetch(`http://localhost:3001/api/clients/${clientId}/master-csv`, {
+            const res = await apiFetch(`/clients/${clientId}/master-csv`, {
                 method: 'POST',
                 body: formData
             });
@@ -342,7 +504,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
         formData.append('clientName', client.name);
         formData.append('clientId', client.id);
 
-        const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+        const response = await apiFetch('/payroll/generate-unified', {
             method: 'POST',
             body: formData,
         });
@@ -389,19 +551,20 @@ const [etimsPassword, setEtimsPassword] = useState('');
             let hasChanges = false;
 
             for (const [clientId, job] of Object.entries(currentJobs)) {
-                if (job.state === 'completed' || job.state === 'failed') continue;
+                if (isTerminalFilingJob(job)) continue;
 
                 try {
-                    const res = await fetch(`http://localhost:3001/api/tax/filing-status/${job.id}`);
+                    const res = await apiFetch(`/tax/filing-status/${job.id}`);
                     if (!res.ok) continue;
                     const data = await res.json();
                     
-                    const newMessage = data.lastStep ? data.lastStep.log : 'Processing...';
+                    const newMessage = data.lastStep?.message ?? currentJobs[clientId].message ?? 'Processing...';
+                    const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
                     if (currentJobs[clientId].state !== data.state || currentJobs[clientId].progress !== data.progress || currentJobs[clientId].message !== newMessage) {
                         currentJobs[clientId] = {
                             id: data.jobId,
-                            state: data.state,
-                            progress: data.progress || 0,
+                            state: data.state as FilingJobState,
+                            progress: nextProgress,
                             message: newMessage,
                             failedReason: data.failedReason || ''
                         };
@@ -485,6 +648,14 @@ const [etimsPassword, setEtimsPassword] = useState('');
 
     const handleAutoFile = async (client: ClientObligation) => {
         try {
+            if (isPendingFilingJob(activeJobs[client.id])) {
+                setDashboardNotice({
+                    tone: 'info',
+                    message: `A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`,
+                });
+                return;
+            }
+
             let activeClient = client;
             if (activeClient.masterFileUrl || activeClient.payrollSourceUrl) {
                 setDashboardNotice({ tone: 'info', message: `Generating required ZIP files before filing for ${client.name}...` });
@@ -502,7 +673,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                 formData.append('clientName', client.name);
                 formData.append('clientId', client.id);
 
-                const response = await fetch('http://localhost:3001/api/payroll/generate-unified', {
+                const response = await apiFetch('/payroll/generate-unified', {
                     method: 'POST',
                     body: formData,
                 });
@@ -536,22 +707,85 @@ const [etimsPassword, setEtimsPassword] = useState('');
                 ownsRentalProperty: false
             };
 
-            const res = await fetch('http://localhost:3001/api/tax/file-return', {
+            const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
 
+            const dataResp = await res.json().catch(() => ({}));
+
             if (!res.ok) {
-                 const err = await res.json().catch(()=>({}));
-                 throw new Error(err.message || err.error || 'Failed to queue filing job.');
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = (dataResp.jobState || 'waiting') as FilingJobState;
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: {
+                            id: dataResp.jobId,
+                            state: duplicateState,
+                            progress: prev[client.id]?.id === dataResp.jobId ? prev[client.id].progress : 0,
+                            message: dataResp.message || 'A filing is already queued or active.',
+                            failedReason: '',
+                        },
+                    }));
+                    setDashboardNotice({ tone: 'info', message: dataResp.message || `A filing is already queued or active for ${client.name}.` });
+                    return;
+                }
+
+                throw new Error(dataResp.message || dataResp.error || 'Failed to queue filing job.');
             }
 
-            const dataResp = await res.json();
             setDashboardNotice({ tone: 'success', message: `Auto-filing job queued successfully for ${client.name}.` });
-            setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'Queueing job...', failedReason: '' } }));
+            setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: (dataResp.jobState || 'waiting') as FilingJobState, progress: 0, message: 'Queueing job...', failedReason: '' } }));
         } catch(e: any) {
             setDashboardNotice({ tone: 'error', message: e.message });
+        }
+    };
+
+    const handleCancelAutoFile = async (client: ClientObligation) => {
+        const activeJob = activeJobs[client.id];
+        if (!activeJob || isTerminalFilingJob(activeJob)) {
+            return;
+        }
+
+        setCancellingClientIds((current) => ({ ...current, [client.id]: true }));
+
+        try {
+            const response = await apiFetch(`/tax/filing-status/${activeJob.id}/cancel`, {
+                method: 'POST',
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to cancel the filing job.');
+            }
+
+            const nextState = (data.jobState || (activeJob.state === 'active' ? 'cancelling' : 'cancelled')) as FilingJobState;
+            setActiveJobs((current) => ({
+                ...current,
+                [client.id]: {
+                    ...current[client.id],
+                    state: nextState,
+                    message: data.message || (nextState === 'cancelled'
+                        ? 'Job cancelled before processing started.'
+                        : 'Cancellation requested. Waiting for the worker to stop.'),
+                },
+            }));
+            setDashboardNotice({
+                tone: 'info',
+                message: data.message || (nextState === 'cancelled'
+                    ? `Cancelled the queued filing for ${client.name}.`
+                    : `Cancellation requested for ${client.name}.`),
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to cancel the filing job.';
+            setDashboardNotice({ tone: 'error', message });
+        } finally {
+            setCancellingClientIds((current) => {
+                const nextState = { ...current };
+                delete nextState[client.id];
+                return nextState;
+            });
         }
     };
 
@@ -638,7 +872,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     {payrollClients.map((client) => (
                         <div key={client.id} className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 shadow-lg backdrop-blur flex flex-col gap-4 overflow-visible">
                             <div className="flex flex-col border-b border-slate-700/50 pb-3">
-                                <h4 className="text-sm font-bold text-white">{client.name}</h4>
+                                <h4 className="text-sm font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</h4>
                                 <span className="text-xs text-slate-500">{client.pin}</span>
                             </div>
                             
@@ -677,7 +911,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             onClick={async () => {
                                                 if (window.confirm('Remove this Master CSV?')) {
                                                     try {
-                                                        const res = await fetch(`http://localhost:3001/api/clients/${client.id}/master-csv`, { method: 'DELETE' });
+                                                        const res = await apiFetch(`/clients/${client.id}/master-csv`, { method: 'DELETE' });
                                                         if (res.ok) {
                                                             fetchClients();
                                                             setDashboardNotice({ tone: 'success', message: 'Master CSV removed successfully.' });
@@ -735,19 +969,33 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     <div className="w-full mt-3 mb-3 bg-slate-900 border border-slate-700 rounded-lg p-2">
                                         <div className="flex items-center justify-between gap-2 mb-1">
                                             <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
-                                                {activeJobs[client.id].state === 'completed' ? '✓ Finished' : activeJobs[client.id].state === 'failed' ? '⚠ Failed' : '⚙ Filing...'}
+                                                {getFilingStatusLabel(activeJobs[client.id])}
                                             </span>
                                             <span className="text-[10px] text-slate-400 font-mono">{activeJobs[client.id].progress}%</span>
                                         </div>
                                         <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
                                             <div 
-                                                className={`h-1.5 rounded-full transition-all duration-500 ${activeJobs[client.id].state === 'completed' ? 'bg-emerald-500' : activeJobs[client.id].state === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`}
+                                                className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
                                                 style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
                                             ></div>
                                         </div>
                                         <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
-                                            {activeJobs[client.id].state === 'failed' ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span> : activeJobs[client.id].message}
+                                            {activeJobs[client.id].state === 'failed'
+                                                ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span>
+                                                : activeJobs[client.id].message}
                                         </div>
+                                        {isPendingFilingJob(activeJobs[client.id]) && (
+                                            <button
+                                                onClick={() => void handleCancelAutoFile(client)}
+                                                disabled={Boolean(cancellingClientIds[client.id]) || activeJobs[client.id].state === 'cancelling'}
+                                                className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            >
+                                                {Boolean(cancellingClientIds[client.id]) || activeJobs[client.id].state === 'cancelling'
+                                                    ? <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                                                    : <X className="h-3 w-3 shrink-0" />}
+                                                <span>{activeJobs[client.id].state === 'cancelling' ? 'Cancelling...' : 'Cancel Job'}</span>
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                                 <div className="flex flex-col sm:flex-row gap-2">
@@ -761,10 +1009,10 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     </button>
                                     <button
                                         onClick={() => handleAutoFile(client)}
-                                        disabled={!client.masterFileUrl && !client.payrollSourceUrl && !client.payeZipUrl}
+                                        disabled={(!client.masterFileUrl && !client.payrollSourceUrl && !client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
                                         className="flex items-center justify-center w-full gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-xs font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
                                     >
-                                        <Rocket className="h-4 w-4 shrink-0" /> <span className="truncate">Auto-File</span>
+                                        <Rocket className="h-4 w-4 shrink-0" /> <span className="truncate">{getAutoFileLabel(activeJobs[client.id])}</span>
                                     </button>
                                 </div>
                             </div>
@@ -790,7 +1038,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                         {payrollClients.map((client) => (
                             <tr key={client.id} className="transition hover:bg-slate-800/50">
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
-                                    <div className="font-semibold text-white">{client.name}</div>
+                                    <div className="font-semibold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
                                     <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">
@@ -819,7 +1067,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                 onClick={async () => {
                                                     if (window.confirm('Remove this Master CSV?')) {
                                                         try {
-                                                            const res = await fetch(`http://localhost:3001/api/clients/${client.id}/master-csv`, { method: 'DELETE' });
+                                                            const res = await apiFetch(`/clients/${client.id}/master-csv`, { method: 'DELETE' });
                                                             if (res.ok) {
                                                                 fetchClients();
                                                                 setDashboardNotice({ tone: 'success', message: 'Master CSV removed successfully.' });
@@ -912,29 +1160,43 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         </button>
                                         <button
                                             onClick={() => handleAutoFile(client)}
-                                            disabled={!(client.masterFileUrl || client.payrollSourceUrl || client.payeZipUrl)}
+                                            disabled={!(client.masterFileUrl || client.payrollSourceUrl || client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
                                             className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
                                         >
-                                            <Rocket className="h-3 w-3" /> Auto-File
+                                            <Rocket className="h-3 w-3" /> {getAutoFileLabel(activeJobs[client.id])}
                                         </button>
                                     </div>
                                     {activeJobs[client.id] && (
                                         <div className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-left">
                                             <div className="flex items-center justify-between gap-2 mb-1">
                                                 <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
-                                                    {activeJobs[client.id].state === 'completed' ? '✓ Finished' : activeJobs[client.id].state === 'failed' ? '⚠️ Failed' : '⚙ Filing...'}
+                                                    {getFilingStatusLabel(activeJobs[client.id])}
                                                 </span>
                                                 <span className="text-[10px] text-slate-400 font-mono">{activeJobs[client.id].progress}%</span>
                                             </div>
                                             <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
                                                 <div 
-                                                    className={`h-1.5 rounded-full transition-all duration-500 ${activeJobs[client.id].state === 'completed' ? 'bg-emerald-500' : activeJobs[client.id].state === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`}
+                                                    className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
                                                     style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
                                                 ></div>
                                             </div>
                                             <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
-                                                {activeJobs[client.id].state === 'failed' ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span> : activeJobs[client.id].message}
+                                                {activeJobs[client.id].state === 'failed'
+                                                    ? <span className="text-red-400">{activeJobs[client.id].failedReason || 'An error occurred during filing.'}</span>
+                                                    : activeJobs[client.id].message}
                                             </div>
+                                            {isPendingFilingJob(activeJobs[client.id]) && (
+                                                <button
+                                                    onClick={() => void handleCancelAutoFile(client)}
+                                                    disabled={Boolean(cancellingClientIds[client.id]) || activeJobs[client.id].state === 'cancelling'}
+                                                    className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                                >
+                                                    {Boolean(cancellingClientIds[client.id]) || activeJobs[client.id].state === 'cancelling'
+                                                        ? <RefreshCw className="h-3 w-3 animate-spin" />
+                                                        : <X className="h-3 w-3" />}
+                                                    {activeJobs[client.id].state === 'cancelling' ? 'Cancelling...' : 'Cancel Job'}
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </td>
@@ -1235,7 +1497,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     <input type="text" placeholder="Search client or PIN..." className="ml-2 bg-transparent text-sm text-white placeholder-slate-500 outline-none w-full" />
                                 </div>
                                 {view === 'clients' && (
-                                    <button onClick={() => setShowNewClientModal(true)} className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
+                                    <button onClick={openNewClientModal} className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
                                         <Plus className="h-4 w-4" /> New Client
                                     </button>
                                 )}
@@ -1317,7 +1579,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 <div className="grid gap-3">
                                     {/* Green theme */}
                                     <button 
-                                        onClick={() => setShowNewClientModal(true)}
+                                        onClick={openNewClientModal}
                                         className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-400 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(16,185,129,0.3)]"
                                     >
                                         <div className="relative z-10">
@@ -1424,7 +1686,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             {clients.filter(c => c.eLevy !== 'na').map((client) => (
                                                 <tr key={client.id} className="transition hover:bg-slate-800/50">
                                                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
-                                                        <div className="font-semibold text-white">{client.name}</div>
+                                                        <div className="font-semibold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
                                                         <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
                                                     </td>
                                                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.eLevy} /></td>
@@ -1456,7 +1718,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                 <td className="px-4 py-4">
                                                     <button onClick={() => setSelectedClient(client)} className="flex items-center gap-3 text-left hover:opacity-80">
                                                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><Building2 className="h-5 w-5" /></div>
-                                                        <div className="font-bold text-white hover:text-emerald-400 hover:underline">{client.name}</div>
+                                                        <div className="font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
                                                     </button>
                                                 </td>
                                                 <td className="px-4 py-4 font-mono text-slate-400">{client.pin}</td>
@@ -1485,213 +1747,199 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 
 
                     {showNewClientModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
-                    <div className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-slate-800 p-6">
-                            <div>
-                                <h2 className="text-xl font-bold text-white">Onboard New Client</h2>
-                                <p className="mt-1 text-sm text-slate-400">Add a client and select their active obligations.</p>
-                            </div>
-                            <button onClick={() => setShowNewClientModal(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition">
-                                <X className="h-5 w-5" />
-                            </button>
-                        </div>
-                        <div className="p-6">
-                            <div className="space-y-4">
-                                <div className="grid gap-4 sm:grid-cols-2">
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Client Name</label>
-                                        <input value={newClientName} onChange={e => setNewClientName(e.target.value)} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. Acme Corp" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA PIN</label>
-                                        <input value={newClientPin} onChange={e => setNewClientPin(e.target.value)} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. P123456789A" />
-                                    </div>
-                                    <div className="sm:col-span-2">
-                                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA Password</label>
-                                        <input value={newClientPassword} onChange={e => setNewClientPassword(e.target.value)} type="password" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="Keep this secure" />
-                                    </div>
-                                </div>
-
-                                <div className="pt-4">
-                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Select Active Obligations</label>
-                                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                                        {[
-                                            { id: 'paye', label: 'PAYE' },
-                                            { id: 'nssf', label: 'NSSF' },
-                                            { id: 'sha', label: 'SHA' },
-                                            { id: 'elevy', label: 'eLevy' },
-                                            { id: 'vat', label: 'VAT' },
-                                            { id: 'tot', label: 'TOT' },
-                                            { id: 'mri', label: 'MRI' },
-                                            { id: 'dst', label: 'DST' },
-                                        ].map((obs) => {
-                                            const isActive = newClientObligations.includes(obs.id);
-                                            return (
-                                                <button
-                                                    key={obs.id}
-                                                    onClick={() => {
-                                                        setNewClientObligations(prev =>
-                                                            prev.includes(obs.id)
-                                                                ? prev.filter(p => p !== obs.id)
-                                                                : [...prev, obs.id]
-                                                        );
-                                                    }}
-                                                    className={`flex items-center justify-center rounded-xl border p-4 text-sm font-bold transition-all ${
-                                                        isActive
-                                                            ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                                                            : 'border-slate-700 bg-slate-800/30 text-slate-400 hover:border-slate-600 hover:bg-slate-800'
-                                                    }`}
-                                                >
-                                                        {obs.label}
-                                                    </button>
-                                                );
-                                            })}
+                        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm">
+                            <div className="flex min-h-full items-start justify-center py-4 sm:items-center">
+                                <div className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+                                    <div className="flex shrink-0 items-center justify-between border-b border-slate-800 p-6">
+                                        <div>
+                                            <h2 className="text-xl font-bold text-white">{editingClientId ? 'Edit Client' : 'Onboard New Client'}</h2>
+                                            <p className="mt-1 text-sm text-slate-400">Add a client and select their active obligations.</p>
                                         </div>
+                                        <button type="button" onClick={resetNewClientForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white">
+                                            <X className="h-5 w-5" />
+                                        </button>
                                     </div>
 
-                                    {/* PAYE CSV Upload Section */}
-                                    {newClientObligations.some(ob => ['paye', 'nssf', 'sha'].includes(ob)) && (
-                                        <div className="pt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                                            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-                                                <div className="flex items-center justify-between mb-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-400">
-                                                            <Building2 className="h-4 w-4" /> Unified Payroll Master
-                                                        </h3>
-                                                        <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 flex items-center h-5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Optional</span>
-                                                    </div>
-                                                    {newClientMasterCsv && (
-                                                        <button 
-                                                            onClick={(e) => {
-                                                                e.preventDefault();
-                                                                if (window.confirm('Are you sure you want to remove this Master CSV?')) {
-                                                                    setNewClientMasterCsv(null);
-                                                                }
-                                                            }}
-                                                            className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-2 py-1 rounded-lg transition"
-                                                        >
-                                                            <X className="h-3 w-3" /> Remove File
-                                                        </button>
-                                                    )}
+                                    <div className="flex-1 overflow-y-auto p-6">
+                                        <div className="space-y-6">
+                                            <div className="grid gap-4 sm:grid-cols-2">
+                                                <div>
+                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Client Name</label>
+                                                    <input value={newClientName} onChange={(e) => setNewClientName(e.target.value)} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. Acme Corp" />
                                                 </div>
-                                                <p className="mt-2 text-xs text-emerald-200/70">
-                                                    Upload any master payroll spreadsheet containing employee details (Name, ID, PIN, NHIF, NSSF). 
-                                                    The system will automatically ingest the data, format it to the KRA Unified Payroll standard, 
-                                                    and generate the Master CSV for you.
-                                                </p>
-                                                
-                                                {!newClientMasterCsv && (
-                                                    <div className="mt-4 flex items-center justify-center w-full">
-                                                        <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-24 border-2 border-emerald-500/30 border-dashed rounded-xl cursor-pointer bg-slate-900/50 hover:bg-emerald-500/10 hover:border-emerald-500/50 transition">
-                                                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                                                <p className="mb-1 text-sm text-slate-400 font-bold">
-                                                                    Click to upload <span className="font-normal text-slate-500">or drag and drop</span>
-                                                                </p>
-                                                                <p className="text-xs text-slate-500">.CSV or .XLSX</p>
-                                                            </div>
-                                                            <input id="dropzone-file" type="file" accept=".csv, .xlsx, .xls" className="hidden" onChange={(e) => {
-                                                                if (e.target.files && e.target.files.length > 0) {
-                                                                    setNewClientMasterCsv(e.target.files[0]);
-                                                                }
-                                                            }} />
-                                                        </label>
-                                                    </div>
-                                                )}
-
-                                                {newClientMasterCsv && (
-                                                    <div className="mt-4 p-4 rounded-xl border border-emerald-500/50 bg-emerald-500/20 flex flex-col items-center justify-center gap-2">
-                                                        <CheckCircle2 className="h-8 w-8 text-emerald-400" />
-                                                        <span className="text-sm font-bold text-emerald-300">File Selected: {newClientMasterCsv.name}</span>
-                                                        <span className="text-xs text-emerald-400/80">Ready to automatically generate standard KRA templates on process.</span>
-                                                    </div>
-                                                )}
+                                                <div>
+                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA PIN</label>
+                                                    <input value={newClientPin} onChange={(e) => setNewClientPin(e.target.value.toUpperCase())} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. P123456789A" />
+                                                </div>
+                                                <div className="sm:col-span-2">
+                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA Password</label>
+                                                    <input value={newClientPassword} onChange={(e) => setNewClientPassword(e.target.value)} type="password" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="Keep this secure" />
+                                                </div>
                                             </div>
-                                        </div>
-                                    )}
 
-                                
+                                            <div>
+                                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Select Active Obligations</label>
+                                                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                                    {[
+                                                        { id: 'paye', label: 'PAYE' },
+                                                        { id: 'nssf', label: 'NSSF' },
+                                                        { id: 'sha', label: 'SHA' },
+                                                        { id: 'elevy', label: 'eLevy' },
+                                                        { id: 'vat', label: 'VAT' },
+                                                        { id: 'tot', label: 'TOT' },
+                                                        { id: 'mri', label: 'MRI' },
+                                                        { id: 'dst', label: 'DST' },
+                                                    ].map((obs) => {
+                                                        const isActive = newClientObligations.includes(obs.id);
+                                                        return (
+                                                            <button
+                                                                key={obs.id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setNewClientModalError(null);
+                                                                    setNewClientObligations((prev) => (
+                                                                        prev.includes(obs.id)
+                                                                            ? prev.filter((currentObligation) => currentObligation !== obs.id)
+                                                                            : [...prev, obs.id]
+                                                                    ));
+                                                                }}
+                                                                className={`flex items-center justify-center rounded-xl border p-4 text-sm font-bold transition-all ${
+                                                                    isActive
+                                                                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                                                                        : 'border-slate-700 bg-slate-800/30 text-slate-400 hover:border-slate-600 hover:bg-slate-800'
+                                                                }`}
+                                                            >
+                                                                {obs.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            {newClientObligations.some((obligation) => ['paye', 'nssf', 'sha'].includes(obligation)) && (
+                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+                                                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+                                                        <div className="mb-4 flex items-center justify-between gap-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-400">
+                                                                    <Building2 className="h-4 w-4" /> Unified Payroll Master
+                                                                </h3>
+                                                                <span className="flex h-5 items-center rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Optional</span>
+                                                            </div>
+                                                            {newClientMasterCsv && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        if (window.confirm('Are you sure you want to remove this Master CSV?')) {
+                                                                            setNewClientMasterCsv(null);
+                                                                        }
+                                                                    }}
+                                                                    className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/20 hover:text-red-300"
+                                                                >
+                                                                    Remove File
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        <p className="mt-2 text-xs text-emerald-200/70">
+                                                            Upload any master payroll spreadsheet containing employee details (Name, ID, PIN, NHIF, NSSF).
+                                                            The system will automatically ingest the data, format it to the KRA Unified Payroll standard,
+                                                            and generate the Master CSV for you.
+                                                        </p>
+
+                                                        {!newClientMasterCsv && (
+                                                            <div className="mt-4 flex w-full items-center justify-center">
+                                                                <label htmlFor="dropzone-file" className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-emerald-500/30 bg-slate-900/50 transition hover:border-emerald-500/50 hover:bg-emerald-500/10">
+                                                                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                                                        <p className="mb-1 text-sm font-bold text-slate-400">
+                                                                            Click to upload <span className="font-normal text-slate-500">or drag and drop</span>
+                                                                        </p>
+                                                                        <p className="text-xs text-slate-500">.CSV or .XLSX</p>
+                                                                    </div>
+                                                                    <input
+                                                                        id="dropzone-file"
+                                                                        type="file"
+                                                                        accept=".csv, .xlsx, .xls"
+                                                                        className="hidden"
+                                                                        onChange={(e) => {
+                                                                            if (e.target.files && e.target.files.length > 0) {
+                                                                                setNewClientMasterCsv(e.target.files[0]);
+                                                                            }
+                                                                        }}
+                                                                    />
+                                                                </label>
+                                                            </div>
+                                                        )}
+
+                                                        {newClientMasterCsv && (
+                                                            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/20 p-4">
+                                                                <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+                                                                <span className="text-sm font-bold text-emerald-300">File Selected: {newClientMasterCsv.name}</span>
+                                                                <span className="text-xs text-emerald-400/80">Ready to automatically generate standard KRA templates on process.</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {newClientObligations.some((obligation) => ['vat', 'tot', 'dst'].includes(obligation)) && (
+                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+                                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
+                                                        <div className="mb-2 flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
+                                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
+                                                                </h3>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {newClientObligations.includes('mri') && (
+                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+                                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
+                                                        <div className="mb-2 flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
+                                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
+                                                                </h3>
+                                                            </div>
+                                                        </div>
+                                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time rent amount manually per client before filing.</p>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {newClientModalError && (
+                                                <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+                                                    {newClientModalError}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-800 bg-slate-900/50 p-6">
+                                        <button type="button" onClick={resetNewClientForm} className="rounded-xl px-5 py-2.5 text-sm font-bold text-slate-400 transition hover:text-white">
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveClient}
+                                            disabled={isSavingClient}
+                                            className={`rounded-xl px-6 py-2.5 text-sm font-bold text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.2)] transition ${
+                                                isSavingClient
+                                                    ? 'cursor-not-allowed bg-emerald-500/60 text-slate-900/70'
+                                                    : 'bg-emerald-500 hover:bg-emerald-400'
+                                            }`}
+                                        >
+                                            {isSavingClient ? 'Saving...' : 'Save Client'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                            
-                            {/* Non-Payroll VAT/TOT/DST Modal Section */}
-                            {newClientObligations.some(ob => ['vat', 'tot', 'dst'].includes(ob)) && (
-                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-3">
-                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
-                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
-                                                </h3>
-                                            </div>
-                                        </div>
-                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST Setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Non-Payroll MRI Modal Section */}
-                            {newClientObligations.includes('mri') && (
-                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-3">
-                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
-                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
-                                                </h3>
-                                            </div>
-                                        </div>
-                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time Rent Amount (KES) manually per client directly in the desk interface before filing.</p>
-                                    </div>
-                                </div>
-                            )}
-
-                                                        {/* Non-Payroll VAT/TOT/DST Modal Section */}
-                            {newClientObligations.some(ob => ['vat', 'tot', 'dst'].includes(ob)) && (
-                                <div className="pt-4 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-3">
-                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
-                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
-                                                </h3>
-                                            </div>
-                                        </div>
-                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST Setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Non-Payroll MRI Modal Section */}
-                            {newClientObligations.includes('mri') && (
-                                <div className="pt-2 pb-4 px-6 animate-in fade-in slide-in-from-top-2 duration-300">
-                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-3">
-                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
-                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
-                                                </h3>
-                                            </div>
-                                        </div>
-                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time Rent Amount (KES) manually per client directly in the table before filing.</p>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex items-center justify-end gap-3 border-t border-slate-800 bg-slate-900/50 p-6 rounded-b-2xl">
-                                <button onClick={() => {
-                                    setShowNewClientModal(false);
-                                    setNewClientName('');
-                                    setNewClientPin('');
-                                    setNewClientPassword('');
-                                    setNewClientObligations([]);
-                                    setNewClientMasterCsv(null);
-                                }} className="rounded-xl px-5 py-2.5 text-sm font-bold text-slate-400 hover:text-white transition">Cancel</button>
-                            <button onClick={handleSaveClient} className="rounded-xl bg-emerald-500 px-6 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)] transition">Save Client</button>
                         </div>
-                    </div>
-                </div>
-            )}
+                    )}
         </div>
     );
 }

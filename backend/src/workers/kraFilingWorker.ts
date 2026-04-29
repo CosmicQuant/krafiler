@@ -7,8 +7,9 @@
  *
  * Architecture notes:
  *  - concurrency: 1  — sequential processing prevents KRA portal rate-limits.
- *  - Playwright is initialised fresh per job so a failed job cannot leak
- *    browser state (cookies, sessions) into the next one.
+ *  - Playwright launches a fresh browser process per job. A dedicated optional
+ *    profile directory can be reused so static KRA assets stay cached across
+ *    jobs while cookies and web storage are cleared before each run.
  *  - The submitted KRA password is decrypted in-memory and is NEVER logged.
  *  - If KRA forces a password reset, the generated replacement password is
  *    returned through job status so the operator can recover the credential.
@@ -22,7 +23,8 @@ import fs from 'fs/promises';
 import { Worker, Job } from 'bullmq';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { redisConnection, KRA_QUEUE_NAME } from '../queues/kraFilingQueue';
+import { redisConnection, KRA_QUEUE_NAME, kraFilingQueue } from '../queues/kraFilingQueue';
+import { openDb } from '../db/database';
 import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
@@ -36,6 +38,8 @@ const TMP_DIR = path.join(
     process.env.TEMP_DIR ?? (process.platform === 'win32' ? 'C:\\Temp' : '/tmp'),
     'kra-receipts'
 );
+const KRA_BROWSER_PROFILE_DIR = process.env.KRA_BROWSER_PROFILE_DIR ?? path.join(TMP_DIR, 'browser-profile');
+const KRA_REUSE_BROWSER_PROFILE = process.env.KRA_REUSE_BROWSER_PROFILE !== 'false';
 
 const KRA_PORTAL_URL = 'https://itax.kra.go.ke/KRA-Portal/';
 const KRA_DEBUG_ARTIFACTS = process.env.KRA_DEBUG_ARTIFACTS === 'true';
@@ -43,6 +47,20 @@ const KRA_DEBUG_ARTIFACTS = process.env.KRA_DEBUG_ARTIFACTS === 'true';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
 const PLAYWRIGHT_SLOW_MO = Math.max(0, Number.parseInt(process.env.PLAYWRIGHT_SLOW_MO ?? '0', 10) || 0);
+const KRA_BROWSER_CHANNEL = (process.env.KRA_BROWSER_CHANNEL ?? 'chrome').trim().toLowerCase();
+const KRA_BROWSER_EXECUTABLE_PATH = process.env.KRA_BROWSER_EXECUTABLE_PATH?.trim() ?? '';
+const WINDOWS_BROWSER_EXECUTABLE_CANDIDATES = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+] as const;
+
+type BrowserLaunchPreference = {
+    label: string;
+    executablePath?: string;
+    channel?: 'chrome' | 'msedge';
+};
 
 const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     income_tax_resident_individual: [
@@ -96,6 +114,24 @@ const LOGIN_FAILURE_PATTERNS = [
     /invalid\s+login/i,
 ];
 
+const AUTHENTICATED_DASHBOARD_SELECTORS = [
+    '#homePageLink',
+    'a:has-text("Logout")',
+    'a:has-text("Returns")',
+] as const;
+
+const PASSWORD_CHANGE_SELECTORS = [
+    'text=YOUR PASSWORD HAS EXPIRED!',
+    'text=Change Password',
+    'text=FIRST TIME LOGIN!',
+    'text=Security Question',
+] as const;
+
+const MOBILE_VERIFICATION_SELECTORS = [
+    'text=Mobile Number Verification',
+    'button:has-text("Send Verification Code")',
+] as const;
+
 const PASSWORD_EXPIRED_PATTERNS = [
     /your\s+password\s+has\s+expired/i,
     /change\s+password/i,
@@ -116,19 +152,105 @@ const TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS = [
     /upload\s+file/i,
 ];
 
+const PAYE_SUBMISSION_ERROR_PATTERNS = [
+    /please\s+upload\s+form/i,
+    /please\s+attach/i,
+    /upload\s+file/i,
+    /invalid\s+file/i,
+    /selected\s+tax\s+obligation/i,
+    /error\s+occurred\s+while\s+uploading/i,
+];
+
+const PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS = [
+    /please\s+upload\s+form/i,
+    /please\s+attach/i,
+    /upload\s+file/i,
+];
+
+const PAYE_UPLOAD_TRIGGER_SELECTORS = [
+    'button:has-text("Upload")',
+    'input[type="button"][value*="Upload" i]',
+    'input[type="submit"][value*="Upload" i]',
+    'input[type="image"][src*="upload" i]',
+    'a:has-text("Upload")',
+    'button[id*="upload" i]',
+    'input[type="button"][id*="upload" i]',
+    'input[type="submit"][id*="upload" i]',
+    'input[type="image"][id*="upload" i]',
+    'button[name*="upload" i]',
+    'input[type="button"][name*="upload" i]',
+    'input[type="submit"][name*="upload" i]',
+    'input[type="image"][name*="upload" i]',
+    'a[onclick*="upload" i]',
+    'input[onclick*="upload" i]',
+    'button[onclick*="upload" i]',
+];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Waits for a random duration to simulate human interaction cadence without
  * making ordinary form entry feel artificially slow.
  */
-function humanDelay(minMs = 150, maxMs = 450): Promise<void> {
+function humanDelay(minMs = 80, maxMs = 180): Promise<void> {
     const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function navigationDelay(): Promise<void> {
-    return humanDelay(400, 900);
+    return humanDelay(140, 320);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+    try {
+        await fs.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function resolvePreferredBrowserLaunches(): Promise<BrowserLaunchPreference[]> {
+    const candidates: BrowserLaunchPreference[] = [];
+    const seen = new Set<string>();
+
+    const pushCandidate = (candidate: BrowserLaunchPreference) => {
+        const key = `${candidate.executablePath ?? ''}|${candidate.channel ?? ''}`;
+        if (seen.has(key)) {
+            return;
+        }
+
+        seen.add(key);
+        candidates.push(candidate);
+    };
+
+    if (KRA_BROWSER_EXECUTABLE_PATH && await pathExists(KRA_BROWSER_EXECUTABLE_PATH)) {
+        pushCandidate({
+            label: `system browser at ${KRA_BROWSER_EXECUTABLE_PATH}`,
+            executablePath: KRA_BROWSER_EXECUTABLE_PATH,
+        });
+    }
+
+    if (process.platform === 'win32') {
+        for (const browserPath of WINDOWS_BROWSER_EXECUTABLE_CANDIDATES) {
+            if (await pathExists(browserPath)) {
+                pushCandidate({
+                    label: `system browser at ${browserPath}`,
+                    executablePath: browserPath,
+                });
+            }
+        }
+    }
+
+    if (KRA_BROWSER_CHANNEL === 'chrome' || KRA_BROWSER_CHANNEL === 'msedge') {
+        pushCandidate({
+            label: `Playwright ${KRA_BROWSER_CHANNEL} channel`,
+            channel: KRA_BROWSER_CHANNEL,
+        });
+    }
+
+    pushCandidate({ label: 'bundled Playwright Chromium' });
+    return candidates;
 }
 
 async function getOtpFromSmsService(providedOtpCode?: string): Promise<string> {
@@ -162,20 +284,128 @@ async function appendJobLog(
     await job.log(JSON.stringify(entry));
 }
 
+class JobCancelledError extends Error {
+    constructor(message = 'Job cancelled by user.') {
+        super(message);
+        this.name = 'JobCancelledError';
+    }
+}
+
+function hasCancellationRequest(jobData?: Partial<FilingJob> | null): boolean {
+    return typeof jobData?.cancelRequestedAt === 'string' && jobData.cancelRequestedAt.trim().length > 0;
+}
+
+async function assertJobNotCancelled(
+    job: Job<FilingJob>,
+    context: string,
+    progress?: number
+): Promise<void> {
+    const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId));
+    const latestJobData = (latestJob?.data ?? job.data) as FilingJob;
+    if (!hasCancellationRequest(latestJobData)) {
+        return;
+    }
+
+    const progressValue = typeof progress === 'number'
+        ? progress
+        : typeof job.progress === 'number'
+            ? job.progress
+            : undefined;
+
+    await appendJobLog(job, `Cancellation requested by operator. Stopping during ${context}.`, {
+        progress: progressValue,
+    });
+    console.warn(`[Worker][${job.data.jobId}] Cancellation requested during ${context}; stopping the job.`);
+    throw new JobCancelledError();
+}
+
 async function setJobStep(job: Job<FilingJob>, progress: number, message: string): Promise<void> {
+    await assertJobNotCancelled(job, message, progress);
     await job.updateProgress(progress);
     await appendJobLog(job, message, { progress });
     console.log(`[Worker][${job.data.jobId}] ${message}`);
 }
 
+async function resolveTimingContext(
+    details?: string | (() => string | Promise<string>)
+): Promise<string> {
+    if (!details) {
+        return '';
+    }
+
+    try {
+        const resolved = typeof details === 'function' ? await details() : details;
+        return resolved ? ` | ${resolved}` : '';
+    } catch {
+        return '';
+    }
+}
+
+async function measureJobPhase<T>(
+    job: Job<FilingJob>,
+    label: string,
+    progress: number | undefined,
+    action: () => Promise<T>,
+    details?: string | (() => string | Promise<string>)
+): Promise<T> {
+    const startedAt = new Date();
+    const startedMs = Date.now();
+    const progressValue = typeof progress === 'number' ? progress : undefined;
+    await assertJobNotCancelled(job, label, progressValue);
+    const startMessage = `Timing start | ${label} | startedAt=${startedAt.toISOString()}`;
+    await appendJobLog(job, startMessage, { progress: progressValue });
+    console.log(`[Worker][${job.data.jobId}] ${startMessage}`);
+
+    try {
+        const result = await action();
+        const endedAt = new Date();
+        const durationMs = Date.now() - startedMs;
+        const context = await resolveTimingContext(details);
+        const endMessage = `Timing end | ${label} | startedAt=${startedAt.toISOString()} | endedAt=${endedAt.toISOString()} | durationMs=${durationMs}${context}`;
+        await appendJobLog(
+            job,
+            endMessage,
+            { progress: progressValue }
+        );
+        console.log(`[Worker][${job.data.jobId}] ${endMessage}`);
+        return result;
+    } catch (error) {
+        const endedAt = new Date();
+        const durationMs = Date.now() - startedMs;
+        const context = await resolveTimingContext(details);
+        const message = error instanceof Error ? error.message : String(error);
+        const failureMessage = `Timing failure | ${label} | startedAt=${startedAt.toISOString()} | endedAt=${endedAt.toISOString()} | durationMs=${durationMs} | error=${message}${context}`;
+        await appendJobLog(
+            job,
+            failureMessage,
+            { progress: progressValue, level: 'error' }
+        );
+        console.warn(`[Worker][${job.data.jobId}] ${failureMessage}`);
+        throw error;
+    }
+}
+
 async function waitForAnySelector(
     page: any,
     selectors: string[],
-    timeout = 20_000
+    timeout = 20_000,
+    cancellation?: {
+        job?: Job<FilingJob>;
+        context?: string;
+        progress?: number;
+    }
 ): Promise<string | null> {
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {
+        if (cancellation?.job) {
+            await assertJobNotCancelled(
+                cancellation.job,
+                cancellation.context ?? 'a portal wait',
+                cancellation.progress
+            );
+        }
+
         for (const selector of selectors) {
             const locator = page.locator(selector).first();
             const found = await locator.count().then((count: number) => count > 0).catch(() => false);
@@ -190,6 +420,105 @@ async function waitForAnySelector(
     return null;
 }
 
+async function findVisibleSelector(
+    page: any,
+    selectors: readonly string[]
+): Promise<string | null> {
+    for (const selector of selectors) {
+        const isVisible = await page.locator(selector).first().isVisible().catch(() => false);
+        if (isVisible) {
+            return selector;
+        }
+    }
+
+    return null;
+}
+
+async function isBlankKraLoginShell(page: any): Promise<boolean> {
+    return page.evaluate(() => {
+        const bodyText = (document.body?.innerText ?? '').replace(/\s+/g, ' ').trim();
+        const visibleControls = Array.from(document.querySelectorAll('input, button, a, select, textarea')).some((element) => {
+            const htmlElement = element as HTMLElement;
+            const style = window.getComputedStyle(htmlElement);
+            const rect = htmlElement.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        });
+
+        return /\/KRA-Portal\/login\.htm/i.test(window.location.href)
+            && ['interactive', 'complete'].includes(document.readyState)
+            && bodyText.length === 0
+            && !visibleControls;
+    }).catch(() => false);
+}
+
+type PostLoginOutcome =
+    | { type: 'dashboard'; selector: string }
+    | { type: 'password-change'; selector: string }
+    | { type: 'mobile-verification'; selector: string }
+    | { type: 'dialog'; message: string }
+    | { type: 'login-failure'; message: string }
+    | { type: 'blank-login-shell' }
+    | { type: 'timeout' };
+
+async function waitForPostLoginOutcome(
+    page: any,
+    job: Job<FilingJob>,
+    progress: number,
+    timeout = 18_000
+): Promise<PostLoginOutcome> {
+    let dialogMessage: string | null = null;
+    void waitForDialogMessage(page, 4_000)
+        .then((message) => {
+            dialogMessage = message;
+        })
+        .catch(() => undefined);
+
+    const deadline = Date.now() + timeout;
+    let blankShellDetectedAt: number | null = null;
+
+    while (Date.now() < deadline) {
+        await assertJobNotCancelled(job, 'post-login landing selector', progress);
+
+        if (dialogMessage) {
+            return { type: 'dialog', message: dialogMessage };
+        }
+
+        const loginFailureMessage = await findMatchingPortalMessage(page, LOGIN_FAILURE_PATTERNS).catch(() => null);
+        if (loginFailureMessage) {
+            return { type: 'login-failure', message: loginFailureMessage };
+        }
+
+        const dashboardSelector = await findVisibleSelector(page, AUTHENTICATED_DASHBOARD_SELECTORS);
+        if (dashboardSelector) {
+            return { type: 'dashboard', selector: dashboardSelector };
+        }
+
+        const passwordChangeSelector = await findVisibleSelector(page, PASSWORD_CHANGE_SELECTORS);
+        if (passwordChangeSelector) {
+            return { type: 'password-change', selector: passwordChangeSelector };
+        }
+
+        const mobileVerificationSelector = await findVisibleSelector(page, MOBILE_VERIFICATION_SELECTORS);
+        if (mobileVerificationSelector) {
+            return { type: 'mobile-verification', selector: mobileVerificationSelector };
+        }
+
+        const blankLoginShell = await isBlankKraLoginShell(page);
+        if (blankLoginShell) {
+            blankShellDetectedAt ??= Date.now();
+            if (Date.now() - blankShellDetectedAt >= 1_500) {
+                return { type: 'blank-login-shell' };
+            }
+        } else {
+            blankShellDetectedAt = null;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    return { type: 'timeout' };
+}
+
 async function waitForPortalReadyWithReload(
     page: any,
     job: Job<FilingJob>,
@@ -198,6 +527,7 @@ async function waitForPortalReadyWithReload(
         selectors: string[];
         timeout?: number;
         reloadAttempts?: number;
+        waitForNetworkIdle?: boolean;
     }
 ): Promise<void> {
     const {
@@ -205,14 +535,21 @@ async function waitForPortalReadyWithReload(
         selectors,
         timeout = 20_000,
         reloadAttempts = 1,
+        waitForNetworkIdle = false,
     } = options;
 
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= reloadAttempts; attempt += 1) {
         try {
-            await page.waitForLoadState('domcontentloaded', { timeout: timeout * 2 }).catch(() => {});
-            await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+            await assertJobNotCancelled(job, description, typeof job.progress === 'number' ? job.progress : undefined);
+            const alreadyLoaded = await page.evaluate(() => ['interactive', 'complete'].includes(document.readyState)).catch(() => false);
+            if (!alreadyLoaded) {
+                await page.waitForLoadState('domcontentloaded', { timeout: Math.max(5_000, timeout) }).catch(() => {});
+            }
+            if (waitForNetworkIdle) {
+                await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+            }
 
             // Check for KRA error page (session timeout / re-submit) early
             const errorSelectors = [
@@ -221,7 +558,11 @@ async function waitForPortalReadyWithReload(
                 'text=session has timed out',
                 'text=page re-submit',
             ];
-            const matchedSelector = await waitForAnySelector(page, errorSelectors, timeout);
+            const matchedSelector = await waitForAnySelector(page, errorSelectors, timeout, {
+                job,
+                context: description,
+                progress: typeof job.progress === 'number' ? job.progress : undefined,
+            });
 
             // If we matched an error message instead of an expected control, fail fast
             if (matchedSelector && (
@@ -249,6 +590,7 @@ async function waitForPortalReadyWithReload(
         }
 
         if (attempt < reloadAttempts) {
+            await assertJobNotCancelled(job, `${description} reload`, typeof job.progress === 'number' ? job.progress : undefined);
             await appendJobLog(job, `${description} is taking too long to load; reloading and retrying`, {
                 progress: typeof job.progress === 'number' ? job.progress : undefined,
             });
@@ -419,6 +761,325 @@ async function waitForDialogMessage(page: any, timeout = 5_000): Promise<string 
     }
 }
 
+async function summariseCurrentPage(page: any): Promise<string> {
+    return page.evaluate(() => {
+        const bodyText = (document.body?.innerText ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 240);
+
+        return JSON.stringify({
+            title: document.title ?? '',
+            readyState: document.readyState ?? '',
+            url: window.location.href,
+            bodyText,
+        });
+    }).catch(() => 'unavailable');
+}
+
+async function snapshotPageControls(page: any): Promise<string> {
+    return page.evaluate(() => {
+        const bodyText = (document.body?.innerText ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 320);
+
+        const controlSelectors = [
+            'input',
+            'button',
+            'a',
+            'label',
+            'select',
+            'textarea',
+            'iframe',
+        ];
+
+        const controls = controlSelectors.flatMap((selector) =>
+            Array.from(document.querySelectorAll(selector)).slice(0, 80).map((element) => {
+                const htmlElement = element as HTMLElement;
+                const style = window.getComputedStyle(htmlElement);
+                const input = element as HTMLInputElement;
+                return {
+                    tag: element.tagName,
+                    id: htmlElement.id ?? '',
+                    name: input.name ?? '',
+                    type: input.type ?? '',
+                    text: (htmlElement.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+                    value: (input.value ?? '').slice(0, 120),
+                    href: htmlElement.getAttribute('href') ?? '',
+                    onclick: htmlElement.getAttribute('onclick') ?? '',
+                    visible: style.display !== 'none' && style.visibility !== 'hidden',
+                    disabled: 'disabled' in input ? Boolean(input.disabled) : false,
+                };
+            })
+        );
+
+        return JSON.stringify({
+            title: document.title ?? '',
+            readyState: document.readyState ?? '',
+            url: window.location.href,
+            bodyText,
+            controls,
+        });
+    }).catch(() => 'unavailable');
+}
+
+async function returnToPayeUploadPage(page: any, job: Job<FilingJob>): Promise<void> {
+    const backControl = page.locator('#backBtn, input[value*="Back" i], button:has-text("Back"), a:has-text("Back")').first();
+    const backControlCount = await backControl.count().catch(() => 0);
+
+    if (backControlCount > 0) {
+        await backControl.click({ force: true }).catch(async () => {
+            await backControl.click().catch(() => undefined);
+        });
+    } else {
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined);
+    }
+
+    await appendJobLog(job, 'Returned to the PAYE upload form after KRA rejected the attachment', { progress: 80 });
+    await waitForPortalReadyWithReload(page, job, {
+        description: 'PAYE upload page after upload retry',
+        selectors: ['input[type="file"]', '#submitBtn', 'input[value="Submit"]', 'text=Terms and Conditions', 'button:has-text("Upload")', 'input[value*="Upload" i]'],
+        timeout: 30_000,
+        reloadAttempts: 0,
+    });
+}
+
+async function getFileInputValue(locator: any): Promise<string> {
+    return locator.evaluate((input: HTMLInputElement) => String(input.value ?? '').trim());
+}
+
+async function waitForFileInputSelection(
+    fileInput: any,
+    fileName: string,
+    timeout = 3_000
+): Promise<string> {
+    const deadline = Date.now() + timeout;
+    let lastValue = '';
+
+    while (Date.now() < deadline) {
+        lastValue = await getFileInputValue(fileInput).catch(() => '');
+        if (lastValue.toLowerCase().includes(fileName.toLowerCase())) {
+            return lastValue;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    return lastValue;
+}
+
+async function resolveBestPayeFileInput(page: any): Promise<{
+    locator: any;
+    metadata: {
+        id: string;
+        name: string;
+        accept: string;
+        visible: boolean;
+        disabled: boolean;
+        label: string;
+        rowText: string;
+        multiple: boolean;
+    };
+}> {
+    const candidates = await page.evaluate(() => {
+        const isVisible = (element: HTMLElement) => {
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+
+        return Array.from(document.querySelectorAll('input[type="file"]'))
+            .map((element, index) => {
+                const input = element as HTMLInputElement;
+                const linkedLabel = input.id
+                    ? Array.from(document.querySelectorAll('label')).find((label) => label.getAttribute('for') === input.id) ?? null
+                    : null;
+                const nearestLabel = input.closest('label');
+                const label = (linkedLabel?.textContent ?? nearestLabel?.textContent ?? '').replace(/\s+/g, ' ').trim();
+                const rowText = (input.closest('tr, td, div, form')?.textContent ?? '').replace(/\s+/g, ' ').trim();
+                const haystack = [input.id, input.name, input.accept, label, rowText].join(' ').toLowerCase();
+
+                let score = 0;
+                if (!input.disabled) {
+                    score += 100;
+                }
+                if (isVisible(input)) {
+                    score += 40;
+                }
+                if (/zip|upload|attach|file|browse|choose/.test(haystack)) {
+                    score += 25;
+                }
+                if (/paye|return|form/.test(haystack)) {
+                    score += 10;
+                }
+                if ((input.accept ?? '').toLowerCase().includes('zip')) {
+                    score += 20;
+                }
+
+                return {
+                    index,
+                    score,
+                    id: input.id ?? '',
+                    name: input.name ?? '',
+                    accept: input.accept ?? '',
+                    visible: isVisible(input),
+                    disabled: Boolean(input.disabled),
+                    label,
+                    rowText,
+                    multiple: Boolean(input.multiple),
+                };
+            })
+            .sort((left, right) => right.score - left.score);
+    });
+
+    if (!candidates.length) {
+        throw new Error('Could not find any file input on the PAYE upload page');
+    }
+
+    const bestCandidate = candidates[0];
+    return {
+        locator: page.locator('input[type="file"]').nth(bestCandidate.index),
+        metadata: {
+            id: bestCandidate.id,
+            name: bestCandidate.name,
+            accept: bestCandidate.accept,
+            visible: bestCandidate.visible,
+            disabled: bestCandidate.disabled,
+            label: bestCandidate.label,
+            rowText: bestCandidate.rowText,
+            multiple: bestCandidate.multiple,
+        },
+    };
+}
+
+async function selectUploadFile(
+    page: any,
+    fileInput: any,
+    zipPath: string
+): Promise<{ method: 'filechooser' | 'input'; triggerLabel: string | null }> {
+    const chooserTriggerSelector = [
+        'input[type="file"]:visible',
+        'label:has(input[type="file"])',
+        'label:has-text("Choose File")',
+        'label:has-text("Browse")',
+        'button:has-text("Choose File")',
+        'button:has-text("Browse")',
+        'input[type="button"][value*="Choose File" i]',
+        'input[type="button"][value*="Browse" i]',
+        'input[type="submit"][value*="Choose File" i]',
+        'input[type="submit"][value*="Browse" i]',
+        'a:has-text("Choose File")',
+        'a:has-text("Browse")',
+    ].join(', ');
+
+    const chooserTrigger = page.locator(chooserTriggerSelector).first();
+    const chooserTriggerCount = await chooserTrigger.count().catch(() => 0);
+
+    if (chooserTriggerCount > 0) {
+        const triggerLabel = await chooserTrigger.evaluate((element: HTMLElement) => {
+            if (element instanceof HTMLInputElement) {
+                return element.value || element.name || element.id || 'visible file input';
+            }
+
+            return element.textContent?.replace(/\s+/g, ' ').trim() || element.getAttribute('name') || element.id || 'file chooser trigger';
+        }).catch(() => 'file chooser trigger');
+
+        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 2_500 }).catch(() => null);
+        await chooserTrigger.click({ force: true }).catch(async () => {
+            await chooserTrigger.click().catch(() => undefined);
+        });
+
+        const fileChooser = await fileChooserPromise;
+        if (fileChooser) {
+            await fileChooser.setFiles(zipPath);
+            return { method: 'filechooser', triggerLabel };
+        }
+    }
+
+    await fileInput.setInputFiles(zipPath);
+    return { method: 'input', triggerLabel: null };
+}
+
+async function clickUploadTriggerIfPresent(page: any): Promise<string | null> {
+    const uploadSelector = PAYE_UPLOAD_TRIGGER_SELECTORS.map((selector) => `${selector}:visible`).join(', ');
+
+    const uploadTrigger = page.locator(uploadSelector).first();
+    const triggerCount = await uploadTrigger.count().catch(() => 0);
+    if (!triggerCount) {
+        return null;
+    }
+
+    const label = await uploadTrigger.evaluate((element: HTMLElement) => {
+        if (element instanceof HTMLInputElement) {
+            return element.value || element.name || element.id || 'upload control';
+        }
+
+        return element.textContent?.replace(/\s+/g, ' ').trim() || element.getAttribute('name') || element.id || 'upload control';
+    }).catch(() => 'upload control');
+
+    await uploadTrigger.click();
+    return label;
+}
+
+async function waitForPayeUploadAcknowledgement(
+    page: any,
+    fileInput: any,
+    fileName: string,
+    requirePageAcknowledgement = false,
+    timeout = 8_000
+): Promise<{ acknowledged: boolean; inputValue: string; portalMessage: string | null; matchedText: string | null }> {
+    const deadline = Date.now() + timeout;
+    const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const positivePatterns = [
+        new RegExp(escapedFileName, 'i'),
+        /uploaded\s+successfully/i,
+        /file\s+uploaded/i,
+        /upload\s+successful/i,
+    ];
+
+    while (Date.now() < deadline) {
+        const portalMessage = await findMatchingPortalMessage(page, PAYE_SUBMISSION_ERROR_PATTERNS).catch(() => null);
+        if (portalMessage) {
+            return { acknowledged: false, inputValue: await getFileInputValue(fileInput).catch(() => ''), portalMessage, matchedText: null };
+        }
+
+        const inputValue = await getFileInputValue(fileInput).catch(() => '');
+        const visibleUploadTriggerCount = await page
+            .locator(PAYE_UPLOAD_TRIGGER_SELECTORS.map((selector) => `${selector}:visible`).join(', '))
+            .count()
+            .catch(() => 0);
+        const fileSelected = inputValue && inputValue.toLowerCase().includes(fileName.toLowerCase());
+
+        if (
+            fileSelected
+            && requirePageAcknowledgement
+            && visibleUploadTriggerCount === 0
+        ) {
+            return { acknowledged: true, inputValue, portalMessage: null, matchedText: null };
+        }
+
+        const bodyText = await page.locator('body').innerText().catch(() => '');
+        const matchedText = bodyText
+            .split(/\r?\n/)
+            .map((line: string) => line.replace(/\s+/g, ' ').trim())
+            .find((line: string) => positivePatterns.some((pattern) => pattern.test(line))) ?? null;
+
+        if (matchedText) {
+            return { acknowledged: true, inputValue, portalMessage: null, matchedText };
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    return {
+        acknowledged: false,
+        inputValue: await getFileInputValue(fileInput).catch(() => ''),
+        portalMessage: null,
+        matchedText: null,
+    };
+}
+
 async function findMatchingPortalMessage(
     page: any,
     patterns: RegExp[]
@@ -486,18 +1147,12 @@ async function detectAuthenticatedPortalState(
     timeout = 30_000
 ): Promise<'dashboard' | 'login' | 'mobile-verification' | 'password-change' | null> {
     const selector = await waitForAnySelector(page, [
-        '#homePageLink',
-        'a:has-text("Logout")',
-        'a:has-text("Returns")',
+        ...AUTHENTICATED_DASHBOARD_SELECTORS,
         '#logid',
         '#loginButton',
         'input[name="captcahText"]',
-        'text=Mobile Number Verification',
-        'button:has-text("Send Verification Code")',
-        'text=YOUR PASSWORD HAS EXPIRED!',
-        'text=Change Password',
-        'text=FIRST TIME LOGIN!',
-        'text=Security Question',
+        ...MOBILE_VERIFICATION_SELECTORS,
+        ...PASSWORD_CHANGE_SELECTORS,
     ], timeout);
 
     if (!selector) {
@@ -890,52 +1545,70 @@ async function performKraLogin(
 
     await setJobStep(job, options.submitProgress, options.submitMessage);
 
-    const loginDialogPromise = waitForDialogMessage(page, 10_000);
     await page.click('#loginButton');
-    const loginDialogMessage = await loginDialogPromise;
-    if (loginDialogMessage) {
-        console.log(`[Worker][${jobId}] KRA dialog: "${loginDialogMessage}"`);
-        await appendJobLog(job, `KRA login dialog: ${loginDialogMessage}`, { progress: options.submitProgress, level: 'error' });
-        throw new Error(loginDialogMessage);
+    const postLoginOutcome = await measureJobPhase(job, 'post-login landing selector', options.submitProgress, async () => {
+        return await waitForPostLoginOutcome(page, job, options.submitProgress);
+    }, () => `currentUrl=${page.url()}`);
+
+    if (postLoginOutcome.type === 'dialog') {
+        console.log(`[Worker][${jobId}] KRA dialog: "${postLoginOutcome.message}"`);
+        await appendJobLog(job, `KRA login dialog: ${postLoginOutcome.message}`, { progress: options.submitProgress, level: 'error' });
+        throw new Error(postLoginOutcome.message);
     }
 
-    const loginFailureMessage = await waitForMatchingPortalMessage(page, LOGIN_FAILURE_PATTERNS, 6_000);
-    if (loginFailureMessage) {
-        await appendJobLog(job, `KRA login rejected the request: ${loginFailureMessage}`, {
+    if (postLoginOutcome.type === 'login-failure') {
+        await appendJobLog(job, `KRA login rejected the request: ${postLoginOutcome.message}`, {
             progress: options.submitProgress,
             level: 'error',
         });
-        throw new Error(loginFailureMessage);
+        throw new Error(postLoginOutcome.message);
     }
 
-    const postLoginSelector = await waitForAnySelector(page, [
-        '#homePageLink',
-        'a:has-text("Logout")',
-        'a:has-text("Returns")',
-        'text=YOUR PASSWORD HAS EXPIRED!',
-        'text=Change Password',
-        'text=FIRST TIME LOGIN!',
-        'text=Security Question',
-        'text=Mobile Number Verification',
-        'button:has-text("Send Verification Code")',
-    ], 30_000);
-
-    if (postLoginSelector && PASSWORD_EXPIRED_PATTERNS.some((pattern) => pattern.test(postLoginSelector))) {
+    if (postLoginOutcome.type === 'password-change') {
         return { passwordExpired: true };
     }
 
-    if (postLoginSelector && /Mobile Number Verification|Send Verification Code/i.test(postLoginSelector)) {
+    if (postLoginOutcome.type === 'mobile-verification') {
         await handleMobileVerification(page, job, options.otpCode);
         return { passwordExpired: false };
     }
 
-    if (!postLoginSelector) {
-        await waitForPortalReadyWithReload(page, job, {
-            description: 'Post-login dashboard',
-            selectors: ['#homePageLink', 'a:has-text("Logout")', 'a:has-text("Returns")'],
-            timeout: 20_000,
-            reloadAttempts: 1,
+    if (postLoginOutcome.type === 'blank-login-shell') {
+        const blankShellSnapshot = await summariseCurrentPage(page);
+        await appendJobLog(job, `Detected a blank post-login shell before dashboard recovery: ${blankShellSnapshot}`, {
+            progress: options.submitProgress,
+            level: 'error',
         });
+        await appendJobLog(job, 'Blank post-login login.htm shell detected; reloading early instead of waiting through the full dashboard timeout', {
+            progress: options.submitProgress,
+        });
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 90_000 }).catch(() => undefined);
+        await navigationDelay();
+        await measureJobPhase(job, 'post-login dashboard ready', options.submitProgress, async () => {
+            await waitForPortalReadyWithReload(page, job, {
+                description: 'Post-login dashboard',
+                selectors: [...AUTHENTICATED_DASHBOARD_SELECTORS],
+                timeout: 10_000,
+                reloadAttempts: 0,
+            });
+        }, () => `currentUrl=${page.url()}`);
+        return { passwordExpired: false };
+    }
+
+    if (postLoginOutcome.type === 'timeout') {
+        const postLoginSnapshot = await summariseCurrentPage(page);
+        await appendJobLog(job, `Post-login page snapshot before dashboard retry: ${postLoginSnapshot}`, {
+            progress: options.submitProgress,
+            level: 'error',
+        });
+        await measureJobPhase(job, 'post-login dashboard ready', options.submitProgress, async () => {
+            await waitForPortalReadyWithReload(page, job, {
+                description: 'Post-login dashboard',
+                selectors: [...AUTHENTICATED_DASHBOARD_SELECTORS],
+                timeout: 12_000,
+                reloadAttempts: 1,
+            });
+        }, () => `currentUrl=${page.url()}`);
     }
 
     return { passwordExpired: false };
@@ -948,7 +1621,11 @@ async function handleExpiredPasswordReset(
 ): Promise<CredentialUpdate> {
     await setJobStep(job, 42, 'KRA requires a credential update before filing can continue');
 
-    const expiredFormVisible = await waitForAnySelector(page, ['text=YOUR PASSWORD HAS EXPIRED!', 'text=Change Password', 'text=FIRST TIME LOGIN!', 'text=Security Question'], 15_000);
+    const expiredFormVisible = await waitForAnySelector(page, ['text=YOUR PASSWORD HAS EXPIRED!', 'text=Change Password', 'text=FIRST TIME LOGIN!', 'text=Security Question'], 15_000, {
+        job,
+        context: 'KRA credential update page',
+        progress: 42,
+    });
     if (!expiredFormVisible) {
         throw new Error('Expected the KRA credential update page, but it did not appear');
     }
@@ -1010,8 +1687,9 @@ async function handleExpiredPasswordReset(
     };
 
     await appendJobLog(job, 'Password updated successfully. Returning to login with the generated credential.', { progress: 46 });
+    const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId));
     await job.updateData({
-        ...job.data,
+        ...((latestJob?.data ?? job.data) as FilingJob),
         credentialUpdate,
     });
 
@@ -1036,7 +1714,11 @@ async function handleMobileVerification(
         'input[placeholder*="verification code" i]',
         'input[placeholder*="otp" i]',
         'input[maxlength="6"]',
-    ], 20_000);
+    ], 20_000, {
+        job,
+        context: 'mobile verification OTP field',
+        progress: 41,
+    });
 
     if (!otpFieldSelector) {
         throw new Error('KRA requested mobile verification, but the OTP input field did not appear');
@@ -1086,12 +1768,86 @@ async function uploadPayeTaxZip(page: any, job: any): Promise<void> {
         await fs.promises.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
     }
 
-    const fileInput = page.locator('input[type="file"]').first();
+    const zipStats = fs.statSync(zipPath);
+    await appendJobLog(job, `Resolved PAYE ZIP on disk: ${zipPath} (${zipStats.size} bytes)`, { progress: 68 });
+
+    const { locator: fileInput, metadata: fileInputMetadata } = await resolveBestPayeFileInput(page);
     await fileInput.waitFor({ timeout: 20_000 });
-    await fileInput.setInputFiles(zipPath);
+    await appendJobLog(job, `Using PAYE attachment input ${JSON.stringify(fileInputMetadata)}`, { progress: 68 });
+
     const termsCheckbox = page.locator('input[type="checkbox"]:near(:text("Terms and Conditions")), input[type="checkbox"][name*="agree" i], input[type="checkbox"][id*="agree" i], input[type="checkbox"]').first();
-    await termsCheckbox.check();
-    await appendJobLog(job, `Uploaded PAYE ZIP file and accepted the declaration`, { progress: 70 });
+    const fileName = path.basename(zipPath);
+    let lastUploadIssue = '';
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        await appendJobLog(job, `PAYE attachment attempt ${attempt}/2: binding ${fileName} to the selected KRA file input`, { progress: 68 });
+        await fileInput.setInputFiles(zipPath);
+
+        const selectedValue = await waitForFileInputSelection(fileInput, fileName, 3_000);
+        if (!selectedValue.toLowerCase().includes(fileName.toLowerCase())) {
+            lastUploadIssue = `The selected KRA file input did not retain ${fileName}. Current value: ${selectedValue || '[empty]'}`;
+            const uploadUiState = await page.evaluate((selectors: string[]) => {
+                const controls = selectors.flatMap((selector) =>
+                    Array.from(document.querySelectorAll(selector)).map((element) => {
+                        const htmlElement = element as HTMLElement;
+                        const style = window.getComputedStyle(htmlElement);
+                        const input = element as HTMLInputElement;
+
+                        return {
+                            selector,
+                            tag: element.tagName,
+                            id: htmlElement.id ?? '',
+                            name: input.name ?? '',
+                            type: input.type ?? '',
+                            text: (htmlElement.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80),
+                            value: (input.value ?? '').slice(0, 120),
+                            disabled: 'disabled' in input ? Boolean(input.disabled) : false,
+                            visible: style.display !== 'none' && style.visibility !== 'hidden',
+                        };
+                    })
+                );
+
+                const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).map((element) => {
+                    const input = element as HTMLInputElement;
+                    return {
+                        id: input.id ?? '',
+                        name: input.name ?? '',
+                        value: input.value ?? '',
+                        disabled: Boolean(input.disabled),
+                    };
+                });
+
+                return JSON.stringify({ controls, fileInputs });
+            }, PAYE_UPLOAD_TRIGGER_SELECTORS).catch(() => 'unavailable');
+            await appendJobLog(job, `PAYE attachment attempt ${attempt} did not stick: ${lastUploadIssue}`, {
+                progress: 69,
+                level: 'error',
+            });
+            await appendJobLog(job, `PAYE upload UI state after attempt ${attempt}: ${uploadUiState}`, {
+                progress: 69,
+                level: 'error',
+            });
+            continue;
+        }
+
+        await appendJobLog(job, `Selected ${fileName} in the KRA attachment field (${selectedValue})`, { progress: 68 });
+
+        const checkboxCount = await termsCheckbox.count().catch(() => 0);
+        if (checkboxCount > 0) {
+            await termsCheckbox.check().catch(async () => {
+                await termsCheckbox.click({ force: true }).catch(() => undefined);
+            });
+        }
+
+        await humanDelay(250, 600);
+
+        await appendJobLog(job, 'Selected the PAYE ZIP and accepted the declaration. KRA will process the file when Submit is clicked.', {
+            progress: 70,
+        });
+        return;
+    }
+
+    throw new Error(lastUploadIssue || `KRA did not acknowledge PAYE upload for ${fileName}`);
 }
 
 async function uploadTurnoverTaxZip(
@@ -1169,12 +1925,13 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
     await fs.mkdir(TMP_DIR, { recursive: true });
 
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+    let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
 
     try {
         // ── Step 2: Launch browser with stealth configuration ────────────────────
         await setJobStep(job, 5, 'Launching browser session');
         const isHeadless = false;
-        browser = await chromium.launch({
+        const launchOptions = {
             headless: isHeadless,
             slowMo: isHeadless ? 0 : PLAYWRIGHT_SLOW_MO,
             args: [
@@ -1184,9 +1941,9 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 '--start-maximized',
                 ...(isHeadless ? ['--disable-gpu'] : []),
             ],
-        });
+        };
 
-        const context = await browser.newContext({
+        const contextOptions = {
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
                 '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -1194,23 +1951,90 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             acceptDownloads: true,
             locale: 'en-KE',
             timezoneId: 'Africa/Nairobi',
-        });
+        };
 
-        const page = await context.newPage();
+        const page = await measureJobPhase(job, 'browser launch', 5, async () => {
+            const launchPreferences = await resolvePreferredBrowserLaunches();
+            let lastLaunchError: Error | null = null;
+
+            for (const preference of launchPreferences) {
+                const effectiveLaunchOptions = {
+                    ...launchOptions,
+                    ...(preference.executablePath ? { executablePath: preference.executablePath } : {}),
+                    ...(preference.channel ? { channel: preference.channel } : {}),
+                };
+
+                try {
+                    await appendJobLog(job, `Attempting browser launch via ${preference.label}`, { progress: 5 });
+
+                    if (KRA_REUSE_BROWSER_PROFILE) {
+                        await fs.mkdir(KRA_BROWSER_PROFILE_DIR, { recursive: true });
+                        context = await chromium.launchPersistentContext(KRA_BROWSER_PROFILE_DIR, {
+                            ...effectiveLaunchOptions,
+                            ...contextOptions,
+                        });
+                        await context.clearCookies().catch(() => undefined);
+                        await context.addInitScript(() => {
+                            try {
+                                window.localStorage.clear();
+                            } catch {
+                                // Ignore storage clear failures for opaque origins like about:blank.
+                            }
+
+                            try {
+                                window.sessionStorage.clear();
+                            } catch {
+                                // Ignore storage clear failures for opaque origins like about:blank.
+                            }
+                        });
+                        await appendJobLog(job, `Using persistent KRA browser profile cache at ${KRA_BROWSER_PROFILE_DIR}`, { progress: 5 });
+                    } else {
+                        browser = await chromium.launch(effectiveLaunchOptions);
+                        context = await browser.newContext(contextOptions);
+                    }
+
+                    await appendJobLog(job, `Using browser engine: ${preference.label}`, { progress: 5 });
+                    const existingPages = context.pages();
+                    return existingPages[0] ?? await context.newPage();
+                } catch (error) {
+                    lastLaunchError = error as Error;
+                    await appendJobLog(job, `Browser launch via ${preference.label} failed: ${lastLaunchError.message}`, {
+                        progress: 5,
+                        level: 'error',
+                    });
+
+                    if (context) {
+                        await context.close().catch(() => undefined);
+                        context = undefined;
+                    }
+
+                    if (browser) {
+                        await browser.close().catch(() => undefined);
+                        browser = undefined;
+                    }
+                }
+            }
+
+            throw lastLaunchError ?? new Error('No browser launch strategy succeeded');
+        }, () => `profileReuse=${KRA_REUSE_BROWSER_PROFILE}${KRA_REUSE_BROWSER_PROFILE ? ` profileDir=${KRA_BROWSER_PROFILE_DIR}` : ''} preferredBrowser=${KRA_BROWSER_EXECUTABLE_PATH || KRA_BROWSER_CHANNEL || 'chromium'}`);
 
         // ── Step 3: Navigate to KRA iTax portal ─────────────────────────────────
         await setJobStep(job, 10, 'Navigating to the KRA portal');
 
-        await page.goto(KRA_PORTAL_URL, {
-            waitUntil: 'domcontentloaded',
-            timeout: 90_000, // KRA portal can be very slow
-        });
-        await waitForPortalReadyWithReload(page, job, {
-            description: 'KRA login page',
-            selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],
-            timeout: 12_000,
-            reloadAttempts: 1,
-        });
+        await measureJobPhase(job, 'page.goto KRA portal', 10, async () => {
+            await page.goto(KRA_PORTAL_URL, {
+                waitUntil: 'domcontentloaded',
+                timeout: 90_000, // KRA portal can be very slow
+            });
+        }, () => `currentUrl=${page.url()}`);
+        await measureJobPhase(job, 'login page ready', 10, async () => {
+            await waitForPortalReadyWithReload(page, job, {
+                description: 'KRA login page',
+                selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],
+                timeout: 12_000,
+                reloadAttempts: 1,
+            });
+        }, () => `currentUrl=${page.url()}`);
 
         // Dump real element IDs/names so we can verify selectors
         if (KRA_DEBUG_ARTIFACTS) {
@@ -1288,7 +2112,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await navigationDelay();
 
         // ── Step 8: Navigate to Returns submenu ──────────────────────────────────
-        await setJobStep(job, 50, isTotReturn ? 'Opening the KRA ToT return form' : isMriReturn ? 'Opening the KRA MRI return form' : 'Opening the KRA nil return form');
+        await setJobStep(job, 50, isTotReturn ? 'Opening the KRA ToT return form' : isMriReturn ? 'Opening the KRA MRI return form' : isPayeUpload ? 'Opening the KRA PAYE return form' : 'Opening the KRA nil return form');
 
         // Take a screenshot and dump the nav menu so we can discover the real selectors
         if (KRA_DEBUG_ARTIFACTS) {
@@ -1351,12 +2175,22 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 });
             }
         }
-        await waitForPortalReadyWithReload(page, job, {
-        description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : isPayeUpload ? 'PAYE return obligation page' : 'Nil return obligation page',
-            selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select'],
-            timeout: 15_000,
-            reloadAttempts: 1,
-        });
+        const returnsReadyLabel = isTotReturn
+            ? 'ToT return obligation page ready'
+            : isMriReturn
+                ? 'MRI return obligation page ready'
+                : isPayeUpload
+                    ? 'PAYE return obligation page ready'
+                    : 'Nil return obligation page ready';
+
+        await measureJobPhase(job, returnsReadyLabel, 50, async () => {
+            await waitForPortalReadyWithReload(page, job, {
+                description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : isPayeUpload ? 'PAYE return obligation page' : 'Nil return obligation page',
+                selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select'],
+                timeout: 15_000,
+                reloadAttempts: 1,
+            });
+        }, () => `currentUrl=${page.url()}`);
 
         await navigationDelay();
 
@@ -1418,16 +2252,42 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         // reloads as form re-submissions and invalidates the session with
         // "Your session has timed out or an attempt to page re-submit happened".
         // Instead, wait with a generous timeout and no reload attempts.
-        await waitForPortalReadyWithReload(page, job, {
-            description: isTotReturn ? 'ToT upload page' : isMriReturn ? 'MRI return details page' : 'Nil return details page',
-            selectors: isTotReturn
-                ? ['input[type="file"]', '#submitBtn', 'input[value="Submit"]', 'text=Terms and Conditions']
-                : isMriReturn
-                    ? ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name*="rent" i]', 'input[name*="income" i]', 'input[name*="amount" i]']
-                    : ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name="txtPeriodFrom"]'],
-            timeout: 60_000,
-            reloadAttempts: 0,
-        });
+        const uploadPageSelectors = isTotReturn || isPayeUpload
+            ? [
+                'input[type="file"]',
+                'input[name*="file" i]',
+                'input[id*="file" i]',
+                'input[value*="Browse" i]',
+                'text=Terms and Conditions',
+                'text=Choose File',
+                'text=Attach',
+                'button:has-text("Upload")',
+                'input[value*="Upload" i]',
+                'input[type="image"][src*="upload" i]',
+                '#submitBtn',
+                'input[value="Submit"]',
+            ]
+            : isMriReturn
+                ? ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name*="rent" i]', 'input[name*="income" i]', 'input[name*="amount" i]']
+                : ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name="txtPeriodFrom"]'];
+
+        try {
+            await waitForPortalReadyWithReload(page, job, {
+                description: isTotReturn ? 'ToT upload page' : isPayeUpload ? 'PAYE upload page' : isMriReturn ? 'MRI return details page' : 'Nil return details page',
+                selectors: uploadPageSelectors,
+                timeout: 60_000,
+                reloadAttempts: 0,
+            });
+        } catch (error) {
+            if (isPayeUpload) {
+                const uploadPageSnapshot = await snapshotPageControls(page);
+                await appendJobLog(job, `PAYE upload page snapshot after obligation selection: ${uploadPageSnapshot}`, {
+                    progress: 60,
+                    level: 'error',
+                });
+            }
+            throw error;
+        }
 
         await navigationDelay();
 
@@ -1498,69 +2358,143 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await humanDelay(400, 900);
 
         // ── Step 11: Submit (handle JS confirmation dialog) ──────────────────────
-        await setJobStep(job, 80, isTotReturn ? 'Submitting the ToT return to KRA' : isMriReturn ? 'Submitting the MRI return to KRA' : 'Submitting the nil return to KRA');
+        await setJobStep(job, 80, isTotReturn ? 'Submitting the ToT return to KRA' : isPayeUpload ? 'Submitting the PAYE return to KRA' : isMriReturn ? 'Submitting the MRI return to KRA' : 'Submitting the nil return to KRA');
 
-        const submitDialogPromise = waitForDialogMessage(page, 10_000);
+        let submitDialogMessage: string | null = null;
+        let postSubmitPortalMessage: string | null = null;
+        let receiptPageLinks: Array<{ id: string; href: string; onclick: string; text: string; className: string }> = [];
+        let downloadMeta: { id: string; href: string; onclick: string; text: string; className: string } | undefined;
+        const confirmationOnlyDialogPattern = /do\s+you\s+want\s+to\s+upload\s+the\s+form/i;
 
-        await page.locator('#submitBtn, input[value="Submit"], button:has-text("Submit"), a:has-text("Submit")').first().click();
-        const submitDialogMessage = await submitDialogPromise;
-        if (submitDialogMessage) {
-            console.log(`[Worker][${jobId}] KRA dialog: "${submitDialogMessage}"`);
-            await appendJobLog(job, `KRA submit dialog: ${submitDialogMessage}`, { progress: 80 });
+        for (let submitAttempt = 1; submitAttempt <= (isPayeUpload ? 2 : 1); submitAttempt++) {
+            const submitDialogPromise = waitForDialogMessage(page, 10_000);
+
+            await page.locator('#submitBtn, input[value="Submit"], button:has-text("Submit"), a:has-text("Submit")').first().click();
+            submitDialogMessage = await submitDialogPromise;
+            if (submitDialogMessage) {
+                console.log(`[Worker][${jobId}] KRA dialog: "${submitDialogMessage}"`);
+                await appendJobLog(job, `KRA submit dialog: ${submitDialogMessage}`, { progress: 80 });
+            }
+
+            postSubmitPortalMessage = await waitForMatchingPortalMessage(
+                page,
+                isTotReturn ? TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS : isPayeUpload ? PAYE_SUBMISSION_ERROR_PATTERNS : [],
+                8_000
+            );
+
+            const shouldRetryPayeSubmit =
+                isPayeUpload
+                && submitAttempt === 1
+                && !!postSubmitPortalMessage
+                && PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS.some((pattern) => pattern.test(postSubmitPortalMessage ?? ''));
+
+            if (shouldRetryPayeSubmit) {
+                await appendJobLog(job, `KRA reported the PAYE form was not attached. Re-uploading once before retrying submit.`, {
+                    progress: 80,
+                    level: 'error',
+                });
+                await uploadPayeTaxZip(page, job);
+                await humanDelay(400, 900);
+                continue;
+            }
+
+            if (postSubmitPortalMessage && !/acknowledg|receipt/i.test(postSubmitPortalMessage)) {
+                await appendJobLog(job, `KRA submit validation message: ${postSubmitPortalMessage}`, { progress: 80, level: 'error' });
+                const shouldRetryImmediately =
+                    isPayeUpload
+                    && submitAttempt === 1
+                    && PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS.some((pattern) => pattern.test(postSubmitPortalMessage ?? ''));
+
+                if (shouldRetryImmediately) {
+                    await appendJobLog(job, 'KRA reported the PAYE form was not attached. Returning to the upload form and retrying once.', {
+                        progress: 80,
+                        level: 'error',
+                    });
+                    await returnToPayeUploadPage(page, job);
+                    await uploadPayeTaxZip(page, job);
+                    await humanDelay(400, 900);
+                    continue;
+                }
+
+                throw new Error(postSubmitPortalMessage);
+            }
+
+            // Do NOT reload after submit — same re-submit issue as the "Next" button.
+            await waitForPortalReadyWithReload(page, job, {
+                description: 'Post-submit receipt page',
+                selectors: [
+                    'text=Return Receipt Generated',
+                    'text=Return Submitted successfully',
+                    'text=Acknowledgement Number',
+                    'text=Acknowledgment Receipt',
+                    'text=Acknowledgement Receipt',
+                    'text=Receipt Number',
+                ],
+                timeout: 60_000,
+                reloadAttempts: 0,
+            }).catch(async () => {
+                // The receipt button may legitimately be absent if KRA returned a blocking dialog.
+                await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+            });
+
+            const settledPortalMessage = await waitForMatchingPortalMessage(
+                page,
+                isTotReturn ? TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS : isPayeUpload ? PAYE_SUBMISSION_ERROR_PATTERNS : [],
+                6_000
+            );
+            if (settledPortalMessage) {
+                postSubmitPortalMessage = settledPortalMessage;
+            }
+
+            const shouldRetryAfterSummary =
+                isPayeUpload
+                && submitAttempt === 1
+                && !!postSubmitPortalMessage
+                && PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS.some((pattern) => pattern.test(postSubmitPortalMessage ?? ''));
+
+            if (shouldRetryAfterSummary) {
+                await appendJobLog(job, 'KRA summary page still says the PAYE form was not attached. Returning to the upload form and retrying once.', {
+                    progress: 80,
+                    level: 'error',
+                });
+                await returnToPayeUploadPage(page, job);
+                await uploadPayeTaxZip(page, job);
+                await humanDelay(400, 900);
+                continue;
+            }
+
+            // Inspect all links on the receipt page to find the download link by its actual attributes
+            receiptPageLinks = await page.$$eval(
+                'a',
+                (els: HTMLAnchorElement[]) => els.map((el) => ({
+                    id: el.id ?? '',
+                    href: el.getAttribute('href') ?? '',
+                    onclick: el.getAttribute('onclick') ?? '',
+                    text: (el.textContent ?? '').trim(),
+                    className: el.className ?? '',
+                })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
+            );
+            if (KRA_DEBUG_ARTIFACTS) {
+                console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+            }
+
+            // Find the download link by its onclick/href attribute (the actual handler KRA uses)
+            downloadMeta = receiptPageLinks.find(
+                (link) =>
+                    link.onclick.toLowerCase().includes('download') ||
+                    link.href.toLowerCase().includes('download') ||
+                    link.id.toLowerCase().includes('download')
+            );
+
+            break;
         }
 
-        const postSubmitPortalMessage = await waitForMatchingPortalMessage(
-            page,
-            isTotReturn ? TURNOVER_TAX_SUBMISSION_ERROR_PATTERNS : [],
-            8_000
-        );
-        if (postSubmitPortalMessage && !/acknowledg|receipt/i.test(postSubmitPortalMessage)) {
-            await appendJobLog(job, `KRA submit validation message: ${postSubmitPortalMessage}`, { progress: 80, level: 'error' });
+        if (!downloadMeta && postSubmitPortalMessage) {
+            await appendJobLog(job, `KRA prevented receipt generation: ${postSubmitPortalMessage}`, { progress: 80, level: 'error' });
             throw new Error(postSubmitPortalMessage);
         }
 
-        // Do NOT reload after submit — same re-submit issue as the "Next" button.
-        await waitForPortalReadyWithReload(page, job, {
-            description: 'Post-submit receipt page',
-            selectors: [
-                'text=Return Receipt Generated',
-                'text=Return Submitted successfully',
-                'text=Acknowledgement Number',
-                'text=Acknowledgment Receipt',
-                'text=Acknowledgement Receipt',
-                'text=Receipt Number',
-            ],
-            timeout: 60_000,
-            reloadAttempts: 0,
-        }).catch(async () => {
-            // The receipt button may legitimately be absent if KRA returned a blocking dialog.
-            await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-        });
-
-        // Inspect all links on the receipt page to find the download link by its actual attributes
-        const receiptPageLinks = await page.$$eval(
-            'a',
-            (els: HTMLAnchorElement[]) => els.map((el) => ({
-                id: el.id ?? '',
-                href: el.getAttribute('href') ?? '',
-                onclick: el.getAttribute('onclick') ?? '',
-                text: (el.textContent ?? '').trim(),
-                className: el.className ?? '',
-            })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
-        );
-        if (KRA_DEBUG_ARTIFACTS) {
-            console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
-        }
-
-        // Find the download link by its onclick/href attribute (the actual handler KRA uses)
-        const downloadMeta = receiptPageLinks.find(
-            (link) =>
-                link.onclick.toLowerCase().includes('download') ||
-                link.href.toLowerCase().includes('download') ||
-                link.id.toLowerCase().includes('download')
-        );
-
-        if (!downloadMeta && submitDialogMessage) {
+        if (!downloadMeta && submitDialogMessage && !confirmationOnlyDialogPattern.test(submitDialogMessage)) {
             await appendJobLog(job, `KRA prevented receipt generation: ${submitDialogMessage}`, { progress: 80, level: 'error' });
             throw new Error(submitDialogMessage);
         }
@@ -1605,14 +2539,38 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
 
         // Clean up browser resources before network I/O
-        await context.close();
-        await browser.close();
+        if (context) {
+            await context.close();
+        }
+        if (browser) {
+            await browser.close();
+        }
+        context = undefined;
         browser = undefined;
 
         // ── Step 13: Store receipt in the workspace ───────────────────────────────
         await setJobStep(job, 94, 'Storing the receipt in the workspace');
         const { receiptPath: storedReceiptPath, relativePath } = await storeReceiptLocally(receiptPath, jobId);
         await appendJobLog(job, `Receipt stored locally at ${relativePath}`, { progress: 94 });
+
+        try {
+            let obligationCol = '';
+            if (taxObligationType === 'turnover_tax') obligationCol = 'tot';
+            else if (taxObligationType === 'monthly_rental_income') obligationCol = 'mri';
+            else if (taxObligationType === 'vat') obligationCol = 'vat';
+            else if (taxObligationType === 'paye') obligationCol = 'paye';
+
+            if (obligationCol) {
+                const db = await openDb();
+                await db.run(
+                    `UPDATE clients SET ${obligationCol}LastFiledDate = ?, ${obligationCol}ReceiptUrl = ? WHERE pin = ?`,
+                    [new Date().toISOString(), `/api/receipts/${relativePath.replace(/\\/g, '/')}`, kraPin]
+                );
+                await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
+            }
+        } catch (e) {
+            console.error('[Worker] Failed to update client tracking:', e);
+        }
 
         // ── Step 14: Notify user ──────────────────────────────────────────────────
         await setJobStep(job, 98, 'Dispatching completion notification');
@@ -1634,25 +2592,46 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
     } catch (err) {
         const error = err as Error;
         const currentProgress = typeof job.progress === 'number' ? job.progress : null;
-        await appendJobLog(job, `Job failed: ${error.message}`, {
-            progress: currentProgress ?? undefined,
-            level: 'error',
-        });
-        console.warn(`[Worker][${jobId ?? 'unknown'}] Job failed — closing Chrome after capturing debug artifacts.`);
-        if (browser) {
+        const isCancelled = error instanceof JobCancelledError;
+
+        if (isCancelled) {
+            const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId)).catch(() => null);
+            await job.updateData({
+                ...((latestJob?.data ?? job.data) as FilingJob),
+                cancelledAt: new Date().toISOString(),
+            }).catch(() => undefined);
+            await appendJobLog(job, `Job cancelled: ${error.message}`, {
+                progress: currentProgress ?? undefined,
+            });
+            console.warn(`[Worker][${jobId ?? 'unknown'}] Job cancelled by operator — closing browser without extra debug capture.`);
+        } else {
+            await appendJobLog(job, `Job failed: ${error.message}`, {
+                progress: currentProgress ?? undefined,
+                level: 'error',
+            });
+            console.warn(`[Worker][${jobId ?? 'unknown'}] Job failed — closing Chrome after capturing debug artifacts.`);
+        }
+
+        if (context || browser) {
             try {
-                const failScreenshot = path.join(TMP_DIR, `failure-${jobId}-${Date.now()}.png`);
-                const pages = browser.contexts().flatMap((context) => context.pages());
-                if (pages.length > 0) {
-                    await pages[0].screenshot({ path: failScreenshot, fullPage: true });
-                    console.log(`[Worker] Failure screenshot: ${failScreenshot}`);
+                if (!isCancelled) {
+                    const failScreenshot = path.join(TMP_DIR, `failure-${jobId}-${Date.now()}.png`);
+                    const pages = context ? context.pages() : browser?.contexts().flatMap((browserContext) => browserContext.pages()) ?? [];
+                    if (pages.length > 0) {
+                        await pages[0].screenshot({ path: failScreenshot, fullPage: true });
+                        console.log(`[Worker] Failure screenshot: ${failScreenshot}`);
+                    }
                 }
             } catch (_) {
                 // Ignore screenshot failures so the original job error still propagates.
             }
 
             try {
-                await browser.close();
+                if (context) {
+                    await context.close();
+                } else if (browser) {
+                    await browser.close();
+                }
             } catch (_) {
                 // Ignore close failures so BullMQ still receives the original error.
             }

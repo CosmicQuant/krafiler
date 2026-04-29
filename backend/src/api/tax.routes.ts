@@ -57,6 +57,131 @@ function parseFilingStepLog(rawEntry: string): FilingStepLog {
     }
 }
 
+type PendingFilingState = 'waiting' | 'active' | 'delayed';
+
+function hasCancellationRequest(jobData?: Partial<FilingJob> | null): boolean {
+    return typeof jobData?.cancelRequestedAt === 'string' && jobData.cancelRequestedAt.trim().length > 0;
+}
+
+function createFilingStepLogEntry(
+    message: string,
+    progress?: number,
+    level: FilingStepLog['level'] = 'info'
+): string {
+    return JSON.stringify({
+        timestamp: new Date().toISOString(),
+        message,
+        progress: typeof progress === 'number' ? progress : null,
+        level,
+    });
+}
+
+function resolveApiJobState(
+    queueState: string,
+    jobData?: Partial<FilingJob> | null,
+    failedReason?: string | null
+): NonNullable<FileNilReturnResponse['jobState']> {
+    if (hasCancellationRequest(jobData)) {
+        if (queueState === 'active' || queueState === 'waiting' || queueState === 'delayed') {
+            return 'cancelling';
+        }
+
+        if (
+            queueState === 'failed' ||
+            typeof jobData?.cancelledAt === 'string' ||
+            /job cancelled by user/i.test(failedReason ?? '')
+        ) {
+            return 'cancelled';
+        }
+    }
+
+    if (
+        queueState === 'waiting' ||
+        queueState === 'active' ||
+        queueState === 'delayed' ||
+        queueState === 'completed' ||
+        queueState === 'failed'
+    ) {
+        return queueState;
+    }
+
+    return 'unknown';
+}
+
+type FilingGuardInput = {
+    userId: string;
+    kraPin: string;
+    periodFrom: string;
+    periodTo: string;
+    taxObligationType: FileNilReturnRequest['taxObligationType'];
+    ownsRentalProperty: boolean;
+    rentalIncomeAmount?: number;
+    totYear?: number;
+    totMonth?: number;
+    totTurnover?: number;
+    payeZipUrl?: string;
+};
+
+function normaliseOptionalNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function buildPendingFilingKey(input: FilingGuardInput): string {
+    return JSON.stringify({
+        userId: input.userId.trim(),
+        kraPin: input.kraPin.trim().toUpperCase(),
+        periodFrom: input.periodFrom.trim(),
+        periodTo: input.periodTo.trim(),
+        taxObligationType: input.taxObligationType,
+        ownsRentalProperty: Boolean(input.ownsRentalProperty),
+        rentalIncomeAmount: normaliseOptionalNumber(input.rentalIncomeAmount),
+        totYear: normaliseOptionalNumber(input.totYear),
+        totMonth: normaliseOptionalNumber(input.totMonth),
+        totTurnover: normaliseOptionalNumber(input.totTurnover),
+        payeZipUrl: input.payeZipUrl?.trim() ?? '',
+    });
+}
+
+async function findDuplicatePendingFiling(input: FilingGuardInput): Promise<{ jobId: string; state: PendingFilingState } | null> {
+    const requestedKey = buildPendingFilingKey(input);
+    const pendingJobs = await kraFilingQueue.getJobs(['waiting', 'active', 'delayed'], 0, 199, true);
+
+    for (const pendingJob of pendingJobs) {
+        const pendingJobData = pendingJob.data as FilingJob;
+        if (!pendingJobData?.payload) {
+            continue;
+        }
+
+        const pendingKey = buildPendingFilingKey({
+            userId: pendingJobData.userId,
+            kraPin: pendingJobData.payload.kraPin,
+            periodFrom: pendingJobData.payload.periodFrom,
+            periodTo: pendingJobData.payload.periodTo,
+            taxObligationType: pendingJobData.payload.taxObligationType,
+            ownsRentalProperty: pendingJobData.payload.ownsRentalProperty,
+            rentalIncomeAmount: pendingJobData.payload.rentalIncomeAmount,
+            totYear: pendingJobData.payload.totYear,
+            totMonth: pendingJobData.payload.totMonth,
+            totTurnover: pendingJobData.payload.totTurnover,
+            payeZipUrl: pendingJobData.payload.payeZipUrl,
+        });
+
+        if (pendingKey !== requestedKey) {
+            continue;
+        }
+
+        const state = await pendingJob.getState();
+        if (state === 'waiting' || state === 'active' || state === 'delayed') {
+            return {
+                jobId: String(pendingJob.id ?? pendingJobData.jobId),
+                state,
+            };
+        }
+    }
+
+    return null;
+}
+
 // ─── Input Validation Middleware ─────────────────────────────────────────────
 
 const validateFilingRequest = [
@@ -198,15 +323,44 @@ router.post(
             : { periodFrom: periodFrom ?? '', periodTo: periodTo ?? '' };
 
         try {
-            // Encrypt password immediately — plaintext must not leave this scope
-            const { encryptedData, iv, authTag } = encrypt(kraPassword);
-
-            const jobId = uuidv4();
-
             // In a real application, extract userId from the verified JWT / session.
             // req.user would be populated by an auth middleware.
             const userId =
                 (req as Request & { user?: { id: string } }).user?.id ?? 'anonymous';
+
+            const duplicatePendingJob = await findDuplicatePendingFiling({
+                userId,
+                kraPin,
+                periodFrom: effectivePeriod.periodFrom,
+                periodTo: effectivePeriod.periodTo,
+                taxObligationType,
+                ownsRentalProperty: Boolean(ownsRentalProperty),
+                rentalIncomeAmount: typeof rentalIncomeAmount === 'number'
+                    ? rentalIncomeAmount
+                    : rentalIncomeAmount
+                        ? Number(rentalIncomeAmount)
+                        : undefined,
+                totYear: typeof totYear === 'number' ? totYear : undefined,
+                totMonth: typeof totMonth === 'number' ? totMonth : undefined,
+                totTurnover: typeof totTurnover === 'number' ? totTurnover : undefined,
+                payeZipUrl: typeof payeZipUrl === 'string' ? payeZipUrl : undefined,
+            });
+
+            if (duplicatePendingJob) {
+                res.status(409).json({
+                    success: false,
+                    duplicate: true,
+                    message: `A matching filing is already ${duplicatePendingJob.state}.`,
+                    jobId: duplicatePendingJob.jobId,
+                    jobState: duplicatePendingJob.state,
+                });
+                return;
+            }
+
+            // Encrypt password immediately — plaintext must not leave this scope
+            const { encryptedData, iv, authTag } = encrypt(kraPassword);
+
+            const jobId = uuidv4();
 
             const filingJob: FilingJob = {
                 jobId,
@@ -245,12 +399,124 @@ router.post(
                 message:
                     'Return queued successfully. You will be notified once the receipt is ready.',
                 jobId,
+                jobState: 'waiting',
             });
         } catch (err) {
             console.error('[API] Failed to queue filing job:', err);
             res.status(500).json({
                 success: false,
                 message: 'Failed to queue filing job. Please try again later.',
+            });
+        }
+    }
+);
+
+router.post(
+    '/filing-status/:jobId/cancel',
+    [
+        param('jobId')
+            .isUUID(4)
+            .withMessage('jobId must be a valid UUID v4'),
+    ],
+    async (
+        req: Request<{ jobId: string }, FileNilReturnResponse>,
+        res: Response<FileNilReturnResponse>
+    ): Promise<void> => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            res.status(400).json({
+                success: false,
+                message: errors
+                    .array()
+                    .map((error) => error.msg)
+                    .join('; '),
+            });
+            return;
+        }
+
+        const { jobId } = req.params;
+
+        try {
+            const job = await kraFilingQueue.getJob(jobId);
+
+            if (!job) {
+                res.status(404).json({
+                    success: false,
+                    message: `No job found with ID: ${jobId}`,
+                });
+                return;
+            }
+
+            const queueState = await job.getState();
+            const currentProgress = typeof job.progress === 'number' ? job.progress : undefined;
+            const currentData = job.data as FilingJob;
+
+            if (queueState === 'completed') {
+                res.status(409).json({
+                    success: false,
+                    message: 'This job has already completed and can no longer be cancelled.',
+                    jobId,
+                    jobState: 'completed',
+                });
+                return;
+            }
+
+            if (queueState === 'failed') {
+                const resolvedFailedState = resolveApiJobState(queueState, currentData, job.failedReason ?? null);
+                const alreadyCancelled = resolvedFailedState === 'cancelled';
+
+                res.status(alreadyCancelled ? 200 : 409).json({
+                    success: alreadyCancelled,
+                    message: alreadyCancelled
+                        ? 'This job was already cancelled.'
+                        : 'This job has already failed and can no longer be cancelled.',
+                    jobId,
+                    jobState: resolvedFailedState,
+                    cancelRequested: alreadyCancelled,
+                });
+                return;
+            }
+
+            if (queueState === 'waiting' || queueState === 'delayed') {
+                const removed = await kraFilingQueue.remove(jobId, { removeChildren: true });
+
+                if (removed === 1) {
+                    res.status(202).json({
+                        success: true,
+                        message: 'Job cancelled before processing started.',
+                        jobId,
+                        jobState: 'cancelled',
+                        cancelRequested: true,
+                    });
+                    return;
+                }
+            }
+
+            if (!hasCancellationRequest(currentData)) {
+                await job.updateData({
+                    ...currentData,
+                    cancelRequestedAt: new Date().toISOString(),
+                });
+                await job.log(
+                    createFilingStepLogEntry(
+                        'Cancellation requested by operator. The worker will stop at the next safe checkpoint.',
+                        currentProgress
+                    )
+                );
+            }
+
+            res.status(202).json({
+                success: true,
+                message: 'Cancellation requested. The active filing will stop at the next safe checkpoint.',
+                jobId,
+                jobState: 'cancelling',
+                cancelRequested: true,
+            });
+        } catch (err) {
+            console.error('[API] Failed to cancel filing job:', err);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to cancel filing job.',
             });
         }
     }
@@ -282,7 +548,8 @@ router.get(
                 return;
             }
 
-            const state = await job.getState();
+            const queueState = await job.getState();
+            const state = resolveApiJobState(queueState, job.data as FilingJob, job.failedReason ?? null);
             const jobLogsResult = await kraFilingQueue.getJobLogs(jobId, 0, 199, true);
             const stepLogs = jobLogsResult.logs.map(parseFilingStepLog);
             const lastStep = stepLogs.length > 0 ? stepLogs[stepLogs.length - 1] : null;

@@ -14,6 +14,7 @@ export const TAX_OBLIGATION_TYPES = [
     'vat',
     'paye',
     'turnover_tax',
+    'nssf'
 ] as const;
 
 export type TaxObligationType = (typeof TAX_OBLIGATION_TYPES)[number];
@@ -43,6 +44,8 @@ export interface NilReturnPayload {
     totTurnover?: number;
     otpCode?: string;
     payeZipUrl?: string;
+    nssfFileUrl?: string;
+    masterFileUrl?: string;
 }
 
 export interface FilingJob {

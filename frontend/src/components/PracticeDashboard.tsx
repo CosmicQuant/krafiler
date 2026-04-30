@@ -115,7 +115,7 @@ function isTerminalFilingJob(job?: ActiveDashboardJob | null) {
 
 function getAutoFileLabel(job?: ActiveDashboardJob | null) {
     if (!job) {
-        return 'Auto-File';
+        return 'AutoFile PAYE';
     }
 
     if (job.state === 'waiting' || job.state === 'delayed') {
@@ -757,6 +757,65 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleAutoFileNssf = async (client: ClientObligation) => {
+        if (!client.nssfFileUrl || !client.masterFileUrl) {
+            setDashboardNotice({ tone: 'error', message: `No NSSF File or Master CSV available for ${client.name}. Please generate ZIP first.` });
+            return;
+        }
+
+        setDashboardNotice({ tone: 'info', message: `Starting NSSF Auto-filing for ${client.name}...` });
+
+        try {
+            const payload = {
+                nssfFileUrl: client.nssfFileUrl,
+                masterFileUrl: client.masterFileUrl,
+                period: "04/2026", // Mock or dynamic based on app state
+            };
+
+            const res = await apiFetch('/tax/file-nssf-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = dataResp.jobState || 'waiting';
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: {
+                            id: dataResp.jobId,
+                            state: duplicateState,
+                            progress: prev[client.id]?.id === dataResp.jobId ? prev[client.id].progress : 0,
+                            message: dataResp.message || 'A filing is already queued or active.',
+                            failedReason: '',
+                        },
+                    }));
+                    setDashboardNotice({ tone: 'info', message: dataResp.message || `A filing is already queued for ${client.name}.` });
+                    return;
+                }
+                throw new Error(dataResp.message || dataResp.error || 'Failed to file NSSF.');
+            }
+
+            setActiveJobs((prev) => ({
+                ...prev,
+                [client.id]: {
+                    id: dataResp.jobId,
+                    state: 'waiting',
+                    progress: 0,
+                    message: 'Job queued...',
+                    failedReason: '',
+                },
+            }));
+
+            setDashboardNotice({ tone: 'success', message: `NSSF auto-filing queued successfully for ${client.name}.` });
+        } catch(e: any) {
+            setDashboardNotice({ tone: 'error', message: e.message });
+        }
+    };
+
     const handleCancelAutoFile = async (client: ClientObligation) => {
         const activeJob = activeJobs[client.id];
         if (!activeJob || isTerminalFilingJob(activeJob)) {
@@ -1022,13 +1081,24 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         {generatingClientIds[client.id] ? <RefreshCw className="h-4 w-4 animate-spin shrink-0" /> : <PlayCircle className="h-4 w-4 shrink-0" />}
                                         <span className="truncate">{(client.masterFileUrl || client.payrollSourceUrl) ? (generatingClientIds[client.id] ? 'Generating...' : 'Auto Gen ZIP') : 'No CSV'}</span>
                                     </button>
-                                    <button
-                                        onClick={() => handleAutoFile(client)}
-                                        disabled={(!client.masterFileUrl && !client.payrollSourceUrl && !client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
-                                        className="flex items-center justify-center w-full gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-xs font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
-                                    >
-                                        <Rocket className="h-4 w-4 shrink-0" /> <span className="truncate">{getAutoFileLabel(activeJobs[client.id])}</span>
-                                    </button>
+                                    <div className="flex w-full gap-2">
+                                        <button
+                                            onClick={() => handleAutoFile(client)}
+                                            disabled={(!client.masterFileUrl && !client.payrollSourceUrl && !client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
+                                            className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-[10px] font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            title="Auto File PAYE"
+                                        >
+                                            <Rocket className="h-4 w-4 shrink-0" /> <span className="truncate">{getAutoFileLabel(activeJobs[client.id])}</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleAutoFileNssf(client)}
+                                            disabled={!client.nssfFileUrl || !client.masterFileUrl}
+                                            className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-[10px] font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            title="Auto File NSSF"
+                                        >
+                                            <Cloud className="h-4 w-4 shrink-0" /> <span className="truncate">AutoFile NSSF</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1177,8 +1247,17 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             onClick={() => handleAutoFile(client)}
                                             disabled={!(client.masterFileUrl || client.payrollSourceUrl || client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
                                             className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            title="Auto File PAYE"
                                         >
-                                            <Rocket className="h-3 w-3" /> {getAutoFileLabel(activeJobs[client.id])}
+                                            <Rocket className="h-3 w-3" /> PAYE
+                                        </button>
+                                        <button
+                                            onClick={() => handleAutoFileNssf(client)}
+                                            disabled={!client.nssfFileUrl || !client.masterFileUrl}
+                                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            title="Auto File NSSF"
+                                        >
+                                            <Cloud className="h-3 w-3" /> NSSF
                                         </button>
                                     </div>
                                     {activeJobs[client.id] && (

@@ -30,6 +30,7 @@ import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { packageToTZip } from '../scripts/kra-tot-generator';
+import { fileNssfReturn } from '../scripts/file-nssf-return';
 
 // Apply stealth plugin once at module load
 chromium.use(StealthPlugin());
@@ -101,6 +102,9 @@ const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
         /^tot$/i,
         /turnover\s*tax/i,
     ],
+    nssf: [
+        /^nssf$/i
+    ]
 };
 
 const LOGIN_FAILURE_PATTERNS = [
@@ -1913,14 +1917,21 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
     const isTotReturn = taxObligationType === 'turnover_tax';
     const isPayeUpload = taxObligationType === 'paye' && !!(payload as any).payeZipUrl;
 
-    console.log(`[Worker] Starting job ${jobId} for PIN ${kraPin}`);
+    
+    const isNssfReturn = taxObligationType === 'nssf';
+
+    console.log(`[Worker] Starting job ${jobId} for identifier ${kraPin}`);
     await appendJobLog(job, 'Job accepted by worker');
 
-    // ── Step 1: Decrypt password in-memory ──────────────────────────────────────
-    // The plaintext password exists only in this local scope and is GC'd after
-    // the browser session closes.
     let activePassword = decrypt(encryptedPassword, iv, authTag);
     let credentialUpdate: CredentialUpdate | null = job.data.credentialUpdate ?? null;
+
+    if (isNssfReturn) {
+        const nssfFileUrl = (payload as any).nssfFileUrl;
+        if (!nssfFileUrl) throw new Error("Missing NSSF File URL in payload.");
+        await fileNssfReturn(job, kraPin, activePassword, nssfFileUrl, '04/2026');
+        return { receiptPath: '', receiptNumber: null, credentialUpdate };
+    }
 
     await fs.mkdir(TMP_DIR, { recursive: true });
 

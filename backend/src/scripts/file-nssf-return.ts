@@ -241,62 +241,166 @@ export async function fileNssfReturn(job: any, username: string, password: strin
 
           await page.waitForTimeout(2000);
 
-          // Step 8: Drag and Drop Unpaid SF24
-          console.log('Dragging unpaid SF24 to drop zone...');
+          // Step 8: Search and Select Unpaid SF24 (Bypassing bugged native Drag and Drop)
+          console.log('Searching and Selecting Unpaid SF24...');
+          await updateProgress(8, 'Attaching SF24 to Payment Order...', 95);
           
-          // PrimeFaces uses specific classes for draggable and droppable
-          const draggableRow = page.locator('tr.ui-draggable, tr.ui-widget-content.ui-datatable-selectable').first();
-          
-          // Target the container that actually has the droppable listener, usually a standard div or tbody around the text
-          const dropTextEl = page.locator('text="!!!Drop Unpaid SF24s here!!!"').first();
-          const dropZone = dropTextEl.locator('xpath=ancestor::*[contains(@class, "ui-droppable") or contains(@class, "ui-datatable-data") or contains(@class, "ui-datatable")][1]').first();
-
-          if (await draggableRow.isVisible() && await dropTextEl.isVisible()) {
-              const targetDropZone = await dropZone.isVisible() ? dropZone : dropTextEl;
-              
-              console.log('Initiating explicit mouse drag sequence for PrimeFaces...');
-              const srcBox = await draggableRow.boundingBox();
-              const dstBox = await targetDropZone.boundingBox();
-
-              if (srcBox && dstBox) {
-                  // Move to the center of the row 
-                  await page.mouse.move(srcBox.x + srcBox.width / 2, srcBox.y + srcBox.height / 2);
-                  await page.mouse.down();
-                  await page.waitForTimeout(500);
-                  
-                  // Move a few pixels to trigger the jQuery UI drag start event
-                  await page.mouse.move(srcBox.x + srcBox.width / 2 + 10, srcBox.y + srcBox.height / 2 + 10);
-                  await page.waitForTimeout(500);
-                  
-                  // Move to the drop zone in multiple steps (required for PrimeFaces to trace the coordinates)
-                  await page.mouse.move(dstBox.x + dstBox.width / 2, dstBox.y + dstBox.height / 2, { steps: 20 });
-                  await page.waitForTimeout(500);
-                  
-                  // Release
-                  await page.mouse.up();
-                  console.log('Item dragged and dropped via mouse events.');
-                  
-                  // Also try a native dragTo on the actual elements as a fallback if the mouse coordinates didn't trigger the drop listener
-                  try {
-                      await draggableRow.dragTo(targetDropZone, { force: true });
-                  } catch(e) {}
+          let companyName = 'COMPANY';
+          try {
+              const empText = await page.evaluate(() => {
+                  const trs = Array.from(document.querySelectorAll('tr'));
+                  for(let tr of trs) {
+                      if (tr.textContent && tr.textContent.includes('Employer Info:')) {
+                          const input = tr.querySelector('input');
+                          if (input) return input.value;
+                      }
+                  }
+                  return '';
+              });
+              if (empText) {
+                  companyName = empText.replace(/^\S+\s+/, '').trim().replace(/[^a-zA-Z0-9_ -]/g, '');
               }
+          } catch(e) {}
+  
+          console.log('Clicking the Search magnifying-glass icon on the toolbar...');
+          const searchBtn = page.locator('.ui-toolbar button:has(.ui-icon-search)').first();
+          if (await searchBtn.count() > 0) {
+              await searchBtn.click();
           } else {
-              console.log('Could not locate draggable item or the drop text.');
+              await page.evaluate(() => {
+                  const btns = Array.from(document.querySelectorAll('button'));
+                  const btn = btns.find(b => b.innerHTML.includes('ui-icon-search') || (b.title && b.title.includes('Search')));
+                  if (btn) btn.click();
+              });
           }
           await page.waitForTimeout(3000);
-
+  
+          console.log('Interacting with the Search Payment Orders dialog...');
+          const dialog = page.locator('.ui-dialog:visible').first();
+          
+          if (await dialog.isVisible()) {
+              const today = new Date();
+              const dd = String(today.getDate()).padStart(2, '0');
+              const mm = String(today.getMonth() + 1).padStart(2, '0');
+              const yyyy = today.getFullYear();
+              const dateStr = `${dd}/${mm}/${yyyy}`; // Format DD/MM/YYYY
+      
+              console.log(`Setting Issue Dates to today: ${dateStr}...`);
+              // Find all date pickers inside the active dialog
+              const dateInputs = dialog.locator('input[title*="Date"], input.hasDatepicker');
+              if (await dateInputs.count() >= 2) {
+                  await dateInputs.nth(0).fill(dateStr);
+                  await dateInputs.nth(0).press('Tab'); // Trigger changes
+                  await page.waitForTimeout(500);
+                  
+                  await dateInputs.nth(1).fill(dateStr);
+                  await dateInputs.nth(1).press('Tab');
+                  await page.waitForTimeout(500);
+              } else {
+                  console.log('Could not find enough date inputs in dialog! Continuing fallback...');
+              }
+      
+              console.log('Clicking Search button inside dialog...');
+              const dialogSearchBtn = dialog.locator('button').filter({ hasText: /^Search$/i }).first();
+              await dialogSearchBtn.click();
+              await page.waitForTimeout(3000);
+      
+              console.log('Selecting the result row from the table...');
+              const resultRow = dialog.locator('.ui-datatable-data tr').filter({ hasNotText: 'No records found' }).first();
+              if (await resultRow.isVisible()) {
+                  await resultRow.click();
+                  await page.waitForTimeout(1000);
+      
+                  console.log('Clicking Select button to apply...');
+                  const selectBtn = dialog.locator('button').filter({ hasText: /^Select$/i }).first();
+                  await selectBtn.click();
+                  await page.waitForTimeout(4000); // Wait for modal to close and page to update
+              } else {
+                  console.log('No results found in search dialog. Cannot proceed with alternative method.');
+              }
+          }
+  
           // Step 9: Save Payment Order
           console.log('Clicking Save on Payment Order...');
-          const saveBtn = page.locator('button:has(.ui-icon-disk)').first();
-          if (await saveBtn.isVisible()) {
-              await saveBtn.click({ force: true });
+          const saveBtn = page.locator('.ui-toolbar button:has(.ui-icon-disk), button[title="Save"]').first();
+          if (await saveBtn.count() > 0) {
+              await saveBtn.click();
+              await page.waitForTimeout(3000);
+          } else {
+              await page.evaluate(() => {
+                  const btns = Array.from(document.querySelectorAll('button'));
+                  const btn = btns.find(b => b.innerHTML.includes('ui-icon-disk') || (b.title && b.title.includes('Save')));
+                  if (btn) btn.click();
+              });
               await page.waitForTimeout(3000);
           }
+
+          console.log('Handling the System Message OK dialog...');
+          const okButton = page.locator('.ui-dialog:visible button').filter({ hasText: /^OK$/i }).first();
+          if (await okButton.count() > 0) {
+              console.log('Found OK button in dialog. Clicking it...');
+              await okButton.click();
+              await page.waitForTimeout(2000);
+          }
+
+          // Step 10: Print Payment Order to PDF
+          console.log('Attempting to print the Payment Order...');
+          await updateProgress(9, 'Generating Payment PDF...', 98);
+
+          const today2 = new Date();
+          const mm2 = String(today2.getMonth() + 1).padStart(2, '0');
+          const yyyy2 = today2.getFullYear();
+          let periodSlug = `${mm2}${yyyy2}`;
+          try {
+              const tableText = await page.locator('.ui-datatable-data').innerText();
+              const match = tableText.match(/(\d{1,2})\/(\d{4})/);
+              if (match) {
+                  const month = match[1].padStart(2, '0');
+                  const year = match[2];
+                  periodSlug = `${month}${year}`;
+              }
+          } catch(e) {}
+  
+          const pagePromise = context.waitForEvent('page'); // Wait for new browser window tab to pop up
+  
+          const printIconBtn = page.locator('.ui-toolbar button:has(.ui-icon-print)').first();
+          if (await printIconBtn.count() > 0) {
+              await printIconBtn.click();
+          } else {
+              await page.evaluate(() => {
+                  const btns = Array.from(document.querySelectorAll('button'));
+                  const btn = btns.find(b => b.innerHTML.includes('ui-icon-print'));
+                  if (btn) btn.click();
+              });
+          }
+  
+          console.log('Waiting for the new print window to open...');
+          let newPage;
+          try {
+              newPage = await pagePromise;
+              await newPage.waitForLoadState('networkidle', { timeout: 10000 });
+              await newPage.waitForTimeout(2000);
+          } catch (e) {
+              console.log('New print window did not open, attempting to print from main window...');
+              newPage = page;
+          }
+  
+          const safeCompanyName = companyName.substring(0, 30).trim();
+          const finalPdfPath = `${safeCompanyName} NSSF ${periodSlug}.pdf`;
+          console.log('Saving Payment Order PDF at: ', finalPdfPath);
+          
+          await newPage.emulateMedia({ media: 'print' });
+          await newPage.pdf({
+              path: finalPdfPath,
+              format: 'A4',
+              printBackground: true,
+              margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+              scale: 0.75, // Scale down the HTML so the entire wide table fits horizontally onto the A4 page
+          });
       }
 
       console.log('File upload initiated, submitted, and Payment Order created.');
-      await updateProgress(8, 'Done! Payment Order generated', 100);
+      await updateProgress(10, 'Done! Payment Order generated', 100);
       
       // Wait for user to observe before closing
       await page.waitForTimeout(10000);

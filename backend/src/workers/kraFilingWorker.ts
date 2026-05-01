@@ -31,6 +31,8 @@ import { sendReceiptNotification } from '../utils/notifications';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { packageToTZip } from '../scripts/kra-tot-generator';
 import { fileNssfReturn } from '../scripts/file-nssf-return';
+import sharp from 'sharp';
+import Tesseract from 'tesseract.js';
 
 // Apply stealth plugin once at module load
 chromium.use(StealthPlugin());
@@ -651,84 +653,29 @@ function extractGeminiText(payload: any): string {
         .trim();
 }
 
-async function solveCaptchaWithGemini(screenshotPath: string, jobId: string): Promise<{ expression: string; answer: string }> {
-    if (!GEMINI_API_KEY) {
-        throw new Error('GEMINI_API_KEY is required for Gemini captcha extraction');
-    }
+async function solveCaptchaWithTesseract(screenshotPath: string, jobId: string): Promise<{ expression: string; answer: string }> {
+    const processedPath = screenshotPath.replace('.png', '-processed.png');
+    
+    // Pre-process KRA image: grayscale, normalize to boost contrast
+    await sharp(screenshotPath)
+        .greyscale()
+        .normalize()
+        .threshold(160)
+        .toFile(processedPath);
 
-    const imageBuffer = await fs.readFile(screenshotPath);
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            systemInstruction: {
-                parts: [
-                    {
-                        text: 'Extract the KRA Security Stamp arithmetic captcha from screenshots and respond in the exact requested format only.',
-                    },
-                ],
-            },
-            contents: [
-                {
-                    parts: [
-                        {
-                            inline_data: {
-                                mime_type: 'image/png',
-                                data: imageBuffer.toString('base64'),
-                            },
-                        },
-                        {
-                            text: [
-                                'Read the Kenya Revenue Authority login page screenshot.',
-                                'Find the Security Stamp arithmetic captcha only.',
-                                'Return exactly one line and nothing else in this format:',
-                                'expression=<left><operator><right>;answer=<integer>',
-                                'Example: expression=78+9;answer=87',
-                                'Do not include words, markdown, or explanations.'
-                            ].join(' '),
-                        },
-                    ],
-                },
-            ],
-            generationConfig: {
-                responseMimeType: 'text/plain',
-                temperature: 0,
-                topP: 0.1,
-                candidateCount: 1,
-                maxOutputTokens: 32,
-                mediaResolution: 'MEDIA_RESOLUTION_HIGH',
-                thinkingConfig: {
-                    thinkingBudget: 0,
-                },
-            },
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
-    }
-
-    const payload = await response.json();
-    const rawText = extractGeminiText(payload);
-    const match = rawText.match(/expression\s*=\s*(\d+)\s*([\+\-\*\/])\s*(\d+)\s*;\s*answer\s*=\s*(-?\d+)/i);
+    const { data: { text } } = await Tesseract.recognize(processedPath, 'eng');
+    
+    const rawText = text.replace(/[^0-9+\-*/= ]/g, '').trim();
+    const match = rawText.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/i);
 
     if (!match) {
-        throw new Error(`Gemini returned an unexpected captcha format: "${rawText}"`);
+        throw new Error(`Tesseract failed to extract captcha format. Raw text: "${text}", Cleaned: "${rawText}"`);
     }
 
     const expression = `${match[1]} ${match[2]} ${match[3]}`;
-    const answer = match[4].trim();
     const expectedAnswer = String(solveCaptcha(expression));
 
-    if (answer !== expectedAnswer) {
-        throw new Error(`Gemini answer mismatch for job ${jobId}: expression ${expression}, expected ${expectedAnswer}, got ${answer}`);
-    }
-
-    return { expression, answer };
+    return { expression, answer: expectedAnswer };
 }
 
 async function selectOptionByTextPatterns(
@@ -1432,6 +1379,11 @@ async function fillMonthlyRentalIncomeAmount(
     }
 
     await fieldLocator.fill(String(rentalIncomeAmount));
+    await fieldLocator.blur(); // Blur the field so KRA auto-calculates the tax
+
+    // Also click somewhere neutral on the body to be absolutely sure the onblur event fires.
+    await page.locator('body').click({ position: { x: 10, y: 10 } });
+
     await appendJobLog(job, `Entered MRI amount ${rentalIncomeAmount} into ${rankedCandidate.name || rankedCandidate.id || rankedCandidate.placeholder || 'the detected amount field'}`, {
         progress: 70,
     });
@@ -1532,18 +1484,20 @@ async function performKraLogin(
     }
 
     try {
-        const captchaResult = await solveCaptchaWithGemini(screenPath, jobId);
-        captchaAnswer = captchaResult.answer;
-        console.log(`[Worker][${jobId}] Gemini parsed captcha: "${captchaResult.expression}" => ${captchaResult.answer}`);
+        // Temporarily bypassing Tesseract because it hallucinations on KRA noise lines.
+        throw new Error('OCR disabled to force manual input');
     } catch (e) {
-        console.warn(`[Worker][${jobId}] Gemini captcha extraction failed:`, (e as Error).message);
+        console.warn(`[Worker][${jobId}] OCR captcha extraction failed:`, (e as Error).message);
     }
 
     if (!captchaAnswer) {
-        console.warn(`[Worker][${jobId}] Could not solve captcha with Gemini — login will likely fail.`);
+        console.warn(`[Worker][${jobId}] Could not solve captcha automatically. PLEASE TYPE IT MANUALLY in the browser! (Waiting 15 seconds)`);
+        await page.focus('input[name="captcahText"]');
+        await humanDelay(15000, 15000); // Wait 15s for the user to key it in.
+        captchaAnswer = await page.inputValue('input[name="captcahText"]');
+    } else {
+        await page.fill('input[name="captcahText"]', captchaAnswer);
     }
-
-    await page.fill('input[name="captcahText"]', captchaAnswer);
 
     await humanDelay(500, 1_000);
 
@@ -2279,7 +2233,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 'input[value="Submit"]',
             ]
             : isMriReturn
-                ? ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name*="rent" i]', 'input[name*="income" i]', 'input[name*="amount" i]']
+                ? ['#txtPeriodFrom', '#txtPeriodTo', 'button:has-text("Next")', 'input[value="Next"]']
                 : ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name="txtPeriodFrom"]'];
 
         try {
@@ -2343,7 +2297,30 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             }
 
             if (isMriReturn) {
+                // Section A: We just filled the dates. We must click 'Next' to go to Section B.
+                await appendJobLog(job, `Clicking Next to navigate to Section B (Details of Rental Income)`, { progress: 72 });
+                const nextDialogPromise1 = waitForDialogMessage(page, 5_000);
+                await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').locator('visible=true').first().click();
+                const nextDialogMessage1 = await nextDialogPromise1;
+                if (nextDialogMessage1) {
+                    await appendJobLog(job, `KRA dialog on Section A: ${nextDialogMessage1}`, { progress: 72, level: 'warn' });
+                }
+                await page.waitForTimeout(4000); // Give Section B time to render
+
+                // Section B: Fill the rental income amount.
                 await fillMonthlyRentalIncomeAmount(page, job, rentalIncomeAmount ?? Number.NaN);
+
+                // Click Next to go to Section C (Summary of Tax Due)
+                await appendJobLog(job, `Clicking Next to navigate to Section C (Summary of Tax Due)`, { progress: 76 });
+                const nextDialogPromise2 = waitForDialogMessage(page, 5_000);
+                await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').locator('visible=true').first().click();
+                const nextDialogMessage2 = await nextDialogPromise2;
+                if (nextDialogMessage2) {
+                    await appendJobLog(job, `KRA dialog on Section B: ${nextDialogMessage2}`, { progress: 76, level: 'warn' });
+                }
+                await page.waitForTimeout(4000); // Give Section C time to render
+
+                // Now on Section C, ready to be submitted in Step 11.
             } else {
                 const rentalAnswered = await selectRentalPropertyAnswer(page, ownsRentalProperty);
                 if (rentalAnswered) {

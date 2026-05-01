@@ -828,11 +828,11 @@ const [etimsPassword, setEtimsPassword] = useState('');
         try {
             const payload = {
                 kraPin: client.pin,
-                kraPassword: client.iTaxPassword || "",
-                periodFrom: "01/04/2026",
-                periodTo: "30/04/2026",
+                kraPassword: (client as any).password || client.iTaxPassword || client.pin,
+                periodFrom: "2026-04-01",
+                periodTo: "2026-04-30",
                 taxObligationType: "monthly_rental_income",
-                ownsRentalProperty: "Yes",
+                ownsRentalProperty: true,
                 rentalIncomeAmount: amount,
             };
 

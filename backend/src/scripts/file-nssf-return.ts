@@ -361,8 +361,25 @@ export async function fileNssfReturn(job: any, username: string, password: strin
               }
           } catch(e) {}
   
+          // Wait for PDF response or page event
+          let pdfBuffer: Buffer | null = null;
+          let isPdf = false;
+          
+          context.on('response', async (response) => {
+              const contentType = response.headers()['content-type'];
+              if (contentType === 'application/pdf') {
+                  isPdf = true;
+                  console.log('Intercepted PDF response for payment order!');
+                  try {
+                      pdfBuffer = await response.body();
+                  } catch (e) {
+                      console.log('Could not read PDF body', e);
+                  }
+              }
+          });
+
           const pagePromise = context.waitForEvent('page'); // Wait for new browser window tab to pop up
-  
+
           const printIconBtn = page.locator('.ui-toolbar button:has(.ui-icon-print)').first();
           if (await printIconBtn.count() > 0) {
               await printIconBtn.click();
@@ -389,14 +406,19 @@ export async function fileNssfReturn(job: any, username: string, password: strin
           const finalPdfPath = `${safeCompanyName} NSSF ${periodSlug}.pdf`;
           console.log('Saving Payment Order PDF at: ', finalPdfPath);
           
-          await newPage.emulateMedia({ media: 'print' });
-          await newPage.pdf({
-              path: finalPdfPath,
-              format: 'A4',
-              printBackground: true,
-              margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
-              scale: 0.75, // Scale down the HTML so the entire wide table fits horizontally onto the A4 page
-          });
+          if (pdfBuffer) {
+              console.log('Saving intercepted pristine PDF bytes...');
+              require('fs').writeFileSync(finalPdfPath, pdfBuffer);
+          } else {
+              console.log('Fallback: taking a PDF screenshot of the view (might be wrapped by PDF viewer UI)');
+              await newPage.emulateMedia({ media: 'print' });
+              await newPage.pdf({
+                  path: finalPdfPath,
+                  format: 'A4',
+                  printBackground: true,
+                  margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+              });
+          }
       }
 
       console.log('File upload initiated, submitted, and Payment Order created.');

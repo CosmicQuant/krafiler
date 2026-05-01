@@ -816,6 +816,58 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleFileMri = async (client: ClientObligation) => {
+        const amountStr = mriInputVals[client.id];
+        const amount = amountStr ? parseFloat(amountStr) : 0;
+        if (isNaN(amount) || amount <= 0) {
+            setDashboardNotice({ tone: 'error', message: `Please enter a valid rental income amount for ${client.name}.` });
+            return;
+        }
+
+        setDashboardNotice({ tone: 'info', message: `Starting MRI Auto-filing for ${client.name}... ` });
+        try {
+            const payload = {
+                kraPin: client.pin,
+                kraPassword: client.iTaxPassword || "",
+                periodFrom: "01/04/2026",
+                periodTo: "30/04/2026",
+                taxObligationType: "monthly_rental_income",
+                ownsRentalProperty: "Yes",
+                rentalIncomeAmount: amount,
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = dataResp.jobState || 'waiting';
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: { id: dataResp.jobId, state: duplicateState, progress: 0, message: 'Reconnected to running job.' }
+                    }));
+                    setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing MRI job.' });
+                } else {
+                    throw new Error(dataResp.message || 'Auto-file request failed');
+                }
+            } else if (dataResp.jobId) {
+                setActiveJobs((prev) => ({
+                    ...prev,
+                    [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'MRI Job queued...' }
+                }));
+                setDashboardNotice({ tone: 'success', message: 'MRI filing job started successfully.' });
+            }
+        } catch (error) {
+            console.error('Auto-file error:', error);
+            setDashboardNotice({ tone: 'error', message: `Failed to queue MRI filing for ${client.name}.` });
+        }
+    };
+
     const handleCancelAutoFile = async (client: ClientObligation) => {
         const activeJob = activeJobs[client.id];
         if (!activeJob || isTerminalFilingJob(activeJob)) {
@@ -1453,7 +1505,12 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         <StatusBadge status={ob.status} />
                                     </td>
                                     <td className="px-4 py-4 pt-5 align-top text-right">
-                                        <button className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition shadow-sm drop-shadow mt-1">
+                                        <button 
+                                            onClick={() => {
+                                                if (ob.type === 'MRI') handleFileMri(ob.client);
+                                            }}
+                                            disabled={isPendingFilingJob(activeJobs[ob.client.id])}
+                                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition shadow-sm drop-shadow mt-1 disabled:opacity-50">
                                             Process Return
                                         </button>
                                     </td>

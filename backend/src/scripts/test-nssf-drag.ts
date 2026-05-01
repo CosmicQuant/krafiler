@@ -143,8 +143,9 @@ async function runTest(username?: string, password?: string) {
                 await selectBtn.click();
                 await page.waitForTimeout(4000); // Wait for modal to close and page to update
             } else {
-                console.log('No results found in search dialog. Cannot proceed with alternative method.');
+                console.log('No results found in search dialog. Cannot proceed.');
                 await page.screenshot({ path: 'no-search-results.png', fullPage: true });
+                throw new Error('No Payment Orders found for today.');
             }
         }
 
@@ -187,6 +188,23 @@ async function runTest(username?: string, password?: string) {
         } catch(e) {}
 
         console.log('Attempting to print the Payment Order...');
+        // Wait for PDF response or page event
+        let pdfBuffer: Buffer | null = null;
+        let isPdf = false;
+        
+        context.on('response', async (response) => {
+            const contentType = response.headers()['content-type'];
+            if (contentType === 'application/pdf') {
+                isPdf = true;
+                console.log('Intercepted PDF response!');
+                try {
+                    pdfBuffer = await response.body();
+                } catch (e) {
+                    console.log('Could not read PDF body', e);
+                }
+            }
+        });
+
         const pagePromise = context.waitForEvent('page'); // Wait for new browser window tab to pop up
 
         const printIconBtn = page.locator('.ui-toolbar button:has(.ui-icon-print)').first();
@@ -216,14 +234,20 @@ async function runTest(username?: string, password?: string) {
         const pdfPath = `${safeCompanyName} NSSF ${periodSlug}.pdf`;
         console.log('Generating Payment Order PDF at: ', pdfPath);
         
-        await newPage.emulateMedia({ media: 'print' });
-        await newPage.pdf({
-            path: pdfPath,
-            format: 'A4',
-            printBackground: true,
-            margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
-            scale: 0.75, // Scale down the HTML so the entire wide table fits horizontally onto the A4 page without getting cut off
-        });
+        if (pdfBuffer) {
+            console.log('Saving intercepted pristine PDF bytes...');
+            require('fs').writeFileSync(pdfPath, pdfBuffer);
+        } else {
+            console.log('Fallback: taking a PDF screenshot of the view (might be wrapped by PDF viewer UI)');
+            await newPage.emulateMedia({ media: 'print' });
+            await newPage.pdf({
+                path: pdfPath,
+                format: 'A4',
+                printBackground: true,
+                margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
+                // scale: 0.75,
+            });
+        }
         console.log('Successfully saved to:', pdfPath);
 
         console.log('Holding script open for 20 seconds to inspect PDF completion in background...');

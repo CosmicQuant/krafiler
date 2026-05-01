@@ -345,7 +345,7 @@ export class AxonDataExtractionEngine {
             row1.getCell(3).value = emp.firstName; // C
             row1.getCell(4).value = emp.idNo ? Number(emp.idNo) : ''; // D: Number
             row1.getCell(5).value = emp.kraPin; // E
-            row1.getCell(6).value = emp.nssfNo ? Number(emp.nssfNo) : ''; // F: Number
+              row1.getCell(6).value = emp.nssfNo || ''; // F: String (can contain trailing letters)
             row1.getCell(7).value = '101'; // G: String triggers triangle natively
             row1.getCell(8).value = gross; // H: NSSF expects full income on both 101 and 102 rows
             row1.getCell(9).value = '1'; // I: String trigger
@@ -363,7 +363,7 @@ export class AxonDataExtractionEngine {
                 row2.getCell(3).value = emp.firstName;
                 row2.getCell(4).value = emp.idNo ? Number(emp.idNo) : '';
                 row2.getCell(5).value = emp.kraPin;
-                row2.getCell(6).value = emp.nssfNo ? Number(emp.nssfNo) : '';
+                  row2.getCell(6).value = emp.nssfNo || '';
                 row2.getCell(7).value = '102'; // String trigger
                 row2.getCell(8).value = gross; // Number
                 row2.getCell(9).value = '1'; // String trigger
@@ -378,7 +378,14 @@ export class AxonDataExtractionEngine {
 
         // Header mapping natively back to specific coordinate spots
         sheet.getCell('B2').value = this.config.employerPin ? this.config.employerPin.toString() : '';
-        sheet.getCell('B3').value = this.config.nssfEmployerNo ? Number(this.config.nssfEmployerNo) : ''; // Number mapping (NO TEXT)
+          
+          let cleanNssfNumber = this.config.nssfEmployerNo || '';
+          if (cleanNssfNumber.toUpperCase().startsWith('NSSF')) {
+              cleanNssfNumber = cleanNssfNumber.slice(4);
+          }
+          // Set as a string since NSSF numbers can contain trailing letters
+          sheet.getCell('B3').value = cleanNssfNumber;
+
         sheet.getCell('B4').value = this.config.employerName;
         sheet.getCell('B5').value = this.config.periodMMYYYY ? this.config.periodMMYYYY.toString() : '';
         sheet.getCell('B6').value = totalIncome.toString(); // String trigger

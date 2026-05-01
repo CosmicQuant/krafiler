@@ -499,9 +499,13 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
                 rowCount++;
             })
             .on('end', () => {
-                // Automatically set the period based on the current date, to remove user input need
-                const now = new Date();
-                cfg.periodMMYYYY = `${String(now.getMonth() + 1).padStart(2, '0')}${now.getFullYear()}`;
+                // Use fallbackConfig period if provided (e.g. from API), else default to current month
+                if (fallbackConfig.periodMMYYYY) {
+                    cfg.periodMMYYYY = fallbackConfig.periodMMYYYY;
+                } else {
+                    const now = new Date();
+                    cfg.periodMMYYYY = `${String(now.getMonth() + 1).padStart(2, '0')}${now.getFullYear()}`;
+                }
 
                 // Fallbacks if mapping failed
                 cfg.employerName = cfg.employerName || fallbackConfig.employerName;

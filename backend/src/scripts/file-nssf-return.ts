@@ -1,5 +1,5 @@
 import { chromium } from 'playwright-extra';
-import path from 'path';
+import * as path from 'path';
 
 export async function fileNssfReturn(job: any, username: string, password: string, filePath: string, submissionPeriod: string) {
   const browser = await chromium.launch({ headless: false }); // Set to false to see the actions
@@ -50,33 +50,91 @@ export async function fileNssfReturn(job: any, username: string, password: strin
 // 3. Click SF24 Actions to expand the menu
       await updateProgress(3, 'Opening SF24 Actions...', 60);
       console.log('Opening SF24 Actions...');
-      // await page.click('text=Create Submission Period');
-      await page.click('text=SF24 Actions');
-      await page.waitForTimeout(3000);
       
-      // Let's dump the DOM here so we can see what appeared under SF24 Actions
-      const pageText2 = await page.$$eval('a, div, span, button', (elements) => {
-        return elements.map(el => el.textContent?.trim()).filter(Boolean);
-      });
-      console.log("Available UI text blocks after clicking SF24 Actions:", [...new Set(pageText2)]);
+      // Click 'SF24 Actions' only if 'Create Submission Period' is not visible yet
+      if (await page.locator('text="Create Submission Period"').first().isHidden()) {
+          await page.click('text="SF24 Actions"');
+          await page.waitForTimeout(1500); // give the menu animation time to slide down
+      }
 
-      // The script will now intentionally fail looking for 'text=Submission Mode:*'
-      await page.waitForSelector('text=Submission Mode:*', { timeout: 10000 });
-    
-    const periodInput = page.locator('div.ui-dialog').locator('input[type="text"]');
-    await periodInput.fill(submissionPeriod);
+      console.log('Clicking Create Submission Period...');
+      await page.locator('text="Create Submission Period"').first().click({ force: true });
+      
+      // Wait for the modal/dialog showing "Submission Mode:*"
+      await page.waitForSelector('text=Submission Mode:*', { state: 'visible', timeout: 15000 });
+      
+      const visibleDialog = page.locator('div.ui-dialog:visible');
+      const periodInput = visibleDialog.locator('input[type="text"]').first();
+        
+        console.log('Focusing and typing period:', submissionPeriod);
+        await periodInput.click();
+        await page.waitForTimeout(500);
+        // Many PrimeFaces masks auto-format. We clear and type slowly
+        await periodInput.fill('');
+        await page.waitForTimeout(200);
+        await periodInput.pressSequentially(submissionPeriod, { delay: 100 });
+        
+        console.log('Checking dropdowns for Income/Contribution types matching the SF24 file...');
+        const dropdownTriggers = await visibleDialog.locator('.ui-selectonemenu-trigger').all();
+        for (const trigger of dropdownTriggers) {
+            await trigger.click({ force: true });
+            await page.waitForTimeout(1000);
+            
+            const optionsPanel = page.locator('div.ui-selectonemenu-panel:visible').first();
+            if (await optionsPanel.isVisible()) {
+                const optionItems = await optionsPanel.locator('li.ui-selectonemenu-item').all();
+                let foundMatch = false;
+                
+                const allTexts = await Promise.all(optionItems.map(async (i: any) => await i.textContent()));
+                console.log('Available dropdown options:', allTexts.map(t => t?.trim()));
 
-    // Click Open
-    await page.click('div.ui-dialog >> text=Open');
+                for (const item of optionItems) {
+                    const text = await item.textContent();
+                    const lower = text?.toLowerCase() || '';
+                    if (lower.includes('normal') || lower.includes('standard')) {
+                        console.log(`Selecting correct mapped option: ${text}`);
+                        await item.click({ force: true });
+                        foundMatch = true;
+                        break;
+                    }
+                }
+                
+                if (!foundMatch) {
+                    console.log('No matching option found (not Normal/Standard), leaving default...');
+                    // Press ESC to close an open PrimeFaces dropdown
+                    await page.keyboard.press('Escape'); 
+                }
+                await page.waitForTimeout(1000);
+            }
+        }
+
+    console.log('Clicking Open button...');
+    const openBtn = visibleDialog.locator('text="Open"').first();
+    await openBtn.evaluate((node: HTMLElement) => {
+        // Native DOM click bypasses any CSS overlay problems
+        node.click();
+    });
     
-    // Wait for the modal to close and the table to update
+    // Wait for the success modal that says "Creation of Submission Period"
+    console.log('Waiting for success modal to appear...');
+    await page.waitForTimeout(2000);
+    
+    const successDialog = page.locator('div.ui-dialog:visible', { hasText: 'OK' }).first();
+    if (await successDialog.isVisible()) {
+        console.log('Clicking OK on success modal...');
+        await successDialog.locator('button', { hasText: 'OK' }).first().click({ force: true });
+        await page.waitForTimeout(1500); // Give it time to close
+    }
+    
+    // Wait for the table to update
     await page.waitForTimeout(3000);
 
     // 4. Click File Upload for the new period
     await updateProgress(4, 'Uploading file...', 80);
-    console.log('Clicking File Upload...');
-    // We want the most recent "File Upload" link, which should be in the top row.
-    await page.click('text=File Upload >> nth=0'); 
+    console.log('Clicking File Upload link in table...');
+    // We want the actual <a> link in the Actions column for "File Upload"
+    const fileUploadLink = page.locator('a', { hasText: 'File Upload' }).filter({ hasText: /^File Upload$/i }).first();
+    await fileUploadLink.click({ force: true }); 
     
     await page.waitForTimeout(3000);
 
@@ -90,27 +148,171 @@ export async function fileNssfReturn(job: any, username: string, password: strin
     // Wait for the file to be "chosen"
     await page.waitForTimeout(2000);
 
-    // Click Upload button
-    await page.click('text=Upload');
+    // Click Upload button (it's next to Choose)
+    console.log('Clicking Upload button...');
+    const uploadBtn = page.locator('button, a').filter({ hasText: /Upload/i }).first();
+    await uploadBtn.click({ force: true });
 
-    console.log('File upload initiated. Check the UI for completion.');
-    await updateProgress(4, 'File uploaded!', 100);
+    // Wait for the upload success message and the Back button
+    console.log('Waiting for upload to complete...');
+    await page.waitForTimeout(3000);
     
-    // Wait for user to observe before closing
-    await page.waitForTimeout(10000);
+    // In the second screenshot, there is a "Back" button
+    console.log('Clicking Back button...');
+    const backBtn = page.locator('button, a').filter({ hasText: /^Back$/i }).first();
+    await backBtn.click({ force: true });
+    
+    // Wait for navigation back to SF24 Submissions table
+    await page.waitForTimeout(4000);
+    
+    // Once back, click the "Check Submission" link for the newly attached file
+    console.log('Clicking Check Submission...');
+    const checkSubBtn = page.locator('a').filter({ hasText: 'Check Submission' }).first();
+    if (await checkSubBtn.isVisible()) {
+        await checkSubBtn.click({ force: true });
+        
+        console.log('Waiting for "Submissions Error Check" initiated modal...');
+        await page.waitForTimeout(3000); // Wait for modal to pop up
+        const initiatedDialog = page.locator('div.ui-dialog:visible', { hasText: 'been initiated' }).first();
+        if (await initiatedDialog.isVisible()) {
+            await initiatedDialog.locator('button', { hasText: 'OK' }).first().click({ force: true });
+        }
 
-  } catch (error: any) {
-    if(job) {
-       await job.log(JSON.stringify({ timestamp: new Date().toISOString(), message: `Execution error: ${error.message}`, progress: null, level: 'error' }));
+        console.log('Waiting 20 seconds for processing...');
+        await updateProgress(5, 'Evaluating errors...', 90);
+        await page.waitForTimeout(20000); 
+
+        console.log('Clicking "Submission Check Progress Update"...');
+        const progressUpdateBtn = page.locator('a, ui-commandlink').filter({ hasText: /Progress Update/i }).first();
+        if (await progressUpdateBtn.isVisible()) {
+            await progressUpdateBtn.click({ force: true });
+            
+            console.log('Waiting for final "State has been modified" modal...');
+            await page.waitForTimeout(3000);
+            const modifiedDialog = page.locator('div.ui-dialog:visible', { hasText: 'modified' }).first();
+            if (await modifiedDialog.isVisible()) {
+                await modifiedDialog.locator('button', { hasText: 'OK' }).first().click({ force: true });
+            }
+        }
     }
-    try { 
+
+      // Step 6: Submit the file exactly as user clicks "Submission"
+      console.log('Navigating to submit the prepared period...');
+      await updateProgress(6, 'Finalizing submission...', 88);
+      // Wait for table to reload with the "TO BE SUBMITTED" state
+      await page.waitForTimeout(4000);
+      
+      const submitActionLink = page.locator('a').filter({ hasText: /^Submission$/i }).first();
+      await submitActionLink.click({ force: true });
+      console.log('Clicked "Submission". Waiting for page reload...');
+      // Wait for the action to complete fully
+      await page.waitForTimeout(5000);
+
+      // Step 7: Proceed to Payment Order
+      console.log('Navigating to Payment Order...');
+      await updateProgress(7, 'Creating Payment Order...', 93);
+      const paymentOrderLink = page.locator('a, span').filter({ hasText: 'Payment Order' }).first();
+      if (await paymentOrderLink.isVisible()) {
+          await paymentOrderLink.click({ force: true });
+          await page.waitForTimeout(4000);
+          
+          console.log('Entering Bank Code...');
+          // Using evaluate for robustness since PrimeFaces DOM can be nested deeply
+          await page.evaluate(() => {
+              const labels = Array.from(document.querySelectorAll('label'));
+              const bankLabel = labels.find(l => l.textContent && l.textContent.includes('Bank Code'));
+              if (bankLabel && bankLabel.htmlFor) {
+                  const input = document.getElementById(bankLabel.htmlFor) as HTMLInputElement;
+                  if (input) {
+                      input.value = '1';
+                      input.dispatchEvent(new Event('input', { bubbles: true }));
+                      input.dispatchEvent(new Event('change', { bubbles: true }));
+                  }
+              }
+          });
+          // Also Playwright fallback just in case: Look for input directly right of the Bank Code text
+          try {
+              const bankLabel = page.locator('label').filter({ hasText: /Bank Code/i }).first();
+              const bankInputId = await bankLabel.getAttribute('for');
+              if (bankInputId) {
+                  await page.fill(`[id="${bankInputId}"]`, '1');
+              }
+          } catch(e) {}
+
+          await page.waitForTimeout(2000);
+
+          // Step 8: Drag and Drop Unpaid SF24
+          console.log('Dragging unpaid SF24 to drop zone...');
+          
+          // PrimeFaces uses specific classes for draggable and droppable
+          const draggableRow = page.locator('tr.ui-draggable, tr.ui-widget-content.ui-datatable-selectable').first();
+          
+          // Target the container that actually has the droppable listener, usually a standard div or tbody around the text
+          const dropTextEl = page.locator('text="!!!Drop Unpaid SF24s here!!!"').first();
+          const dropZone = dropTextEl.locator('xpath=ancestor::*[contains(@class, "ui-droppable") or contains(@class, "ui-datatable-data") or contains(@class, "ui-datatable")][1]').first();
+
+          if (await draggableRow.isVisible() && await dropTextEl.isVisible()) {
+              const targetDropZone = await dropZone.isVisible() ? dropZone : dropTextEl;
+              
+              console.log('Initiating explicit mouse drag sequence for PrimeFaces...');
+              const srcBox = await draggableRow.boundingBox();
+              const dstBox = await targetDropZone.boundingBox();
+
+              if (srcBox && dstBox) {
+                  // Move to the center of the row 
+                  await page.mouse.move(srcBox.x + srcBox.width / 2, srcBox.y + srcBox.height / 2);
+                  await page.mouse.down();
+                  await page.waitForTimeout(500);
+                  
+                  // Move a few pixels to trigger the jQuery UI drag start event
+                  await page.mouse.move(srcBox.x + srcBox.width / 2 + 10, srcBox.y + srcBox.height / 2 + 10);
+                  await page.waitForTimeout(500);
+                  
+                  // Move to the drop zone in multiple steps (required for PrimeFaces to trace the coordinates)
+                  await page.mouse.move(dstBox.x + dstBox.width / 2, dstBox.y + dstBox.height / 2, { steps: 20 });
+                  await page.waitForTimeout(500);
+                  
+                  // Release
+                  await page.mouse.up();
+                  console.log('Item dragged and dropped via mouse events.');
+                  
+                  // Also try a native dragTo on the actual elements as a fallback if the mouse coordinates didn't trigger the drop listener
+                  try {
+                      await draggableRow.dragTo(targetDropZone, { force: true });
+                  } catch(e) {}
+              }
+          } else {
+              console.log('Could not locate draggable item or the drop text.');
+          }
+          await page.waitForTimeout(3000);
+
+          // Step 9: Save Payment Order
+          console.log('Clicking Save on Payment Order...');
+          const saveBtn = page.locator('button:has(.ui-icon-disk)').first();
+          if (await saveBtn.isVisible()) {
+              await saveBtn.click({ force: true });
+              await page.waitForTimeout(3000);
+          }
+      }
+
+      console.log('File upload initiated, submitted, and Payment Order created.');
+      await updateProgress(8, 'Done! Payment Order generated', 100);
+      
+      // Wait for user to observe before closing
+      await page.waitForTimeout(10000);
+
+    } catch (error: any) {
+      if(job) {
+         await job.log(JSON.stringify({ timestamp: new Date().toISOString(), message: `Execution error: ${error.message}`, progress: null, level: 'error' }));
+      }
+      try { 
         await page.screenshot({ path: 'nssf-stuck.png' }); 
         const links = await page.$$eval('a, div, span, button', (els) => els.map(e => e.textContent?.trim()).filter(Boolean));
         console.log('Available UI text blocks:', Array.from(new Set(links)));
-    } catch(e){} 
-console.error('Error during NSSF upload:', error);
-    throw error;
-  } finally {
+      } catch(e){} 
+      console.error('Error during NSSF upload:', error);
+      throw error;
+    } finally {
     await browser.close();
   }
 }

@@ -2303,7 +2303,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').locator('visible=true').first().click();
                 const nextDialogMessage1 = await nextDialogPromise1;
                 if (nextDialogMessage1) {
-                    await appendJobLog(job, `KRA dialog on Section A: ${nextDialogMessage1}`, { progress: 72, level: 'warn' });
+                    await appendJobLog(job, `KRA dialog on Section A: ${nextDialogMessage1}`, { progress: 72, level: 'info' });
                 }
                 await page.waitForTimeout(4000); // Give Section B time to render
 
@@ -2316,7 +2316,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').locator('visible=true').first().click();
                 const nextDialogMessage2 = await nextDialogPromise2;
                 if (nextDialogMessage2) {
-                    await appendJobLog(job, `KRA dialog on Section B: ${nextDialogMessage2}`, { progress: 76, level: 'warn' });
+                    await appendJobLog(job, `KRA dialog on Section B: ${nextDialogMessage2}`, { progress: 76, level: 'info' });
                 }
                 await page.waitForTimeout(4000); // Give Section C time to render
 

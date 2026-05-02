@@ -425,6 +425,45 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleBulkCsvUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        setDashboardNotice({ tone: 'info', message: 'Uploading bulk clients CSV...' });
+
+        try {
+            const formData = new FormData();
+            formData.append('clientsCsv', file);
+
+            const res = await apiFetch('/clients/bulk', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                setDashboardNotice({ tone: 'success', message: data.message || 'Successfully uploaded bulk clients CSV.' });
+                // Refresh client list
+                const clientsRes = await apiFetch('/clients');
+                if (clientsRes.ok) {
+                    const clientsData = await clientsRes.json();
+                    setClients(clientsData);
+                }
+            } else {
+                setDashboardNotice({ tone: 'error', message: data.message || 'Failed to upload bulk clients.' });
+            }
+        } catch (error) {
+            console.error('Bulk client upload error:', error);
+            setDashboardNotice({ tone: 'error', message: 'Error communicating with the server during bulk import.' });
+        } finally {
+            // Reset input so the same file can be selected again if needed
+            if (event.target) {
+                event.target.value = '';
+            }
+        }
+    };
+
     const handleGlobalMasterCsvUpload = async (file: File) => {
         setIsGlobalUploading(true);
         setDashboardNotice({ tone: 'info', message: 'Analyzing Master CSV...' });
@@ -1508,6 +1547,9 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         <button 
                                             onClick={() => {
                                                 if (ob.type === 'MRI') handleFileMri(ob.client);
+                                                else if (ob.type === 'PAYE') handleAutoFile(ob.client);
+                                                else if (ob.type === 'NSSF') handleAutoFileNssf(ob.client);
+                                                // SHA, ETIMS, etc. can be queued if logic exists
                                             }}
                                             disabled={isPendingFilingJob(activeJobs[ob.client.id])}
                                             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition shadow-sm drop-shadow mt-1 disabled:opacity-50">
@@ -1741,6 +1783,44 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             <Plus className="h-5 w-5 text-slate-950" />
                                         </div>
                                     </button>
+
+                                    <div className="grid gap-2">
+                                        <button 
+                                            onClick={() => document.getElementById('bulkCsvUpload')?.click()}
+                                            className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-teal-600 to-teal-400 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(20,184,166,0.3)]"
+                                        >
+                                            <div className="relative z-10">
+                                                <p className="text-lg font-black text-slate-950">Bulk Import</p>
+                                                <p className="mt-1 text-xs font-semibold text-teal-950/70">Upload CSV template</p>
+                                            </div>
+                                            <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-md">
+                                                <Upload className="h-5 w-5 text-slate-950" />
+                                            </div>
+                                        </button>
+                                        <button 
+                                            onClick={() => {
+                                                const csvContent = "Company Name,PIN,Password,Obligations,Email,Phone,NSSF Login,NSSF Password,SHA Login,SHA Password,eTIMS Login,eTIMS Password,eLevy Login,eLevy Password\nExample Company Ltd,P051234567M,UserPass123!,\"paye, nssf, mri\",test@example.com,0700000000,NSSF001,NssfPass123,SHA001,ShaPass123,ETIMS001,EtimsPass123,ELEVY001,ElevyPass123";
+                                                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                                                const url = URL.createObjectURL(blob);
+                                                const link = document.createElement('a');
+                                                link.setAttribute('href', url);
+                                                link.setAttribute('download', 'Clients_Bulk_Upload_Template.csv');
+                                                document.body.appendChild(link);
+                                                link.click();
+                                                document.body.removeChild(link);
+                                            }}
+                                            className="text-xs text-center text-teal-400 hover:text-teal-300 transition-colors underline"
+                                        >
+                                            Download CSV Template
+                                        </button>
+                                    </div>
+                                    <input 
+                                        type="file" 
+                                        id="bulkCsvUpload" 
+                                        accept=".csv" 
+                                        className="hidden" 
+                                        onChange={handleBulkCsvUpload} 
+                                    />
 
                                     {/* Red theme */}
                                     <button 

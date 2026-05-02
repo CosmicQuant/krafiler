@@ -8,6 +8,9 @@ import { processAndStandardizePayroll } from '../scripts/ai-mapper';
 const router = Router();
 const upload = multer({ dest: path.resolve(__dirname, '..', '..', 'tmp') });
 
+import csv from 'csv-parser';
+import fsStandard from 'fs';
+
 // Get all clients
 router.get('/', async (req, res) => {
     try {
@@ -132,6 +135,122 @@ router.post('/', async (req, res) => {
     } catch (err) {
         console.error('Error adding client:', err);
         res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Bulk import clients via CSV
+router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No CSV file uploaded' });
+        }
+
+        const results: any[] = [];
+        const filePath = req.file.path;
+
+        await new Promise((resolve, reject) => {
+            fsStandard.createReadStream(filePath)
+                .pipe(csv())
+                .on('data', (data) => results.push(data))
+                .on('end', resolve)
+                .on('error', reject);
+        });
+
+        const db = await openDb();
+        let addedCount = 0;
+        let skippedRows: any[] = [];
+
+        for (const rawRow of results) {
+            // Normalize keys to lowercase and trim spaces/BOM
+            const row: any = {};
+            for (const [key, value] of Object.entries(rawRow)) {
+                // remove typical BOM signature if present \uFEFF and spaces
+                const cleanKey = key.replace(/^\uFEFF/, '').trim().toLowerCase();
+                row[cleanKey] = typeof value === 'string' ? value.trim() : value;
+            }
+
+            const name = row['company name'] || row['name'];
+            const pin = row['pin'];
+            const password = row['password'] || '';
+
+            if (!name || !pin) {
+                console.warn('Skipped row (missing name or pin):', row);
+                skippedRows.push(row);
+                continue;
+            }
+
+            const email = row['email'] || '';
+            const phone = row['phone'] || row['phone number'] || '';
+            
+            const nssfLogin = row['nssf login'] || row['nssflogin'] || '';
+            const nssfPassword = row['nssf password'] || row['nssfpassword'] || row['e-citizen password'] || row['ecitizen password'] || '';
+            
+            const shaLogin = row['sha login'] || row['shalogin'] || '';
+            const shaPassword = row['sha password'] || row['shapassword'] || row['e-citizen password'] || row['ecitizen password'] || '';
+            
+            const etimsLogin = row['etims login'] || row['etimslogin'] || '';
+            const etimsPassword = row['etims password'] || row['etimspassword'] || row['e-citizen password'] || row['ecitizen password'] || '';
+            
+            const eLevyLogin = row['elevy login'] || row['elevylogin'] || '';
+            const eLevyPassword = row['elevy password'] || row['elevypassword'] || row['e-citizen password'] || row['ecitizen password'] || '';
+
+            const obligations = row['obligations'] || row['tax obligation'] || '';
+            let parsedObs = obligations;
+            if (parsedObs.toLowerCase().includes('income tax')) {
+                parsedObs += ', paye'; // Or if it maps to paye or mri
+            }
+
+            const obsList = parsedObs.split(/[\s,]+/).map((s: string) => s.trim().toLowerCase());
+            const paye = obsList.includes('paye') ? 'due' : 'na';
+            const nssf = obsList.includes('nssf') ? 'due' : 'na';
+            const sha = obsList.includes('sha') ? 'due' : 'na';
+            const vat = obsList.includes('vat') ? 'due' : 'na';
+            const tot = obsList.includes('tot') ? 'due' : 'na';
+            const mri = obsList.includes('mri') ? 'due' : 'na';
+            const eLevy = obsList.includes('elevy') ? 'due' : 'na';
+            const dst = obsList.includes('dst') ? 'due' : 'na';
+
+            try {
+                await db.run(
+                    `INSERT INTO clients (
+                        name, pin, password, obligations, 
+                        paye, nssf, sha, vat, tot, mri, eLevy, dst,
+                        email, phone, nssfLogin, nssfPassword, shaLogin, shaPassword, etimsLogin, etimsPassword, eLevyLogin, eLevyPassword
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(pin) DO UPDATE SET
+                        name=excluded.name, password=excluded.password, obligations=excluded.obligations,
+                        paye=excluded.paye, nssf=excluded.nssf, sha=excluded.sha, vat=excluded.vat, tot=excluded.tot, mri=excluded.mri, eLevy=excluded.eLevy, dst=excluded.dst,
+                        email=excluded.email, phone=excluded.phone,
+                        nssfLogin=excluded.nssfLogin, nssfPassword=excluded.nssfPassword,
+                        shaLogin=excluded.shaLogin, shaPassword=excluded.shaPassword,
+                        etimsLogin=excluded.etimsLogin, etimsPassword=excluded.etimsPassword,
+                        eLevyLogin=excluded.eLevyLogin, eLevyPassword=excluded.eLevyPassword`,
+                    [
+                        name, pin, password, obligations,
+                        paye, nssf, sha, vat, tot, mri, eLevy, dst,
+                        email, phone, nssfLogin, nssfPassword, shaLogin, shaPassword, etimsLogin, etimsPassword, eLevyLogin, eLevyPassword
+                    ]
+                );
+                addedCount++;
+            } catch (err) {
+                console.error(`Failed to insert/update client ${pin}:`, err);
+            }
+        }
+
+        await fs.unlink(filePath);
+        
+        if (addedCount === 0 && skippedRows.length > 0) {
+            await fs.writeFile(path.resolve(__dirname, '..', '..', 'tmp', 'debug.json'), JSON.stringify(skippedRows, null, 2));
+            return res.status(400).json({ 
+                message: `0 clients added. Skipped ${skippedRows.length} rows. Please check backend/tmp/debug.json to see the parsed headers. Make sure the file is a standard CSV (not an Excel .xlsx) and has columns 'Company Name', 'PIN', and 'Password'.`,
+                skipped: skippedRows.slice(0, 5) // Return first 5 for debugging
+            });
+        }
+
+        res.json({ message: `Successfully added/updated ${addedCount} clients. Skipped ${skippedRows.length} invalid rows.` });
+    } catch (err) {
+        console.error('Error processing bulk CSV:', err);
+        res.status(500).json({ message: 'Internal server error during bulk import' });
     }
 });
 

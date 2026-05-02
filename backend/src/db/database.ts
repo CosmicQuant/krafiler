@@ -118,6 +118,22 @@ export async function initDb() {
          }
     }
 
+    // Dynamic schema evolution for extra credentials/details (Email, Phone, Third-Party Logins)
+    const extraCredentialCols = [
+        'email', 'phone', 
+        'nssfLogin', 'nssfPassword', 
+        'shaLogin', 'shaPassword', 
+        'etimsLogin', 'etimsPassword', 
+        'eLevyLogin', 'eLevyPassword'
+    ];
+    for (const col of extraCredentialCols) {
+         try {
+             await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT`);
+         } catch (e) {
+             // Already exist
+         }
+    }
+
     console.log('Database initialized');
     return db;
 }

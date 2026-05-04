@@ -1,0 +1,1 @@
+const fs = require('fs'); let code = fs.readFileSync('backend/src/scripts/test-prn.ts', 'utf8'); code = code.replace(/await page\.evaluate\(\(\) => {[\s\n]*const radio = document\.querySelector\('input\[name="optradio"\].*?if \(radio\) radio\.click\(\);[\s\n]*}\);[\s\n]*await page\.waitForTimeout\(1000\);/m, ''); fs.writeFileSync('backend/src/scripts/test-prn.ts', code);

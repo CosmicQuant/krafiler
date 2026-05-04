@@ -1,0 +1,1 @@
+const fs = require('fs'); const html = fs.readFileSync('frontend_dump.html', 'utf8'); const matches = html.match(/<input[^>]+>|<button[^>]*>.*?<\/button>/gi); if(matches) { matches.forEach(m => { if(m.toLowerCase().includes('add') || m.toLowerCase().includes('submit') || m.toLowerCase().includes('button')) console.log(m); }); }

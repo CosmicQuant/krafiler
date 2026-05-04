@@ -31,6 +31,7 @@ import { sendReceiptNotification } from '../utils/notifications';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { packageToTZip } from '../scripts/kra-tot-generator';
 import { fileNssfReturn } from '../scripts/file-nssf-return';
+import { generatePRNSlip, PrnConfig } from '../utils/kra-prn-generator';
 import sharp from 'sharp';
 import Tesseract from 'tesseract.js';
 
@@ -1853,7 +1854,7 @@ async function extractReceiptNumber(page: any): Promise<string | null> {
 
 // ─── Core Job Processor ───────────────────────────────────────────────────────
 
-async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: string; receiptNumber: string | null; credentialUpdate: CredentialUpdate | null }> {
+async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: string; receiptNumber: string | null; credentialUpdate: CredentialUpdate | null; prnPath?: string }> {
     const { jobId, userId, payload } = job.data;
     const {
         kraPin,
@@ -2525,6 +2526,46 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
 
         await download.saveAs(receiptPath);
         console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
+
+        // -- Step 13: Generate Payment Slip (PRN) ----------------------------------
+        let storedPrnPath: string | null = null;
+        
+        // Determine PRN requirement: If MRI/TOT has liability, or if VAT/PAYE
+        const needsPrn = 
+            (isMriReturn && rentalIncomeAmount && rentalIncomeAmount > 0) ||
+            (taxObligationType === 'turnover_tax' && payload.totTurnover && payload.totTurnover > 0) ||
+            (taxObligationType === 'paye') || 
+            (taxObligationType === 'vat');
+
+        if (needsPrn) {
+            await setJobStep(job, 93, `Generating Payment Slip (PRN) for ${taxObligationType}`);
+            try {
+                const pDate = new Date(); // It is usually the filing date period. Let's use today or periodTo if defined
+                
+                const prnConfig: PrnConfig = {
+                    taxType: taxObligationType,
+                    periodYear: pDate.getFullYear().toString(),
+                    periodMonth: pDate.toLocaleString('default', { month: 'long' })
+                };
+
+                const prnFileName = `kra-${taxObligationType}-prn-${jobId}-${Date.now()}.pdf`;
+                const tempPrnPath = path.join(TMP_DIR, prnFileName);
+
+                const prnResult = await generatePRNSlip(page, prnConfig, tempPrnPath);
+                
+                if (prnResult.success && prnResult.filePath) {
+                    storedPrnPath = prnResult.filePath;
+                    console.log(`[Worker][${jobId}] PRN saved to: ${storedPrnPath}`);
+                    await appendJobLog(job, 'Successfully generated and downloaded PRN', { progress: 95 });
+                } else {
+                    console.log(`[Worker][${jobId}] PRN generation returned false.`);
+                    await appendJobLog(job, `PRN generation skipped/failed. Receipt logic continues.`, { progress: 95, level: 'info' });
+                }
+            } catch (err: any) {
+                console.error(`[Worker][${jobId}] Could not generate PRN slip:`, err.message);
+                await appendJobLog(job, `Failed to generate PRN: ${err.message}. Receipt logic continues.`, { progress: 95, level: 'info' });
+            }
+        }
 
         // Clean up browser resources before network I/O
         if (context) {

@@ -1,0 +1,1 @@
+const fs = require('fs'); const html = fs.readFileSync('backend/frontend_dump.html', 'utf8'); const rx = /(?:value=\"Add\"|value=\"Clear\")/gi; let m; while(m = rx.exec(html)) { console.log(html.substring(Math.max(0, m.index-150), m.index+150)); }

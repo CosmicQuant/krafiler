@@ -1,0 +1,1 @@
+const fs = require('fs'); let code = fs.readFileSync('backend/src/scripts/test-prn.ts', 'utf8'); code = code.replace(/await page\.waitForTimeout\(2000\);/s, 'await page.waitForTimeout(2000);\n    console.log(\"Taking screenshot before add...\");\n    await page.screenshot({ path: \"backend/add_btn_debug.png\" });'); fs.writeFileSync('backend/src/scripts/test-prn.ts', code);

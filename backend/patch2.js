@@ -1,0 +1,1 @@
+const fs = require('fs'); let code = fs.readFileSync('src/scripts/test-prn.ts', 'utf8'); code = code.replace(/input\[value="Add"\], input\[name="btnAdd"\], button#addBtn, input.addButton, button:has-text\("Add"\)/g, 'input[value="Add"], input[name="btnAdd"], button#addBtn, input.addButton'); fs.writeFileSync('src/scripts/test-prn.ts', code);

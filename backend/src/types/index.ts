@@ -35,6 +35,8 @@ export interface NilReturnPayload {
     periodTo: string;
     taxObligationType: TaxObligationType;
     ownsRentalProperty: boolean;
+    isNil?: boolean;
+    printPrnOnly?: boolean;
     rentalIncomeAmount?: number;
     /** The year for Turnover Tax calculation */
     totYear?: number;
@@ -99,6 +101,7 @@ export interface FileNilReturnRequest {
     totTurnover?: number;
     otpCode?: string;
     payeZipUrl?: string;
+    printPrnOnly?: boolean;
 }
 
 export interface FileNilReturnResponse {

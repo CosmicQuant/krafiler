@@ -10,7 +10,7 @@ export interface PrnConfig {
 const TAX_MAPPING: Record<string, { headRegex: RegExp, subHeadRegex: RegExp }> = {
     'monthly_rental_income': {
         headRegex: /Income Tax/i,
-        subHeadRegex: /Rent Income \(MRI\)/i
+        subHeadRegex: /Rent Income/i
     },
     'paye': {
         headRegex: /Income Tax/i,
@@ -18,11 +18,11 @@ const TAX_MAPPING: Record<string, { headRegex: RegExp, subHeadRegex: RegExp }> =
     },
     'turnover_tax': {
         headRegex: /Income Tax/i,
-        subHeadRegex: /Turnover Tax \(TOT\)/i
+        subHeadRegex: /Turnover Tax/i
     },
     'vat': {
         headRegex: /Value Added Tax \(VAT\)/i,
-        subHeadRegex: /^Value Added Tax \(VAT\)$/i // ^ $ to avoid exact matching 'VAT on Services' / 'Imported VAT' if needed. KRA uses VAT exactly
+        subHeadRegex: /Value Added Tax \(VAT\)/i
     },
     'nita': {
         headRegex: /Agency Tax/i,
@@ -74,10 +74,16 @@ export async function generatePRNSlip(
         try {
             const nextSelector = `input[value="Next"], #btnSubmit, #btnNext, input[type="button"][value="Next"]`;
             await page.waitForSelector(nextSelector, { timeout: 30000 });
-            await page.evaluate(() => {
-                const nextBtn = document.querySelector('input[value="Next"], #btnSubmit, #btnNext, input[type="button"][value="Next"]') as HTMLElement;
-                if (nextBtn) nextBtn.click();
+            
+            // Accept the dialog that appears after clicking Next
+            page.once('dialog', async (dialog) => {
+                console.log('[PRN] Dialog popup after Next:', dialog.message());
+                await dialog.accept();
             });
+
+            const btn = page.locator(nextSelector).first();
+            await btn.click({ force: true });
+            
             await page.waitForTimeout(10000);
         } catch (e) {
             console.log('[PRN] Next button not found or failed. Proceeding...');
@@ -114,7 +120,7 @@ export async function generatePRNSlip(
         await page.waitForTimeout(3000);
 
         console.log(`[PRN] Filling out Tax Sub Head for ${config.taxType}...`);
-        await page.evaluate(({ matchSource, matchFlags }) => {
+        const subHeadMatched = await page.evaluate(({ matchSource, matchFlags }) => {
             const regex = new RegExp(matchSource, matchFlags);
             const select = document.querySelector('select#cmbTaxSubHead') as HTMLSelectElement;
             if (select) {
@@ -122,11 +128,16 @@ export async function generatePRNSlip(
                     if (regex.test(select.options[i].text.trim())) {
                         select.selectedIndex = i;
                         select.dispatchEvent(new Event('change', { bubbles: true }));
-                        break;
+                        return true;
                     }
                 }
             }
+            return false;
         }, { matchSource: mapping.subHeadRegex.source, matchFlags: mapping.subHeadRegex.flags });
+        
+        if (!subHeadMatched) {
+            console.warn(`[PRN] WARNING: Could not explicitly match Tax Sub Head using /${mapping.subHeadRegex.source}/i`);
+        }
         await page.waitForTimeout(3000);
 
         console.log('[PRN] Filling out Payment Type...');
@@ -145,13 +156,41 @@ export async function generatePRNSlip(
         await page.waitForTimeout(3000);
 
         console.log(`[PRN] Selecting Period (${config.periodYear}/${config.periodMonth || 'N/A'})...`);
-        if (config.periodYear) {
-            await page.locator('select#cmbTaxPeriodYear').selectOption({ label: config.periodYear }).catch(() => {});
-            await page.waitForTimeout(1000);
+        
+        let combinedPeriodStr = "";
+        if (config.periodMonth && config.periodYear) {
+            // KRA combined dropdown format: "Apr 2026 - Apr 2026"
+            const shortMonth = config.periodMonth.slice(0, 3);
+            combinedPeriodStr = `${shortMonth} ${config.periodYear} - ${shortMonth} ${config.periodYear}`;
         }
-        if (config.periodMonth) {
-            await page.locator('select#cmbTaxPeriodMonth').selectOption({ label: config.periodMonth }).catch(() => {});
+
+        const isCombinedPeriod = await page.evaluate((combinedStr) => {
+            const selects = Array.from(document.querySelectorAll('select'));
+            for (const select of selects) {
+                for (let i = 0; i < select.options.length; i++) {
+                    if (combinedStr && select.options[i].text.includes(combinedStr)) {
+                        select.selectedIndex = i;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }, combinedPeriodStr);
+
+        if (isCombinedPeriod) {
+            console.log(`[PRN] Selected combined tax period: ${combinedPeriodStr}`);
             await page.waitForTimeout(2000);
+        } else {
+            console.log('[PRN] Combined period dropdown not found, falling back to separate Year/Month dropdowns.');
+            if (config.periodYear) {
+                await page.locator('select#cmbTaxPeriodYear').selectOption({ label: config.periodYear }).catch(() => {});
+                await page.waitForTimeout(1000);
+            }
+            if (config.periodMonth) {
+                await page.locator('select#cmbTaxPeriodMonth').selectOption({ label: config.periodMonth }).catch(() => {});
+                await page.waitForTimeout(2000);
+            }
         }
 
         console.log('[PRN] Adding Liability...');
@@ -178,25 +217,57 @@ export async function generatePRNSlip(
             }
         });
         await page.locator('select#cmbPaymentMode, select[name="paymentModeId"]').selectOption({ label: 'Other Payment Modes' }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(1500);
+
+        console.log('[PRN] Selecting Receiving Bank Name (if required)...');
+        await page.evaluate(() => {
+            const bankSelect = document.querySelector('select#cmbReceivingBank') as HTMLSelectElement;
+            if (bankSelect && bankSelect.options.length > 1) {
+                bankSelect.selectedIndex = 1; // Pick the first available bank
+                bankSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+        await page.waitForTimeout(1500);
 
         console.log('[PRN] Clicking Submit...');
+        
+        // Ensure any confirmation dialog is accepted!
+        const dialogHandler = async (dialog: any) => {
+            console.log('[PRN] Dialog popup:', dialog.message());
+            await dialog.accept();
+        };
+        page.on('dialog', dialogHandler);
+
         await page.evaluate(() => {
             const submitBtn = document.querySelector('input[value="Submit"]') as HTMLElement;
             if (submitBtn) submitBtn.click();
         });
+        
+        await page.waitForTimeout(5000); // Give the page time to load the result page
 
-        console.log('[PRN] Downloading PRN Slip... waiting for dialog to approve and download event.');
+        console.log('[PRN] Downloading PRN Slip... waiting for download event.');
         try {
             const [download] = await Promise.all([
                 page.waitForEvent('download', { timeout: 60000 }),
-                page.click('a:has-text("Download Payment Slip")')
+                page.locator('a', { hasText: 'Download Payment Slip' }).click().catch(async () => {
+                    // Fallback to evaluating click if locator fails
+                    await page.evaluate(() => {
+                        const aTags = Array.from(document.querySelectorAll('a'));
+                        const dl = aTags.find(a => a.textContent && a.textContent.includes('Download Payment Slip'));
+                        if (dl) dl.click();
+                    });
+                })
             ]);
             await download.saveAs(destPath);
             console.log('[PRN] Success! Saved PRN to:', destPath);
+            
+            // Clean up listener
+            page.off('dialog', dialogHandler);
+
             return { success: true, filePath: destPath };
         } catch (downloadErr: any) {
             console.log('[PRN] Failed to auto-download PRN.', downloadErr.message);
+            page.off('dialog', dialogHandler);
             return { success: false, error: downloadErr.message };
         }
     } catch (err: any) {

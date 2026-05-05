@@ -7,6 +7,7 @@
  */
 
 import fs from 'fs/promises';
+import { copyFileSync } from 'fs';
 import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
@@ -22,11 +23,29 @@ import {
     NilReturnPayload
 } from '../types';
 import { fileNssfReturn } from '../scripts/file-nssf-return';
+import { packageToTZip } from '../scripts/kra-tot-generator';
+
+const TMP_DIR = path.join(__dirname, '../../../tmp');
+
+const ensureDir = async (dirPath: string) => {
+    try {
+        await fs.access(dirPath);
+    } catch {
+        await fs.mkdir(dirPath, { recursive: true });
+    }
+};
 
 const router = Router();
 
 const PERIOD_OPTIONAL_OBLIGATIONS = new Set(['monthly_rental_income', 'turnover_tax']);
-const RENTAL_ANSWER_OPTIONAL_OBLIGATIONS = new Set(['monthly_rental_income', 'turnover_tax']);
+const RENTAL_ANSWER_OPTIONAL_OBLIGATIONS = new Set([
+    'monthly_rental_income', 
+    'turnover_tax', 
+    'vat', 
+    'paye', 
+    'income_tax_company', 
+    'nssf'
+]);
 
 function getPreviousMonthIsoRange(referenceDate = new Date()): { periodFrom: string; periodTo: string } {
     const year = referenceDate.getUTCFullYear();
@@ -122,6 +141,7 @@ type FilingGuardInput = {
     totMonth?: number;
     totTurnover?: number;
     payeZipUrl?: string;
+    printPrnOnly?: boolean;
 };
 
 function normaliseOptionalNumber(value: unknown): number | null {
@@ -141,6 +161,7 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         totMonth: normaliseOptionalNumber(input.totMonth),
         totTurnover: normaliseOptionalNumber(input.totTurnover),
         payeZipUrl: input.payeZipUrl?.trim() ?? '',
+        printPrnOnly: Boolean(input.printPrnOnly),
     });
 }
 
@@ -166,6 +187,7 @@ async function findDuplicatePendingFiling(input: FilingGuardInput): Promise<{ jo
             totMonth: pendingJobData.payload.totMonth,
             totTurnover: pendingJobData.payload.totTurnover,
             payeZipUrl: pendingJobData.payload.payeZipUrl,
+            printPrnOnly: pendingJobData.payload.printPrnOnly,
         });
 
         if (pendingKey !== requestedKey) {
@@ -238,11 +260,12 @@ const validateFilingRequest = [
 
     body('ownsRentalProperty')
         .custom((value: unknown, { req }) => {
+            console.log(`[Validation] ownsRentalProperty input:`, value, `type:`, typeof value);
             if ((value === undefined || value === null || value === '') && RENTAL_ANSWER_OPTIONAL_OBLIGATIONS.has(req.body.taxObligationType as string)) {
                 return true;
             }
 
-            if (typeof value !== 'boolean') {
+            if (typeof value !== 'boolean' && value !== 'true' && value !== 'false') {
                 throw new Error('ownsRentalProperty must be a boolean');
             }
 
@@ -251,6 +274,10 @@ const validateFilingRequest = [
 
     body('rentalIncomeAmount')
         .custom((value: unknown, { req }) => {
+            if (req.body.isNil) {
+                return true; // Nil returns don't need an amount
+            }
+
             if (req.body.taxObligationType !== 'monthly_rental_income' && (value === undefined || value === null || value === '')) {
                 return true;
             }
@@ -269,6 +296,7 @@ const validateFilingRequest = [
 
     body('totYear')
         .custom((value: unknown, { req }) => {
+            if (req.body.printPrnOnly) return true; // PRN only generates for the active period, bypass strict payload
             if (req.body.taxObligationType !== 'turnover_tax') return true;
             if (!value || typeof value !== 'number') throw new Error('TOT Year is required and must be a number');
             return true;
@@ -276,6 +304,7 @@ const validateFilingRequest = [
 
     body('totMonth')
         .custom((value: unknown, { req }) => {
+            if (req.body.printPrnOnly) return true;
             if (req.body.taxObligationType !== 'turnover_tax') return true;
             if (!value || typeof value !== 'number' || value < 1 || value > 12) throw new Error('TOT Month must be between 1 and 12');
             return true;
@@ -283,6 +312,8 @@ const validateFilingRequest = [
 
     body('totTurnover')
         .custom((value: unknown, { req }) => {
+            if (req.body.printPrnOnly) return true;
+            if (req.body.isNil) return true; // Nil returns don't need turnover
             if (req.body.taxObligationType !== 'turnover_tax') return true;
             if (value === undefined || value === null || value === '') throw new Error('TOT Turnover Amount is required');
             const numericValue = typeof value === 'number' ? value : Number(value);
@@ -317,7 +348,7 @@ router.post(
             return;
         }
 
-        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl } =
+        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, printPrnOnly } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -346,6 +377,7 @@ router.post(
                 totMonth: typeof totMonth === 'number' ? totMonth : undefined,
                 totTurnover: typeof totTurnover === 'number' ? totTurnover : undefined,
                 payeZipUrl: typeof payeZipUrl === 'string' ? payeZipUrl : undefined,
+                printPrnOnly: Boolean(req.body.printPrnOnly),
             });
 
             if (duplicatePendingJob) {
@@ -387,6 +419,8 @@ router.post(
                     otpCode: typeof otpCode === 'string' && otpCode.trim()
                         ? otpCode.trim()
                         : undefined,
+                    isNil: (req.body as any).isNil === true,
+                    printPrnOnly: printPrnOnly === true,
                     ...(payeZipUrl && { payeZipUrl }),
                 },
                 createdAt: new Date().toISOString(),
@@ -665,6 +699,52 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
     } catch (e: any) {
         console.error(e);
         res.status(500).json({ success: false, message: e.message || 'Error occurred during NSSF filing.' });
+    }
+});
+
+router.post('/generate-tot-zip', async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { kraPin, year, month, turnover, returnType } = req.body;
+        
+        if (!kraPin || !year || !month || turnover === undefined) {
+             res.status(400).json({ success: false, error: 'Missing req fields: kraPin, year, month, turnover' });
+             return;
+        }
+
+        await ensureDir(path.join(TMP_DIR, 'generated-zips'));
+        const outputDir = path.join(TMP_DIR, 'generated-zips');
+        
+        const zipFile = await packageToTZip({
+            taxPayerPin: kraPin.toUpperCase(),
+            returnPeriod: { year: parseInt(year), month: parseInt(month) },
+            turnover: parseFloat(turnover),
+            returnType: returnType || 'Original'
+        }, outputDir);
+        
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, '0');
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const friendlyName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${kraPin.toUpperCase()}_TOT.zip`;
+        const safeClientName = (req.body.clientName || 'Generated_Client').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim();
+        const clientWorkspaceDir = path.join(__dirname, '../../../frontend/public/clients', safeClientName);
+        await ensureDir(clientWorkspaceDir);
+        const destPath = path.join(clientWorkspaceDir, friendlyName);
+        copyFileSync(zipFile, destPath);
+        
+        res.json({
+            success: true,
+            totInfo: {
+                url: `/clients/${encodeURIComponent(safeClientName)}/${friendlyName}`,
+                label: friendlyName
+            }
+        });
+    } catch (err: any) {
+        console.error('Error generating TOT zip:', err);
+        res.status(500).json({ success: false, error: err.message || 'Failed to generate zip' });
     }
 });
 

@@ -523,24 +523,44 @@ async function performKraLogin(page: Page, config: TotFilingConfig, runId: strin
     await humanDelay(500, 1_000);
     await page.click('#loginButton');
 
-    const loginFailureMessage = await waitForMatchingPortalMessage(page, LOGIN_FAILURE_PATTERNS, 8_000);
-    if (loginFailureMessage) {
-        throw new Error(loginFailureMessage);
+    const postLoginSelector = await Promise.race([
+        waitForAnySelector(page, [
+            '#homePageLink',
+            'a:has-text("Logout")',
+            'a:has-text("Returns")',
+            'text=Mobile Number Verification',
+            'button:has-text("Send Verification Code")',
+        ], 20_000),
+        waitForMatchingPortalMessage(page, LOGIN_FAILURE_PATTERNS, 20_000).then(msg => {
+            if (msg) throw new Error(msg);
+            return null;
+        })
+    ]);
+
+    let finalSelector = postLoginSelector;
+
+    if (!finalSelector) {
+        console.log('Login taking too long (possible KRA hang). Attempting to reload KRA dashboard...');
+        try {
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 15_000 });
+        } catch (e) {
+            console.log('Reload also timed out, continuing...');
+        }
+
+        finalSelector = await waitForAnySelector(page, [
+            '#homePageLink',
+            'a:has-text("Logout")',
+            'a:has-text("Returns")',
+            'text=Mobile Number Verification',
+            'button:has-text("Send Verification Code")',
+        ], 15_000);
+
+        if (!finalSelector) {
+            throw new Error('Login succeeded, but the KRA dashboard or mobile verification prompt never appeared even after reload');
+        }
     }
 
-    const postLoginSelector = await waitForAnySelector(page, [
-        '#homePageLink',
-        'a:has-text("Logout")',
-        'a:has-text("Returns")',
-        'text=Mobile Number Verification',
-        'button:has-text("Send Verification Code")',
-    ], 30_000);
-
-    if (!postLoginSelector) {
-        throw new Error('Login succeeded, but the KRA dashboard or mobile verification prompt never appeared');
-    }
-
-    if (/Mobile Number Verification|Send Verification Code/i.test(postLoginSelector)) {
+    if (/Mobile Number Verification|Send Verification Code/i.test(finalSelector)) {
         await handleMobileVerification(page, config.otpCode);
     }
 }
@@ -745,10 +765,21 @@ async function runTotFilingWithRetry(config: TotFilingConfig): Promise<TotFiling
                 await dialog.accept();
             });
 
-            await page.goto(KRA_PORTAL_URL, {
-                waitUntil: 'domcontentloaded',
-                timeout: 90_000,
-            });
+            let gotoAttempts = 0;
+            while (gotoAttempts < 3) {
+                try {
+                    await page.goto(KRA_PORTAL_URL, {
+                        waitUntil: 'domcontentloaded',
+                        timeout: 60_000,
+                    });
+                    break;
+                } catch (e: any) {
+                    gotoAttempts++;
+                    console.log(`[TOT] Failed to load KRA portal (attempt ${gotoAttempts}/3): ${e.message}`);
+                    if (gotoAttempts >= 3) throw e;
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
             await waitForPortalReadyWithReload(page, {
                 description: 'KRA login page',
                 selectors: ['#logid', '#loginButton', 'input[name="captcahText"]'],

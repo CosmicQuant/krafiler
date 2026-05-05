@@ -1,0 +1,585 @@
+1839:                                 {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-400">Monthly Returns Pipeline</h1>}
+1840:                                 {view === 'desk-elevy' && <h1 className="text-3xl font-black text-fuchsia-400">Tourism Fund E-Levy Pipeline</h1>}
+1841:                                 {view === 'clients' && <h1 className="text-3xl font-black text-white">Client Portfolio</h1>}
+1842:                                 <p className="mt-2 text-sm text-slate-400">Manage bulk payroll processing for {payrollClients.length} active client{payrollClients.length === 1 ? '' : 's'}.</p>
+1843:                             </div>
+1844:                             <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
+1845:                                 <div className="flex items-center rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 w-full sm:w-auto">
+1846:                                     <Search className="h-4 w-4 text-slate-500 shrink-0" />
+1847:                                     <input type="text" placeholder="Search client or PIN..." className="ml-2 bg-transparent text-sm text-white placeholder-slate-500 outline-none w-full" />
+1848:                                 </div>
+1849:                                 {view === 'clients' && (
+1850:                                     <button onClick={openNewClientModal} className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
+1851:                                         <Plus className="h-4 w-4" /> New Client
+1852:                                     </button>
+1853:                                 )}
+1854:                             </div>
+1855:                         </header>
+1856: 
+1857:                     {dashboardNotice && (
+1858:                         <div className={`mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${dashboardNotice.tone === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : dashboardNotice.tone === 'error' ? 'border-red-500/30 bg-red-500/10 text-red-200' : 'border-slate-700 bg-slate-900/70 text-slate-200'}`}>
+1859:                             {dashboardNotice.message}
+1860:                         </div>
+1861:                     )}
+1862: 
+1863:                     {selectedClient && <div className="mt-10"><CompanyDetails client={selectedClient} onBack={() => setSelectedClient(null)} onSave={(updated) => { setClients(clients.map(c => c.id === updated.id ? updated : c)); setSelectedClient(null); }} /></div>}
+1864:                     {!selectedClient && view === 'overview' && (
+1865:                         <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_350px]">
+1866:                             {/* Left Col: Summary / Stats */}
+1867:                             <div className="space-y-6">
+1868:                                 <h2 className="text-xl font-bold text-white">Upcoming Deadlines</h2>
+1869:                                 <div className="grid gap-4 sm:grid-cols-2">
+1870:                                     <button onClick={() => setView('desk-9th')} className="text-left rounded-2xl border border-slate-800 bg-slate-900/50 p-6 transition-all hover:bg-slate-800 hover:border-slate-700">
+1871:                                         <div className="flex items-center justify-between">
+1872:                                         <p className="text-sm font-medium text-slate-400">Payroll Processing</p>
+1873:                                             <CalendarClock className="h-5 w-5 text-emerald-500" />
+1874:                                         </div>
+1875:                                         <p className="mt-4 text-3xl font-black text-white">{payrollPendingCount} <span className="text-lg font-normal text-slate-500">pending packs</span></p>
+1876:                                     </button>
+1877:                                     <button onClick={() => setView('desk-20th')} className="text-left rounded-2xl border border-slate-800 bg-slate-900/50 p-6 transition-all hover:bg-slate-800 hover:border-slate-700">
+1878:                                         <div className="flex items-center justify-between">
+1879:                                             <p className="text-sm font-medium text-slate-400">VAT & Monthly Returns (Taxes)</p>
+1880:                                             <CalendarClock className="h-5 w-5 text-blue-500" />
+1881:                                         </div>
+1882:                                         <p className="mt-4 text-3xl font-black text-white">{taxPendingCount} <span className="text-lg font-normal text-slate-500">remittances</span></p>
+1883:                                     </button>
+1884:                                 </div>
+1885: 
+1886:                                 <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+1887:                                     <h3 className="mb-4 text-lg font-bold text-white">Recent Activity</h3>
+1888:                                     <div className="space-y-4">
+1889:                                         <div className="flex items-center justify-between border-b border-slate-800/50 pb-4">
+1890:                                             <div className="flex items-center gap-3">
+1891:                                                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
+1892:                                                     <CheckCircle2 className="h-5 w-5" />
+1893:                                                 </div>
+1894:                                                 <div>
+1895:                                                     <p className="text-sm font-bold text-white">Blue Coast Hotels</p>
+1896:                                                     <p className="text-xs text-slate-500">PAYE data ready â€¢ 2 hours ago</p>
+1897:                                                 </div>
+1898:                                             </div>
+1899:                                         </div>
+1900:                                         <div className="flex items-center justify-between border-b border-slate-800/50 pb-4">
+1901:                                             <div className="flex items-center gap-3">
+1902:                                                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-500">
+1903:                                                     <ShieldAlert className="h-5 w-5" />
+1904:                                                 </div>
+1905:                                                 <div>
+1906:                                                     <p className="text-sm font-bold text-white">TechFlow Solutions</p>
+1907:                                                     <p className="text-xs text-slate-500">VAT pending â€¢ 4 hours ago</p>
+1908:                                                 </div>
+1909:                                             </div>
+1910:                                         </div>
+1911:                                         <div className="flex items-center justify-between pb-2">
+1912:                                             <div className="flex items-center gap-3">
+1913:                                                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-slate-400">
+1914:                                                     <Activity className="h-5 w-5" />
+1915:                                                 </div>
+1916:                                                 <div>
+1917:                                                     <p className="text-sm font-bold text-white">System Status: KRA Portal</p>
+1918:                                                     <p className="text-xs text-slate-500">Operational â€¢ Updated 5 min ago</p>
+1919:                                                 </div>
+1920:                                             </div>
+1921:                                         </div>
+1922:                                     </div>
+1923:                                 </div>
+1924:                             </div>
+1925:                             
+1926:                             {/* Right Col: Fast Workflows */}
+1927:                             <div className="space-y-6">
+1928:                                 <h2 className="text-xl font-bold text-white">Fast Workflows</h2>
+1929:                                 <div className="grid gap-3">
+1930:                                     {/* Green theme */}
+1931:                                     <button 
+1932:                                         onClick={openNewClientModal}
+1933:                                         className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-400 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(16,185,129,0.3)]"
+1934:                                     >
+1935:                                         <div className="relative z-10">
+1936:                                             <p className="text-lg font-black text-slate-950">Onboard Client</p>
+1937:                                             <p className="mt-1 text-xs font-semibold text-emerald-950/70">Add client & set obligations</p>
+1938:                                         </div>
+1939:                                         <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-md">
+1940:                                             <Plus className="h-5 w-5 text-slate-950" />
+1941:                                         </div>
+1942:                                     </button>
+1943: 
+1944:                                     <div className="grid gap-2">
+1945:                                         <button 
+1946:                                             onClick={() => document.getElementById('bulkCsvUpload')?.click()}
+1947:                                             className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-teal-600 to-teal-400 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(20,184,166,0.3)]"
+1948:                                         >
+1949:                                             <div className="relative z-10">
+1950:                                                 <p className="text-lg font-black text-slate-950">Bulk Import</p>
+1951:                                                 <p className="mt-1 text-xs font-semibold text-teal-950/70">Upload CSV template</p>
+1952:                                             </div>
+1953:                                             <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-md">
+1954:                                                 <Upload className="h-5 w-5 text-slate-950" />
+1955:                                             </div>
+1956:                                         </button>
+1957:                                         <button 
+1958:                                             onClick={() => {
+1959:                                                 const csvContent = "Company Name,PIN,Password,Obligations,Email,Phone,NSSF Login,NSSF Password,SHA Login,SHA Password,eTIMS Login,eTIMS Password,eLevy Login,eLevy Password\nExample Company Ltd,P051234567M,UserPass123!,\"paye, nssf, mri\",test@example.com,0700000000,NSSF001,NssfPass123,SHA001,ShaPass123,ETIMS001,EtimsPass123,ELEVY001,ElevyPass123";
+1960:                                                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+1961:                                                 const url = URL.createObjectURL(blob);
+1962:                                                 const link = document.createElement('a');
+1963:                                                 link.setAttribute('href', url);
+1964:                                                 link.setAttribute('download', 'Clients_Bulk_Upload_Template.csv');
+1965:                                                 document.body.appendChild(link);
+1966:                                                 link.click();
+1967:                                                 document.body.removeChild(link);
+1968:                                             }}
+1969:                                             className="text-xs text-center text-teal-400 hover:text-teal-300 transition-colors underline"
+1970:                                         >
+1971:                                             Download CSV Template
+1972:                                         </button>
+1973:                                     </div>
+1974:                                     <input 
+1975:                                         type="file" 
+1976:                                         id="bulkCsvUpload" 
+1977:                                         accept=".csv" 
+1978:                                         className="hidden" 
+1979:                                         onChange={handleBulkCsvUpload} 
+1980:                                     />
+1981: 
+1982:                                     {/* Red theme */}
+1983:                                     <button 
+1984:                                         onClick={() => setView('desk-9th')}
+1985:                                         className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-red-600 to-red-500 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(220,38,38,0.3)]"
+1986:                                     >
+1987:                                         <div className="relative z-10">
+1988:                                             <p className="text-lg font-black text-white">Process Payroll</p>
+1989:                                             <p className="mt-1 text-xs font-medium text-red-100">Unified PAYE, NSSF, SHA</p>
+1990:                                         </div>
+1991:                                         <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-md">
+1992:                                             <UploadCloud className="h-5 w-5 text-white" />
+1993:                                         </div>
+1994:                                     </button>
+1995:                                     
+1996:                                     {/* White/Light theme */}
+1997:                                     <button 
+1998:                                         onClick={() => setView('desk-20th')}
+1999:                                         className="group relative flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-r from-slate-100 to-white p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:shadow-[0_8px_30px_rgba(255,255,255,0.15)]"
+2000:                                     >
+2001:                                         <div className="relative z-10">
+2002:                                             <p className="text-lg font-black text-slate-950">Nil Filing Run</p>
+2003:                                             <p className="mt-1 text-xs font-semibold text-slate-500">Auto-file empty returns</p>
+2004:                                         </div>
+2005:                                         <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/5 backdrop-blur-md">
+2006:                                             <Activity className="h-5 w-5 text-slate-950" />
+2007:                                         </div>
+2008:                                     </button>
+2009: 
+2010:                                     {/* Black theme */}
+2011:                                     <button 
+2012:                                         onClick={() => setView('clients')}
+2013:                                         className="group relative flex items-center justify-between overflow-hidden rounded-2xl border border-slate-700 bg-gradient-to-r from-slate-900 to-slate-800 p-5 text-left shadow-lg transition-all hover:scale-[1.02] hover:border-slate-600 hover:shadow-[0_8px_30px_rgba(0,0,0,0.5)]"
+2014:                                     >
+2015:                                         <div className="relative z-10">
+2016:                                             <p className="text-lg font-black text-white">Client Registry</p>
+2017:                                             <p className="mt-1 text-xs font-medium text-slate-400">View portfolios matrix</p>
+2018:                                         </div>
+2019:                                         <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full border border-white/5 bg-white/10 backdrop-blur-md">
+2020:                                             <Building2 className="h-5 w-5 text-white" />
+2021:                                         </div>
+2022:                                     </button>
+2023:                                 </div>
+2024:                             </div>
+2025:                         </div>
+2026:                     )}
+2027: 
+2028:                     {!selectedClient && view === 'desk-9th' && (
+2029:                         <div className="mt-10">
+2030:                             {renderGlobalPayrollUpload()}
+2031:                             {render9thDeskGrid()}
+2032:                         </div>
+2033:                     )}
+2034: 
+2035:                     {!selectedClient && view === 'desk-20th' && (
+2036:                         <div className="mt-10">
+2037:                             <div className="grid gap-6 sm:grid-cols-4">
+2038:                                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+2039:                                     <p className="text-sm font-medium text-slate-400">VAT Returns Due</p>
+2040:                                     <p className="mt-2 text-3xl font-bold text-white">2</p>
+2041:                                 </div>
+2042:                                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+2043:                                     <p className="text-sm font-medium text-slate-400">TOT Returns Due</p>
+2044:                                     <p className="mt-2 text-3xl font-bold text-white">1</p>
+2045:                                 </div>
+2046:                                 <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+2047:                                     <p className="text-sm font-medium text-slate-400">MRI Returns</p>
+2048:                                     <p className="mt-2 text-3xl font-bold text-white">1</p>
+2049:                                 </div>
+2050:                                 <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
+2051:                                     <p className="text-sm font-medium text-blue-400">Status Check</p>
+2052:                                     <button className="mt-4 w-full rounded-lg bg-blue-500 py-2 text-xs font-bold text-white hover:bg-blue-400">
+2053:                                         Verify KRA API
+2054:                                     </button>
+2055:                                 </div>
+2056:                             </div>
+2057:                             {renderMatrixGrid()}
+2058:                         </div>
+2059:                     )}
+2060: 
+2061:                     {!selectedClient && view === 'desk-elevy' && (
+2062:                         <div className="mt-10">
+2063:                             <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+2064:                                 <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
+2065:                                     <table className="w-full text-left text-sm text-slate-300">
+2066:                                         <thead className="border-b border-slate-800 bg-slate-900 rounded-t-2xl text-xs uppercase text-slate-400">
+2067:                                             <tr>
+2068:                                                 <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
+2069:                                                 <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Tourism Fund E-Levy</th>
+2070:                                                 <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider">Action</th>
+2071:                                             </tr>
+2072:                                         </thead>
+2073:                                         <tbody className="divide-y divide-slate-800/50">
+2074:                                             {clients.filter(c => c.eLevy !== 'na').map((client) => (
+2075:                                                 <tr key={client.id} className="transition hover:bg-slate-800/50">
+2076:                                                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
+2077:                                                         <div className="font-semibold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
+2078:                                                         <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
+2079:                                                     </td>
+2080:                                                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4"><StatusBadge status={client.eLevy} /></td>
+2081:                                                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right">
+2082:                                                         <button className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">Actions</button>
+2083:                                                     </td>
+2084:                                                 </tr>
+2085:                                             ))}
+2086:                                         </tbody>
+2087:                                     </table>
+2088:                                 </div>
+2089:                             </div>
+2090:                         </div>
+2091:                     )}
+2092:                                  {!selectedClient && view === 'desk-nil' && (
+2093:                         <div className="mt-10">
+2094:                             <div className="mb-6 flex flex-col gap-2 border-b border-slate-800 pb-5">
+2095:                                 <h2 className="text-xl font-bold text-white">Nil & ITR Filing Desk</h2>
+2096:                                 <p className="text-sm text-slate-400">File Nil returns and Annual Income Tax Returns for your clients.</p>
+2097:                             </div>
+2098:                             <div className="rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+2099:                                 <div className="overflow-x-auto pb-16">
+2100:                                     <table className="w-full text-left text-sm text-slate-300">
+2101:                                         <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
+2102:                                             <tr>
+2103:                                                 <th className="px-6 py-4 font-semibold tracking-wider w-1/3">Client & PIN</th>
+2104:                                                 <th className="px-6 py-4 font-semibold tracking-wider">Tax Obligation</th>
+2105:                                                 <th className="px-6 py-4 font-semibold tracking-wider">Period (From - To)</th>
+2106:                                                 <th className="px-6 py-4 font-semibold tracking-wider text-right">Actions</th>
+2107:                                             </tr>
+2108:                                         </thead>
+2109:                                         <tbody className="divide-y divide-slate-800/50">
+2110:                                             {clients.map(client => {
+2111:                                                 const sel = nilSelections[client.id] || { type: '', periodFrom: '2026-01-01', periodTo: '2026-12-31' };
+2112:                                                 const job = activeJobs[client.id];
+2113:                                                 const isProcessing = job && !isTerminalFilingJob(job);
+2114:                                                 
+2115:                                                 return (
+2116:                                                     <tr key={client.id} className="group transition hover:bg-slate-800/30">
+2117:                                                         <td className="px-6 py-4">
+2118:                                                             <div className="font-bold text-white">{client.name}</div>
+2119:                                                             <div className="text-xs text-slate-500 font-mono mt-0.5">{client.pin}</div>
+2120:                                                         </td>
+2121:                                                         <td className="px-6 py-4">
+2122:                                                             <select 
+2123:                                                                 className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-amber-500"
+2124:                                                                 value={sel.type}
+2125:                                                                 onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, type: e.target.value } }))}
+2126:                                                             >
+2127:                                                                 <option value="" disabled>Choose Obligation</option>
+2128:                                                                 {TAX_OBLIGATION_OPTIONS.filter(o => o.filingMode === 'nil').map(o => (
+2129:                                                                     <option key={o.value} value={o.value}>{o.label}</option>
+2130:                                                                 ))}
+2131:                                                             </select>
+2132:                                                         </td>
+2133:                                                         <td className="px-6 py-4">
+2134:     <div className="flex flex-col gap-2">
+2135:         <div className="flex gap-2">
+2136:             <input
+2137:                 type="date"
+2138:                 value={sel.periodFrom}
+2139:                 onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodFrom: e.target.value } }))}
+2140:                 className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+2141:             />
+2142:             <span className="flex items-center text-slate-500">-</span>
+2143:             <input
+2144:                 type="date"
+2145:                 value={sel.periodTo}
+2146:                 onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodTo: e.target.value } }))}
+2147:                 className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+2148:             />
+2149:         </div>
+2150:         {(sel.type === "income_tax_resident_individual" || sel.type === "income_tax_non_resident_individual") && (
+2151:             <label className="flex items-center gap-2 mt-1 cursor-pointer w-max">
+2152:                 <input 
+2153:                     type="checkbox"
+2154:                     checked={sel.ownsRentalProperty || false}
+2155:                     onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, ownsRentalProperty: e.target.checked } }))}
+2156:                     className="rounded bg-slate-800 border-slate-700 focus:ring-amber-500 accent-amber-500 h-3.5 w-3.5"
+2157:                 />
+2158:                 <span className="text-[11px] text-slate-400">Owns Rental Property?</span>
+2159:             </label>
+2160:         )}
+2161:     </div>
+2162: </td>
+2163:                                                         <td className="px-6 py-4 text-right">
+2164:                                                             <button
+2165:                                                                 onClick={() => handleFileNil(client)}
+2166:                                                                 disabled={isProcessing}
+2167:                                                                 className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition ${isProcessing ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-amber-500 hover:bg-amber-400 text-amber-950 shadow-lg'}`}
+2168:                                                             >
+2169:                                                                 {isProcessing ? 'Processing' : 'File Nil'}
+2170:                                                             </button>
+2171:                                                         </td>
+2172:                                                     </tr>
+2173:                                                 );
+2174:                                             })}
+2175:                                         </tbody>
+2176:                                     </table>
+2177:                                 </div>
+2178:                             </div>
+2179:                         </div>
+2180:                     )}
+2181:                     
+2182:                     {view === 'clients' && !selectedClient && (
+2183:                         <div className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+2184:                             <div className="overflow-x-auto pb-8">
+2185:                                 <table className="w-full text-left text-sm text-slate-300">
+2186:                                     <thead className="border-b border-slate-800 bg-slate-900/50">
+2187:                                         <tr>
+2188:                                             <th className="px-4 py-4 font-semibold uppercase tracking-wider">Firm / Client</th>
+2189:                                             <th className="px-4 py-4 font-semibold uppercase tracking-wider">KRA PIN</th>
+2190:                                             <th className="px-4 py-4 font-semibold uppercase tracking-wider">Active Obligations</th>
+2191:                                         </tr>
+2192:                                     </thead>
+2193:                                     <tbody className="divide-y divide-slate-800/50">
+2194:                                         {clients.map(client => (
+2195:                                             <tr key={client.id} className="transition hover:bg-slate-800/50">
+2196:                                                 <td className="px-4 py-4">
+2197:                                                     <button onClick={() => setSelectedClient(client)} className="flex items-center gap-3 text-left hover:opacity-80">
+2198:                                                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><Building2 className="h-5 w-5" /></div>
+2199:                                                         <div className="font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
+2200:                                                     </button>
+2201:                                                 </td>
+2202:                                                 <td className="px-4 py-4 font-mono text-slate-400">{client.pin}</td>
+2203:                                                 <td className="px-4 py-4">
+2204:                                                     <div className="flex flex-wrap gap-1.5">
+2205:                                                         {Object.entries({ vat: client.vat, tot: client.tot, mri: client.mri, paye: client.paye, nssf: client.nssf, sha: client.sha, eLevy: client.eLevy }).map(([obs, status]) => {
+2206:                                                             if (status !== 'na' && status) {
+2207:                                                                 return <span key={obs} className="inline-flex rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">{obs}</span>;
+2208:                                                             }
+2209:                                                             return null;
+2210:                                                         })}
+2211:                                                     </div>
+2212:                                                 </td>
+2213:                                             </tr>
+2214:                                         ))}
+2215:                                     </tbody>
+2216:                                 </table>
+2217:                             </div>
+2218:                         </div>
+2219:                     )}
+2220:        </div>
+2221:                 </main>
+2222:             </div>
+2223: 
+2224:             
+2225:                                 
+2226: 
+2227:                     {showNewClientModal && (
+2228:                         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm">
+2229:                             <div className="flex min-h-full items-start justify-center py-4 sm:items-center">
+2230:                                 <div className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
+2231:                                     <div className="flex shrink-0 items-center justify-between border-b border-slate-800 p-6">
+2232:                                         <div>
+2233:                                             <h2 className="text-xl font-bold text-white">{editingClientId ? 'Edit Client' : 'Onboard New Client'}</h2>
+2234:                                             <p className="mt-1 text-sm text-slate-400">Add a client and select their active obligations.</p>
+2235:                                         </div>
+2236:                                         <button type="button" onClick={resetNewClientForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white">
+2237:                                             <X className="h-5 w-5" />
+2238:                                         </button>
+2239:                                     </div>
+2240: 
+2241:                                     <div className="flex-1 overflow-y-auto p-6">
+2242:                                         <div className="space-y-6">
+2243:                                             <div className="grid gap-4 sm:grid-cols-2">
+2244:                                                 <div>
+2245:                                                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Client Name</label>
+2246:                                                     <input value={newClientName} onChange={(e) => setNewClientName(e.target.value)} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. Acme Corp" />
+2247:                                                 </div>
+2248:                                                 <div>
+2249:                                                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA PIN</label>
+2250:                                                     <input value={newClientPin} onChange={(e) => setNewClientPin(e.target.value.toUpperCase())} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. P123456789A" />
+2251:                                                 </div>
+2252:                                                 <div className="sm:col-span-2">
+2253:                                                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA Password</label>
+2254:                                                     <input value={newClientPassword} onChange={(e) => setNewClientPassword(e.target.value)} type="password" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="Keep this secure" />
+2255:                                                 </div>
+2256:                                             </div>
+2257: 
+2258:                                             <div>
+2259:                                                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Select Active Obligations</label>
+2260:                                                 <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+2261:                                                     {[
+2262:                                                         { id: 'paye', label: 'PAYE' },
+2263:                                                         { id: 'nssf', label: 'NSSF' },
+2264:                                                         { id: 'sha', label: 'SHA' },
+2265:                                                         { id: 'elevy', label: 'eLevy' },
+2266:                                                         { id: 'vat', label: 'VAT' },
+2267:                                                         { id: 'tot', label: 'TOT' },
+2268:                                                         { id: 'mri', label: 'MRI' },
+2269:                                                         { id: 'dst', label: 'DST' },
+2270:                                                     ].map((obs) => {
+2271:                                                         const isActive = newClientObligations.includes(obs.id);
+2272:                                                         return (
+2273:                                                             <button
+2274:                                                                 key={obs.id}
+2275:                                                                 type="button"
+2276:                                                                 onClick={() => {
+2277:                                                                     setNewClientModalError(null);
+2278:                                                                     setNewClientObligations((prev) => (
+2279:                                                                         prev.includes(obs.id)
+2280:                                                                             ? prev.filter((currentObligation) => currentObligation !== obs.id)
+2281:                                                                             : [...prev, obs.id]
+2282:                                                                     ));
+2283:                                                                 }}
+2284:                                                                 className={`flex items-center justify-center rounded-xl border p-4 text-sm font-bold transition-all ${
+2285:                                                                     isActive
+2286:                                                                         ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+2287:                                                                         : 'border-slate-700 bg-slate-800/30 text-slate-400 hover:border-slate-600 hover:bg-slate-800'
+2288:                                                                 }`}
+2289:                                                             >
+2290:                                                                 {obs.label}
+2291:                                                             </button>
+2292:                                                         );
+2293:                                                     })}
+2294:                                                 </div>
+2295:                                             </div>
+2296: 
+2297:                                             {newClientObligations.some((obligation) => ['paye', 'nssf', 'sha'].includes(obligation)) && (
+2298:                                                 <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+2299:                                                     <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+2300:                                                         <div className="mb-4 flex items-center justify-between gap-3">
+2301:                                                             <div className="flex items-center gap-3">
+2302:                                                                 <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-400">
+2303:                                                                     <Building2 className="h-4 w-4" /> Unified Payroll Master
+2304:                                                                 </h3>
+2305:                                                                 <span className="flex h-5 items-center rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Optional</span>
+2306:                                                             </div>
+2307:                                                             {newClientMasterCsv && (
+2308:                                                                 <button
+2309:                                                                     type="button"
+2310:                                                                     onClick={() => {
+2311:                                                                         if (window.confirm('Are you sure you want to remove this Master CSV?')) {
+2312:                                                                             setNewClientMasterCsv(null);
+2313:                                                                         }
+2314:                                                                     }}
+2315:                                                                     className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/20 hover:text-red-300"
+2316:                                                                 >
+2317:                                                                     Remove File
+2318:                                                                 </button>
+2319:                                                             )}
+2320:                                                         </div>
+2321:                                                         <p className="mt-2 text-xs text-emerald-200/70">
+2322:                                                             Upload any master payroll spreadsheet containing employee details (Name, ID, PIN, NHIF, NSSF).
+2323:                                                             The system will automatically ingest the data, format it to the KRA Unified Payroll standard,
+2324:                                                             and generate the Master CSV for you.
+2325:                                                         </p>
+2326: 
+2327:                                                         {!newClientMasterCsv && (
+2328:                                                             <div className="mt-4 flex w-full items-center justify-center">
+2329:                                                                 <label htmlFor="dropzone-file" className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-emerald-500/30 bg-slate-900/50 transition hover:border-emerald-500/50 hover:bg-emerald-500/10">
+2330:                                                                     <div className="flex flex-col items-center justify-center pt-5 pb-6">
+2331:                                                                         <p className="mb-1 text-sm font-bold text-slate-400">
+2332:                                                                             Click to upload <span className="font-normal text-slate-500">or drag and drop</span>
+2333:                                                                         </p>
+2334:                                                                         <p className="text-xs text-slate-500">.CSV or .XLSX</p>
+2335:                                                                     </div>
+2336:                                                                     <input
+2337:                                                                         id="dropzone-file"
+2338:                                                                         type="file"
+2339:                                                                         accept=".csv, .xlsx, .xls"
+2340:                                                                         className="hidden"
+2341:                                                                         onChange={(e) => {
+2342:                                                                             if (e.target.files && e.target.files.length > 0) {
+2343:                                                                                 setNewClientMasterCsv(e.target.files[0]);
+2344:                                                                             }
+2345:                                                                         }}
+2346:                                                                     />
+2347:                                                                 </label>
+2348:                                                             </div>
+2349:                                                         )}
+2350: 
+2351:                                                         {newClientMasterCsv && (
+2352:                                                             <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/20 p-4">
+2353:                                                                 <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+2354:                                                                 <span className="text-sm font-bold text-emerald-300">File Selected: {newClientMasterCsv.name}</span>
+2355:                                                                 <span className="text-xs text-emerald-400/80">Ready to automatically generate standard KRA templates on process.</span>
+2356:                                                             </div>
+2357:                                                         )}
+2358:                                                     </div>
+2359:                                                 </div>
+2360:                                             )}
+2361: 
+2362:                                             {newClientObligations.some((obligation) => ['vat', 'tot', 'dst'].includes(obligation)) && (
+2363:                                                 <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+2364:                                                     <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
+2365:                                                         <div className="mb-2 flex items-center justify-between">
+2366:                                                             <div className="flex items-center gap-3">
+2367:                                                                 <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
+2368:                                                                     <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
+2369:                                                                 </h3>
+2370:                                                             </div>
+2371:                                                         </div>
+2372:                                                         <p className="text-xs text-blue-300">For VAT, TOT, and DST setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
+2373:                                                     </div>
+2374:                                                 </div>
+2375:                                             )}
+2376: 
+2377:                                             {newClientObligations.includes('mri') && (
+2378:                                                 <div className="animate-in slide-in-from-top-2 fade-in duration-300">
+2379:                                                     <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
+2380:                                                         <div className="mb-2 flex items-center justify-between">
+2381:                                                             <div className="flex items-center gap-3">
+2382:                                                                 <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
+2383:                                                                     <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
+2384:                                                                 </h3>
+2385:                                                             </div>
+2386:                                                         </div>
+2387:                                                         <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time rent amount manually per client before filing.</p>
+2388:                                                     </div>
+2389:                                                 </div>
+2390:                                             )}
+2391: 
+2392:                                             {newClientModalError && (
+2393:                                                 <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
+2394:                                                     {newClientModalError}
+2395:                                                 </div>
+2396:                                             )}
+2397:                                         </div>
+2398:                                     </div>
+2399: 
+2400:                                     <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-800 bg-slate-900/50 p-6">
+2401:                                         <button type="button" onClick={resetNewClientForm} className="rounded-xl px-5 py-2.5 text-sm font-bold text-slate-400 transition hover:text-white">
+2402:                                             Cancel
+2403:                                         </button>
+2404:                                         <button
+2405:                                             type="button"
+2406:                                             onClick={handleSaveClient}
+2407:                                             disabled={isSavingClient}
+2408:                                             className={`rounded-xl px-6 py-2.5 text-sm font-bold text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.2)] transition ${
+2409:                                                 isSavingClient
+2410:                                                     ? 'cursor-not-allowed bg-emerald-500/60 text-slate-900/70'
+2411:                                                     : 'bg-emerald-500 hover:bg-emerald-400'
+2412:                                             }`}
+2413:                                         >
+2414:                                             {isSavingClient ? 'Saving...' : 'Save Client'}
+2415:                                         </button>
+2416:                                     </div>
+2417:                                 </div>
+2418:                             </div>
+2419:                         </div>
+2420:                     )}
+2421:         </div>
+2422:     );
+2423: }

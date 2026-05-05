@@ -23,10 +23,11 @@ import {
     Rocket,
   Upload,
   Cloud,
+    Download,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-type DashboardView = 'overview' | 'desk-9th' | 'desk-20th' | 'desk-elevy' | 'clients' | 'settings';
+type DashboardView = 'overview' | 'desk-9th' | 'desk-20th' | 'desk-elevy' | 'desk-nil' | 'clients' | 'settings';
 type PlanKey = 'starter' | 'growth' | 'enterprise';
 
 type PracticePlan = {
@@ -55,6 +56,8 @@ export type ClientObligation = {
     masterFileLabel?: string;
     payrollSourceUrl?: string;
     payeZipUrl?: string;
+    totZipUrl?: string;
+    totZipLabel?: string;
     payeZipLabel?: string;
     nssfFileUrl?: string;
     nssfFileLabel?: string;
@@ -280,6 +283,16 @@ const ZipIcon = ({ className }: { className?: string }) => (
     </svg>
 );
 
+const TAX_OBLIGATION_OPTIONS = [
+    { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)', filingMode: 'nil' },
+    { value: 'income_tax_non_resident_individual', label: 'Income Tax - Non-Resident Individual (Nil)', filingMode: 'nil' },
+    { value: 'income_tax_company', label: 'Income Tax - Company (Nil)', filingMode: 'nil' },
+    { value: 'vat', label: 'Value Added Tax (Nil)', filingMode: 'nil' },
+    { value: 'paye', label: 'PAYE (Nil)', filingMode: 'nil' },
+    { value: 'turnover_tax', label: 'Turnover Tax (Nil)', filingMode: 'nil' },
+    { value: 'monthly_rental_income', label: 'Monthly Rental Income (Nil)', filingMode: 'nil' }
+];
+
 export default function PracticeDashboard() {
     const [view, setView] = useState<DashboardView>('desk-9th');
     const [monthlyReturnFilter, setMonthlyReturnFilter] = useState<'ALL' | 'VAT' | 'TOT' | 'MRI' | 'DST'>('VAT');
@@ -297,6 +310,7 @@ const [etimsModalClient, setEtimsModalClient] = useState<any>(null);
 const [etimsPassword, setEtimsPassword] = useState('');
     const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
     const [activeJobs, setActiveJobs] = useState<Record<string, ActiveDashboardJob>>({});
+    const [nilSelections, setNilSelections] = useState<Record<string, { type: string, periodFrom: string, periodTo: string, ownsRentalProperty?: boolean }>>({});
     const [cancellingClientIds, setCancellingClientIds] = useState<Record<string, boolean>>({});
     const [uploadingClientIds, setUploadingClientIds] = useState<Record<string, boolean>>({});
     const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
@@ -586,6 +600,56 @@ const [etimsPassword, setEtimsPassword] = useState('');
         )));
     };
 
+    const generateTotZip = async (client: ClientObligation) => {
+        const val = totInputVals[client.id];
+        if (!val || isNaN(parseFloat(val))) {
+            setDashboardNotice({ tone: 'error', message: 'Please enter a valid gross sales/turnover amount first.'});
+            return;
+        }
+        
+        try {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = today.getMonth() === 0 ? 12 : today.getMonth();
+            const yearP = month === 12 ? year - 1 : year;
+            
+            const response = await apiFetch('/tax/generate-tot-zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    kraPin: client.pin,
+                    year: yearP,
+                    month: month,
+                    turnover: parseFloat(val),
+                    clientName: client.name
+                })
+            });
+            
+            if (!response.ok) {
+                const errResult = await response.json().catch(() => ({}));
+                throw new Error(errResult.error || 'Failed to generate TOT ZIP');
+            }
+            
+            const data = await response.json();
+            
+            setClients((current) => current.map((existingClient) => (
+                existingClient.id === client.id
+                    ? {
+                        ...existingClient,
+                        tot: 'generated',
+                        lastGeneratedAt: new Date().toISOString(),
+                        totZipUrl: data.totInfo?.url,
+                        totZipLabel: data.totInfo?.label,
+                    }
+                    : existingClient
+            )));
+            setDashboardNotice({ tone: 'success', message: `Successfully generated TOT return ZIP for ${client.name}`});
+        } catch (error) {
+            console.error('TOT generation error:', error);
+            setDashboardNotice({ tone: 'error', message: error instanceof Error ? error.message : 'Error generating TOT.'});
+        }
+    };
+
     const handleUpdateSingleStatus = (clientId: string, field: 'paye' | 'nssf' | 'sha', newStatus: TaxStatus) => {
         setClients(current => current.map(c => {
             if (c.id === clientId) {
@@ -606,7 +670,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
             let hasChanges = false;
 
             for (const [clientId, job] of Object.entries(currentJobs)) {
-                if (isTerminalFilingJob(job)) continue;
+                if (isTerminalFilingJob(job) || !job.id) continue;
 
                 try {
                     const res = await apiFetch(`/tax/filing-status/${job.id}`);
@@ -615,13 +679,21 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     
                     const newMessage = data.lastStep?.message ?? currentJobs[clientId].message ?? 'Processing...';
                     const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
-                    if (currentJobs[clientId].state !== data.state || currentJobs[clientId].progress !== data.progress || currentJobs[clientId].message !== newMessage) {
+                    const resultReceiptPath = data.result?.receiptPath; // The backend provides this
+
+                    if (currentJobs[clientId].state !== data.state || 
+                        currentJobs[clientId].progress !== data.progress || 
+                        currentJobs[clientId].message !== newMessage ||
+                        currentJobs[clientId].receiptUrl !== (resultReceiptPath ? `http://localhost:3001/api/${resultReceiptPath}` : undefined)) {
+                        
                         currentJobs[clientId] = {
+                            ...currentJobs[clientId],
                             id: data.jobId,
                             state: data.state as FilingJobState,
                             progress: nextProgress,
                             message: newMessage,
-                            failedReason: data.failedReason || ''
+                            failedReason: data.failedReason || '',
+                            receiptUrl: resultReceiptPath ? `http://localhost:3001/api/${resultReceiptPath}` : undefined
                         };
                         hasChanges = true;
                     }
@@ -797,6 +869,50 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleGeneratePrn = async (client: ClientObligation, type: string) => {
+        setDashboardNotice({ tone: 'info', message: `Queuing PRN Generation for ${client.name} (${type})...` });
+
+        try {
+            const taxObligationMap: Record<string, string> = {
+                'PAYE': 'paye',
+                'TOT': 'turnover_tax',
+                'MRI': 'monthly_rental_income',
+                'VAT': 'vat'
+            };
+
+            const payload = {
+                kraPin: client.pin,
+                kraPassword: (client as any).password || client.iTaxPassword || "1234",
+                periodFrom: '2026-04-01',
+                periodTo: '2026-04-30',
+                taxObligationType: taxObligationMap[type],
+                printPrnOnly: true
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.message || `Failed to queue ${type} PRN generation.`);
+            }
+
+            const rData = await res.json();
+            setActiveJobs(prev => ({
+                ...prev,
+                [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...' }
+            }));
+            
+            setDashboardNotice({ tone: 'success', message: `${type} PRN generation queued for ${client.name}.` });
+
+        } catch (e: any) {
+            setDashboardNotice({ tone: 'error', message: e.message });
+        }
+    };
+
     const handleAutoFileNssf = async (client: ClientObligation) => {
         if (!client.nssfFileUrl || !client.masterFileUrl) {
             setDashboardNotice({ tone: 'error', message: `No NSSF File or Master CSV available for ${client.name}. Please generate ZIP first.` });
@@ -856,6 +972,65 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleFileNil = async (client: ClientObligation) => {
+        const sel = nilSelections[client.id];
+        if (!sel || !sel.type || !sel.periodFrom || !sel.periodTo) {
+            setDashboardNotice({ tone: 'error', message: `Please specify the obligation type and period for ${client.name}.` });
+            return;
+        }
+
+        setDashboardNotice({ tone: 'info', message: `Starting Nil Auto-filing for ${client.name}... ` });
+        try {
+            let totYear, totMonth;
+            if (sel.type === 'turnover_tax' && sel.periodFrom) {
+                // periodFrom usually like YYYY-MM-DD or DD/MM/YYYY
+                const parts = sel.periodFrom.includes('-') ? sel.periodFrom.split('-') : sel.periodFrom.split('/');
+                totYear = sel.periodFrom.includes('-') ? parseInt(parts[0], 10) : parseInt(parts[2], 10);
+                totMonth = sel.periodFrom.includes('-') ? parseInt(parts[1], 10) : parseInt(parts[1], 10);
+            }
+
+            const payload = {
+                kraPin: client.pin,
+                kraPassword: (client as any).password || client.iTaxPassword || client.pin,
+                periodFrom: sel.periodFrom,
+                periodTo: sel.periodTo,
+                taxObligationType: sel.type,
+                ownsRentalProperty: (sel.type === 'income_tax_resident_individual' || sel.type === 'income_tax_non_resident_individual') ? !!sel.ownsRentalProperty : false,
+                isNil: true,
+                ...(totYear && totMonth && { totYear, totMonth }),
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = dataResp.jobState || 'waiting';
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: { id: dataResp.jobId, state: duplicateState, progress: 0, message: 'Reconnected to running job.' }
+                    }));
+                    setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing Nil job.' });
+                } else {
+                    throw new Error(dataResp.message || 'Auto-file request failed');
+                }
+            } else if (dataResp.jobId) {
+                setActiveJobs((prev) => ({
+                    ...prev,
+                    [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Starting...' }
+                }));
+                setDashboardNotice({ tone: 'success', message: 'Nil Auto-file queued successfully.' });
+            }
+        } catch (err: any) {
+            setDashboardNotice({ tone: 'error', message: err.message || 'Failed to trigger Nil return' });
+        }
+    };
+
     const handleFileMri = async (client: ClientObligation) => {
         const amountStr = mriInputVals[client.id];
         const amount = amountStr ? parseFloat(amountStr) : 0;
@@ -866,6 +1041,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
 
         setDashboardNotice({ tone: 'info', message: `Starting MRI Auto-filing for ${client.name}... ` });
         try {
+            const isNilMri = amount === 0;
             const payload = {
                 kraPin: client.pin,
                 kraPassword: (client as any).password || client.iTaxPassword || client.pin,
@@ -874,6 +1050,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                 taxObligationType: "monthly_rental_income",
                 ownsRentalProperty: true,
                 rentalIncomeAmount: amount,
+                isNil: isNilMri,
             };
 
             const res = await apiFetch('/tax/file-return', {
@@ -905,6 +1082,69 @@ const [etimsPassword, setEtimsPassword] = useState('');
         } catch (error) {
             console.error('Auto-file error:', error);
             setDashboardNotice({ tone: 'error', message: `Failed to queue MRI filing for ${client.name}.` });
+        }
+    };
+
+    const handleFileTot = async (client: ClientObligation) => {
+        const amountStr = totInputVals[client.id];
+        const amount = amountStr ? parseFloat(amountStr) : 0;
+        if (isNaN(amount) || amount <= 0) {
+            setDashboardNotice({ tone: 'error', message: `Please enter a valid turnover amount for ${client.name}.` });
+            return;
+        }
+
+        setDashboardNotice({ tone: 'info', message: `Starting TOT Auto-filing for ${client.name}... ` });
+        try {
+            const currentDate = new Date();
+            currentDate.setMonth(currentDate.getMonth() - 1);
+            const year = currentDate.getFullYear();
+            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+            const periodFrom = `${year}-${month}-01`;
+            const lastDay = new Date(year, currentDate.getMonth() + 1, 0).getDate();
+            const periodTo = `${year}-${month}-${lastDay}`;
+
+            const isNilTot = amount === 0;
+            const payload = {
+                kraPin: client.pin,
+                kraPassword: (client as any).password || client.iTaxPassword || client.pin,
+                periodFrom,
+                periodTo,
+                taxObligationType: "turnover_tax",
+                totTurnover: amount,
+                totYear: year, // Keep as number
+                totMonth: currentDate.getMonth() + 1, // Keep as number
+                isNil: isNilTot
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = dataResp.jobState || 'waiting';
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: { id: dataResp.jobId, state: duplicateState, progress: 0, message: 'Reconnected to running job.' }
+                    }));
+                    setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing TOT job.' });
+                } else {
+                    throw new Error(dataResp.message || 'Auto-file request failed');
+                }
+            } else if (dataResp.jobId) {
+                setActiveJobs((prev) => ({
+                    ...prev,
+                    [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'TOT Job queued...' }
+                }));
+                setDashboardNotice({ tone: 'success', message: 'TOT filing job started successfully.' });
+            }
+        } catch (error) {
+            console.error('Auto-file error:', error);
+            setDashboardNotice({ tone: 'error', message: `Failed to queue TOT filing for ${client.name}.` });
         }
     };
 
@@ -1327,21 +1567,28 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right">
                                     <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 mb-2">
-                                        <button
-                                            onClick={() => void handleGenerateClientZip(client)}
-                                            disabled={!(client.masterFileUrl || client.payrollSourceUrl) || Boolean(generatingClientIds[client.id]) || isGeneratingZips}
-                                            className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
-                                        >
-                                            {generatingClientIds[client.id] ? <RefreshCw className="h-3 w-3 animate-spin" /> : <PlayCircle className="h-3 w-3" />}
-                                            {(client.masterFileUrl || client.payrollSourceUrl) ? (generatingClientIds[client.id] ? 'Generating...' : 'Auto Gen ZIP') : 'No CSV'}
-                                        </button>
+                                        <div className="flex flex-col items-end gap-1 w-full max-w-[140px] ml-auto">
+                                            {client.payeZipUrl && (
+                                                <span className="text-[10px] text-right text-slate-500">
+                                                    Generated: {new Date(client.lastGeneratedAt || Date.now()).toLocaleString()}
+                                                </span>
+                                            )}
+                                            <button
+                                                onClick={() => void handleGenerateClientZip(client)}
+                                                disabled={!(client.masterFileUrl || client.payrollSourceUrl) || Boolean(generatingClientIds[client.id]) || isGeneratingZips}
+                                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold leading-tight text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            >
+                                                {generatingClientIds[client.id] ? <RefreshCw className="h-3 w-3 animate-spin shrink-0" /> : <PlayCircle className="h-3 w-3 shrink-0" />}
+                                                {generatingClientIds[client.id] ? 'Generating...' : 'Generate PAYE ZIP'}
+                                            </button>
+                                        </div>
                                         <button
                                             onClick={() => handleAutoFile(client)}
-                                            disabled={!(client.masterFileUrl || client.payrollSourceUrl || client.payeZipUrl) || isPendingFilingJob(activeJobs[client.id])}
-                                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            disabled={!client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])}
+                                            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-tight transition ${!client.payeZipUrl || isPendingFilingJob(activeJobs[client.id]) ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed' : 'border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-slate-950'}`}
                                             title="Auto File PAYE"
                                         >
-                                            <Rocket className="h-3 w-3" /> PAYE
+                                            <Rocket className="h-3 w-3" /> Auto File PAYE
                                         </button>
                                         <button
                                             onClick={() => handleAutoFileNssf(client)}
@@ -1534,6 +1781,24 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                         KES {totInputVals[ob.client.id] && !isNaN(parseFloat(totInputVals[ob.client.id])) ? (parseFloat(totInputVals[ob.client.id]) * 0.015).toLocaleString(undefined, {minimumFractionDigits: 2}) : '0.00'}
                                                     </span>
                                                 </div>
+                                                <div className="flex flex-col gap-2 mt-2 border-t border-slate-700/80 pt-3">
+                                                    {ob.client.totZipUrl && (
+                                                        <div className="flex flex-col gap-1">
+                                                            <a href={ob.client.totZipUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition">
+                                                                <Download className="h-3 w-3" /> Download Generated ZIP
+                                                            </a>
+                                                            <span className="text-[10px] text-center text-slate-500">
+                                                                Generated: {new Date(ob.client.lastGeneratedAt || Date.now()).toLocaleString()}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    <button 
+                                                        onClick={async () => { await generateTotZip(ob.client); }}
+                                                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 text-[11px] font-bold text-blue-400 hover:bg-blue-500/20 transition hover:scale-[1.02]"
+                                                    >
+                                                        <RefreshCw className="h-3 w-3" /> {ob.client.totZipUrl ? 'Regenerate TOT ZIP' : 'Generate TOT ZIP'}
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
                                         {ob.type === 'MRI' && (
@@ -1565,13 +1830,22 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                     else if (ob.type === 'PAYE') handleAutoFile(ob.client);
                                                     else if (ob.type === 'NSSF') handleAutoFileNssf(ob.client);
                                                 }}
+                                                disabled={isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl)}
+                                                className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl) ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'}`}>
+                                                                                                Process Return
+                                            </button>
+                                            
+                                            <button 
+                                                onClick={() => handleGeneratePrn(ob.client, ob.type)}
                                                 disabled={isPendingFilingJob(activeJobs[ob.client.id])}
-                                                className="flex w-full justify-center items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition shadow-sm drop-shadow disabled:opacity-50">
-                                                Process Return
+                                                className="flex w-full justify-center items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs font-bold text-amber-400 hover:bg-amber-500/20 hover:text-amber-300 transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="Generate Payment Slip directly without filing"
+                                            >
+                                                Print PRN
                                             </button>
                                             {isTerminalFilingJob(activeJobs[ob.client.id]) && activeJobs[ob.client.id].state === 'completed' && (
                                                 <button className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-500/10 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition shadow-sm disabled:opacity-50">
-                                                    Download PRN
+                                                    Download Receipt
                                                 </button>
                                             )}
                                         </div>
@@ -1642,6 +1916,9 @@ const [etimsPassword, setEtimsPassword] = useState('');
                         </button>
                         <button onClick={() => { setView('desk-elevy'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-elevy' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
                             <span className="flex items-center gap-3"><Activity className="h-4 w-4" /> Tourism Fund Desk</span>
+                        </button>
+                        <button onClick={() => { setView('desk-nil'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-nil' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
+                            <span className="flex items-center gap-3"><FileArchive className="h-4 w-4" /> Nil & ITR Desk</span>
                         </button>
 
                         <div className="pt-6 pb-2 px-3">
@@ -1994,22 +2271,35 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                             </select>
                                                         </td>
                                                         <td className="px-6 py-4">
-                                                            <div className="flex gap-2">
-                                                                <input
-                                                                    type="date"
-                                                                    value={sel.periodFrom}
-                                                                    onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodFrom: e.target.value } }))}
-                                                                    className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
-                                                                />
-                                                                <span className="flex items-center text-slate-500">-</span>
-                                                                <input
-                                                                    type="date"
-                                                                    value={sel.periodTo}
-                                                                    onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodTo: e.target.value } }))}
-                                                                    className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
-                                                                />
-                                                            </div>
-                                                        </td>
+    <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+            <input
+                type="date"
+                value={sel.periodFrom}
+                onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodFrom: e.target.value } }))}
+                className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+            />
+            <span className="flex items-center text-slate-500">-</span>
+            <input
+                type="date"
+                value={sel.periodTo}
+                onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, periodTo: e.target.value } }))}
+                className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+            />
+        </div>
+        {(sel.type === "income_tax_resident_individual" || sel.type === "income_tax_non_resident_individual") && (
+            <label className="flex items-center gap-2 mt-1 cursor-pointer w-max">
+                <input 
+                    type="checkbox"
+                    checked={sel.ownsRentalProperty || false}
+                    onChange={(e) => setNilSelections(prev => ({ ...prev, [client.id]: { ...sel, ownsRentalProperty: e.target.checked } }))}
+                    className="rounded bg-slate-800 border-slate-700 focus:ring-amber-500 accent-amber-500 h-3.5 w-3.5"
+                />
+                <span className="text-[11px] text-slate-400">Owns Rental Property?</span>
+            </label>
+        )}
+    </div>
+</td>
                                                         <td className="px-6 py-4 text-right">
                                                             <button
                                                                 onClick={() => handleFileNil(client)}
@@ -2271,3 +2561,4 @@ const [etimsPassword, setEtimsPassword] = useState('');
         </div>
     );
 }
+

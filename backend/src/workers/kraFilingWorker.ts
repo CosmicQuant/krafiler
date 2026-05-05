@@ -1492,9 +1492,9 @@ async function performKraLogin(
     }
 
     if (!captchaAnswer) {
-        console.warn(`[Worker][${jobId}] Could not solve captcha automatically. PLEASE TYPE IT MANUALLY in the browser! (Waiting 15 seconds)`);
+        console.warn(`[Worker][${jobId}] Could not solve captcha automatically. PLEASE TYPE IT MANUALLY in the browser! (Waiting 40 seconds)`);
         await page.focus('input[name="captcahText"]');
-        await humanDelay(15000, 15000); // Wait 15s for the user to key it in.
+        await humanDelay(40000, 40000); // Wait 40s for the user to key it in.
         captchaAnswer = await page.inputValue('input[name="captcahText"]');
     } else {
         await page.fill('input[name="captcahText"]', captchaAnswer);
@@ -1814,7 +1814,10 @@ async function uploadTurnoverTaxZip(
     job: Job<FilingJob>
 ): Promise<void> {
     const payload = job.data.payload;
-    if (!payload.totYear || !payload.totMonth || payload.totTurnover === undefined) {
+    const isNilReturnExplicit = (payload as any).isNil === true;
+    const effectiveTurnover = isNilReturnExplicit ? 0 : payload.totTurnover;
+
+    if (!payload.totYear || !payload.totMonth || effectiveTurnover === undefined) {
         throw new Error('Turnover Tax filing requires totYear, totMonth, and totTurnover in the queued job payload');
     }
 
@@ -1822,7 +1825,7 @@ async function uploadTurnoverTaxZip(
     const inputSettings = {
         taxPayerPin: payload.kraPin,
         returnPeriod: { year: payload.totYear, month: payload.totMonth },
-        turnover: payload.totTurnover,
+        turnover: effectiveTurnover,
         returnType: 'Original' as const
     };
 
@@ -1868,6 +1871,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         rentalIncomeAmount,
         otpCode,
     } = payload;
+    const printPrnOnly = (payload as any).printPrnOnly === true;
     const isMriReturn = taxObligationType === 'monthly_rental_income';
     const isTotReturn = taxObligationType === 'turnover_tax';
     const isPayeUpload = taxObligationType === 'paye' && !!(payload as any).payeZipUrl;
@@ -1905,6 +1909,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--start-maximized',
+                '--disable-blink-features=AutomationControlled',
                 ...(isHeadless ? ['--disable-gpu'] : []),
             ],
         };
@@ -2103,6 +2108,33 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             console.log(`[Worker][${jobId}] Post-login nav elements:`, JSON.stringify(navElements, null, 2));
         }
 
+        if (printPrnOnly) {
+               const prnTargetDate = new Date();
+               const prnConfig: PrnConfig = {
+                   taxType: taxObligationType,
+                   periodYear: prnTargetDate.getFullYear().toString(),
+                   periodMonth: prnTargetDate.toLocaleString('default', { month: 'long' })
+               };
+               const prnDateStr = `${prnTargetDate.getFullYear()}-${String(prnTargetDate.getMonth() + 1).padStart(2, '0')}`;
+               const prnFileName = `${prnDateStr}_${kraPin}_${taxObligationType}_PRN.pdf`;
+               const tempPrnPath = path.join('C:\\Temp\\kra-receipts', prnFileName);
+             
+             await setJobStep(job, 80, `Generating standalone Payment Slip (PRN)...`);
+             const prnResult = await generatePRNSlip(page, prnConfig, tempPrnPath);
+             
+             let prnFinalPath: string | undefined = undefined;
+             if (prnResult.success && prnResult.filePath) {
+                 const { relativePath } = await storeReceiptLocally(prnResult.filePath, jobId);
+                 prnFinalPath = relativePath.replace(/\\/g, '/'); // Normalise for URLs
+             }
+             
+             if (context) await context.close();
+             if (browser) await browser.close();
+
+             // The PRN is effectively a receipt, so we can return its path as both receiptPath AND prnPath
+             return { receiptPath: prnFinalPath ?? '', receiptNumber: null, credentialUpdate, prnPath: prnFinalPath };
+        }
+
         // Try to find and click the Returns menu — KRA uses various selectors
         // Try: text match, href match, id match
         const returnsLink = await page.$('#returns') ??
@@ -2119,16 +2151,18 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             await page.getByText('Returns', { exact: true }).first().hover();
         }
 
-        const filingLinkSelector = isMriReturn || isTotReturn || isPayeUpload
+        const isNilReturnExplicit = (payload as any).isNil === true;
+        
+        const filingLinkSelector = (!isNilReturnExplicit && (isMriReturn || isPayeUpload || isTotReturn))
         ? 'a[href*="showEReturns"], a.mainMenu[href*="showEReturns"], a:has-text("File Return")'
-        : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nil-return"], a:has-text("Nil Return")';
+        : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nil-return"], a:has-text("File Nil Return"), a:has-text("Nil Return")';
         
         try {
             const filingLink = await page.waitForSelector(filingLinkSelector, { timeout: 10_000 });
             await filingLink.click({ force: true });
         } catch (error) {
             console.log(`[Worker][${jobId}] Falling back to evaluate script for File Return click.`);
-            if (isMriReturn || isTotReturn || isPayeUpload) {
+            if (!isNilReturnExplicit && (isMriReturn || isPayeUpload || isTotReturn)) {
                 await page.evaluate(() => {
                     const el = document.querySelector('a[href*="showEReturns"], a.mainMenu[href*="showEReturns"]') as HTMLElement;
                     if (el) el.click();
@@ -2136,8 +2170,16 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 });
             } else {
                 await page.evaluate(() => {
-                    const el = document.querySelector('a[href*="nilReturn"], a:has-text("Nil Return")') as HTMLElement;
-                    if (el) el.click();
+                    const el = document.querySelector('a[href*="nilReturn"], a[href*="NilReturn"]') as HTMLElement;
+                    if (el) {
+                        el.click();
+                    } else {
+                        // find by text natively
+                        const links = Array.from(document.querySelectorAll('a'));
+                        const textLink = links.find(a => a.textContent?.includes('File Nil Return') || a.textContent?.includes('Nil Return'));
+                        if (textLink) textLink.click();
+                        else if (typeof (window as any).showNilReturn === 'function') (window as any).showNilReturn();
+                    }
                 });
             }
         }
@@ -2218,7 +2260,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         // reloads as form re-submissions and invalidates the session with
         // "Your session has timed out or an attempt to page re-submit happened".
         // Instead, wait with a generous timeout and no reload attempts.
-        const uploadPageSelectors = isTotReturn || isPayeUpload
+        const uploadPageSelectors = (!isNilReturnExplicit && (isTotReturn || isPayeUpload))
             ? [
                 'input[type="file"]',
                 'input[name*="file" i]',
@@ -2258,11 +2300,11 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await navigationDelay();
 
         // ── Step 10: Fill return details ─────────────────────────────────────────
-        await setJobStep(job, 70, isTotReturn ? 'Uploading the ToT ZIP file and accepting the declaration' : isPayeUpload ? 'Uploading the PAYE ZIP file and accepting the declaration' : isMriReturn ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
+        await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
 
-    if (isTotReturn) {
+    if (!isNilReturnExplicit && isTotReturn) {
         await uploadTurnoverTaxZip(page, job);
-    } else if (isPayeUpload) {
+    } else if (!isNilReturnExplicit && isPayeUpload) {
         await uploadPayeTaxZip(page, job);
     } else {
 
@@ -2297,7 +2339,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 }
             }
 
-            if (isMriReturn) {
+            if (!isNilReturnExplicit && isMriReturn) {
                 // Section A: We just filled the dates. We must click 'Next' to go to Section B.
                 await appendJobLog(job, `Clicking Next to navigate to Section B (Details of Rental Income)`, { progress: 72 });
                 const nextDialogPromise1 = waitForDialogMessage(page, 5_000);
@@ -2323,23 +2365,29 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
 
                 // Now on Section C, ready to be submitted in Step 11.
             } else {
-                const rentalAnswered = await selectRentalPropertyAnswer(page, ownsRentalProperty);
-                if (rentalAnswered) {
-                    await appendJobLog(job, `Selected rental-property answer: ${ownsRentalProperty ? 'Yes' : 'No'}`, { progress: 70 });
+                const hasRadios = await page.$$eval('input[type="radio"]', els => els.length > 0).catch(() => false);
+                
+                if (hasRadios) {
+                    const rentalAnswered = await selectRentalPropertyAnswer(page, ownsRentalProperty);
+                    if (rentalAnswered) {
+                        await appendJobLog(job, `Selected rental-property answer: ${ownsRentalProperty ? 'Yes' : 'No'}`, { progress: 70 });
+                    } else {
+                        const radioMetadata = await page.$$eval(
+                            'input[type="radio"]',
+                            (els: HTMLInputElement[]) => els.map((el) => ({
+                                name: el.name ?? '',
+                                value: el.value ?? '',
+                                checked: Boolean(el.checked),
+                            }))
+                        ).catch(() => []);
+                        await appendJobLog(job, `Rental-property radio could not be matched on the form. Available radios: ${JSON.stringify(radioMetadata)}`, {
+                            progress: 70,
+                            level: 'error',
+                        });
+                        throw new Error('Could not select the rental-property answer on the nil return form');
+                    }
                 } else {
-                    const radioMetadata = await page.$$eval(
-                        'input[type="radio"]',
-                        (els: HTMLInputElement[]) => els.map((el) => ({
-                            name: el.name ?? '',
-                            value: el.value ?? '',
-                            checked: Boolean(el.checked),
-                        }))
-                    ).catch(() => []);
-                    await appendJobLog(job, `Rental-property radio could not be matched on the form. Available radios: ${JSON.stringify(radioMetadata)}`, {
-                        progress: 70,
-                        level: 'error',
-                    });
-                    throw new Error('Could not select the rental-property answer on the nil return form');
+                    await appendJobLog(job, `No rental-property question found on this form (expected for non-individual returns).`, { progress: 70 });
                 }
             }
         }
@@ -2505,7 +2553,8 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         // ── Step 12: Download PDF acknowledgment receipt ─────────────────────────
         await setJobStep(job, 90, 'Waiting for the acknowledgment receipt download');
 
-        const receiptFileName = `kra-receipt-${jobId}-${Date.now()}.pdf`;
+        const receiptDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const receiptFileName = `${receiptDateStr}_${kraPin}_${taxObligationType}_Receipt.pdf`;
         const receiptPath = path.join(TMP_DIR, receiptFileName);
 
         // Build a precise selector from the actual element attributes
@@ -2531,11 +2580,12 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         let storedPrnPath: string | null = null;
         
         // Determine PRN requirement: If MRI/TOT has liability, or if VAT/PAYE
-        const needsPrn = 
+        const needsPrn = !isNilReturnExplicit && (
             (isMriReturn && rentalIncomeAmount && rentalIncomeAmount > 0) ||
             (taxObligationType === 'turnover_tax' && payload.totTurnover && payload.totTurnover > 0) ||
             (taxObligationType === 'paye') || 
-            (taxObligationType === 'vat');
+            (taxObligationType === 'vat')
+        );
 
         if (needsPrn) {
             await setJobStep(job, 93, `Generating Payment Slip (PRN) for ${taxObligationType}`);
@@ -2548,13 +2598,15 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                     periodMonth: pDate.toLocaleString('default', { month: 'long' })
                 };
 
-                const prnFileName = `kra-${taxObligationType}-prn-${jobId}-${Date.now()}.pdf`;
-                const tempPrnPath = path.join(TMP_DIR, prnFileName);
-
-                const prnResult = await generatePRNSlip(page, prnConfig, tempPrnPath);
+                const prnDateStr = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}`;
+                const prnFileName = `${prnDateStr}_${kraPin}_${taxObligationType}_PRN.pdf`;
                 
-                if (prnResult.success && prnResult.filePath) {
-                    storedPrnPath = prnResult.filePath;
+                const prnDestPath = path.join('C:\\Temp\\kra-receipts', prnFileName);
+                const prnResult = await generatePRNSlip(page, prnConfig, prnDestPath);
+                
+                if (prnResult && prnResult.success && prnResult.filePath) {
+                    const { relativePath } = await storeReceiptLocally(prnResult.filePath, jobId);
+                    storedPrnPath = relativePath.replace(/\\/g, '/'); // normalise for URLs
                     console.log(`[Worker][${jobId}] PRN saved to: ${storedPrnPath}`);
                     await appendJobLog(job, 'Successfully generated and downloaded PRN', { progress: 95 });
                 } else {
@@ -2617,6 +2669,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
             receiptPath: storedReceiptPath,
             receiptNumber,
             credentialUpdate,
+            prnPath: storedPrnPath || undefined,
         };
     } catch (err) {
         const error = err as Error;

@@ -292,12 +292,15 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                         : isTotReturn
                             ? undefined
                             : data.periodTo,
-                    ownsRentalProperty: isMriReturn || isTotReturn ? false : data.ownsRentalProperty,
-                    rentalIncomeAmount: isMriReturn ? data.rentalIncomeAmount : undefined,
+                    ownsRentalProperty: (data.taxObligationType === 'income_tax_resident_individual' || data.taxObligationType === 'income_tax_non_resident_individual')
+                        ? data.ownsRentalProperty
+                        : false,
+                    rentalIncomeAmount: isMriReturn ? 0 : undefined,
                     totYear: isTotReturn ? data.totYear : undefined,
                     totMonth: isTotReturn ? data.totMonth : undefined,
-                    totTurnover: isTotReturn ? data.totTurnover : undefined,
+                    totTurnover: isTotReturn ? 0 : undefined,
                     otpCode: isTotReturn ? data.otpCode || undefined : undefined,
+                    isNil: true,
                 }),
             });
 
@@ -480,35 +483,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                         </p>
                     </div>
 
-                    {isMriReturn ? (
-                        <div>
-                            <label
-                                htmlFor="rentalIncomeAmount"
-                                className="block text-sm font-medium text-gray-700 mb-1"
-                            >
-                                Monthly Rental Income Amount <span className="text-red-500" aria-hidden="true">*</span>
-                            </label>
-                            <input
-                                id="rentalIncomeAmount"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                inputMode="decimal"
-                                placeholder="Enter the month's rental income"
-                                aria-invalid={!!errors.rentalIncomeAmount}
-                                className={inputCls(!!errors.rentalIncomeAmount)}
-                                {...register('rentalIncomeAmount', {
-                                    validate: (value) =>
-                                        !isMriReturn || (typeof value === 'number' && value > 0) || 'Monthly rental income amount is required',
-                                    setValueAs: (value: string) => value === '' ? undefined : Number(value),
-                                })}
-                            />
-                            <FieldError message={errors.rentalIncomeAmount?.message} />
-                            <p className="mt-1 text-xs text-gray-400">
-                                MRI is a transaction-based filing. The worker uses the MRI flow and submits the monthly rental income amount instead of a nil return.
-                            </p>
-                        </div>
-                    ) : null}
+                    {/* Removed rentalIncomeAmount form input completely, as this is the Nil Desk */}
 
                     {isTotReturn ? (
                         <div className="space-y-4">
@@ -550,28 +525,6 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                                     />
                                     <FieldError message={errors.totMonth?.message} />
                                 </div>
-                            </div>
-                            <div>
-                                <label htmlFor="totTurnover" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Gross Turnover Amount <span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    id="totTurnover"
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    placeholder="Enter gross turnover"
-                                    aria-invalid={!!errors.totTurnover}
-                                    className={inputCls(!!errors.totTurnover)}
-                                    {...register('totTurnover', {
-                                        validate: (val) => !isTotReturn || (typeof val === 'number' && val >= 0) || 'Turnover amount required',
-                                        setValueAs: (v: string) => v === '' ? undefined : Number(v),
-                                    })}
-                                />
-                                <FieldError message={errors.totTurnover?.message} />
-                                <p className="mt-1 text-xs text-gray-400">
-                                    The worker generates the formatted ZIP and calculates the 1.5% tax dynamically based on this dataset.
-                                </p>
                             </div>
                         </div>
                     ) : null}
@@ -630,7 +583,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                     ) : null}
 
                     {/* ── Date Range ───────────────────────────────────────────────────── */}
-                    {!isMriReturn && !isTotReturn ? (
+                    {!isTotReturn ? (
                         <fieldset>
                             <legend className="text-sm font-medium text-gray-700 mb-2">
                                 Nil Filing Period <span className="text-red-500" aria-hidden="true">*</span>
@@ -678,7 +631,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                     ) : null}
 
                     {/* ── Rental Property Toggle ───────────────────────────────────────── */}
-                    {!isMriReturn && !isTotReturn ? (
+                    {selectedObligation === 'income_tax_resident_individual' || selectedObligation === 'income_tax_non_resident_individual' ? (
                         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                             <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">

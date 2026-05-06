@@ -9,27 +9,27 @@ export interface PrnConfig {
 
 const TAX_MAPPING: Record<string, { headRegex: RegExp, subHeadRegex: RegExp }> = {
     'monthly_rental_income': {
-        headRegex: /Income Tax/i,
+        headRegex: /^Income Tax$/i,
         subHeadRegex: /Rent Income/i
     },
     'paye': {
-        headRegex: /Income Tax/i,
+        headRegex: /^Income Tax$/i,
         subHeadRegex: /PAYE/i
     },
     'turnover_tax': {
-        headRegex: /Income Tax/i,
+        headRegex: /^Income Tax$/i,
         subHeadRegex: /Turnover Tax/i
     },
     'vat': {
-        headRegex: /Value Added Tax \(VAT\)/i,
-        subHeadRegex: /Value Added Tax \(VAT\)/i
+        headRegex: /^VAT$/i,
+        subHeadRegex: /^\(0201\)\s*Value Added Tax \(VAT\)$/i
     },
     'nita': {
-        headRegex: /Agency Tax/i,
+        headRegex: /^Agency Revenue$/i,
         subHeadRegex: /NITA/i
     },
     'affordable_housing': {
-        headRegex: /Agency Tax/i,
+        headRegex: /^Agency Revenue$/i,
         subHeadRegex: /Affordable Housing/i
     }
 };
@@ -155,51 +155,171 @@ export async function generatePRNSlip(
         });
         await page.waitForTimeout(3000);
 
-        console.log(`[PRN] Selecting Period (${config.periodYear}/${config.periodMonth || 'N/A'})...`);
-        
-        let combinedPeriodStr = "";
-        if (config.periodMonth && config.periodYear) {
-            // KRA combined dropdown format: "Apr 2026 - Apr 2026"
-            const shortMonth = config.periodMonth.slice(0, 3);
-            combinedPeriodStr = `${shortMonth} ${config.periodYear} - ${shortMonth} ${config.periodYear}`;
-        }
+        console.log('[PRN] Searching for pending liabilities list (radio buttons)...');
+        try {
+            await page.waitForFunction(() => {
+                const table = document.getElementById('LiablibilityTbl') as HTMLElement | null;
+                return !!table && table.style.display !== 'none' && !!document.querySelector('#LiablibilityTbl input[name="liabilityRadio"]');
+            }, { timeout: 15_000 });
 
-        const isCombinedPeriod = await page.evaluate((combinedStr) => {
-            const selects = Array.from(document.querySelectorAll('select'));
-            for (const select of selects) {
-                for (let i = 0; i < select.options.length; i++) {
-                    if (combinedStr && select.options[i].text.includes(combinedStr)) {
-                        select.selectedIndex = i;
-                        select.dispatchEvent(new Event('change', { bubbles: true }));
-                        return true;
-                    }
+            const selectionResult = await page.evaluate(() => {
+                const radio = (document.getElementById('liabilityRadio_0') as HTMLInputElement | null)
+                    ?? (document.querySelector('#LiablibilityTbl input[name="liabilityRadio"]') as HTMLInputElement | null);
+                const onSelect = (window as any).onSelectliabilityRadio;
+                const subHeadSelect = document.getElementById('cmbTaxSubHead') as HTMLSelectElement | null;
+                const taxHeadSelect = document.getElementById('cmbTaxHead') as HTMLSelectElement | null;
+
+                if (!radio) {
+                    return { success: false, reason: 'No liability radio found in #LiablibilityTbl' };
                 }
-            }
-            return false;
-        }, combinedPeriodStr);
 
-        if (isCombinedPeriod) {
-            console.log(`[PRN] Selected combined tax period: ${combinedPeriodStr}`);
-            await page.waitForTimeout(2000);
-        } else {
-            console.log('[PRN] Combined period dropdown not found, falling back to separate Year/Month dropdowns.');
-            if (config.periodYear) {
-                await page.locator('select#cmbTaxPeriodYear').selectOption({ label: config.periodYear }).catch(() => {});
-                await page.waitForTimeout(1000);
+                radio.checked = true;
+
+                if (typeof onSelect === 'function') {
+                    onSelect(radio);
+                } else {
+                    radio.click();
+                    radio.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                // KRA's Add validation expects these hidden fields to be populated.
+                const selectedSubHeadText = subHeadSelect?.selectedOptions?.[0]?.text?.trim() ?? '';
+                const selectedTaxHeadValue = taxHeadSelect?.value ?? '';
+                const taxTypeNameInput = document.getElementById('in_taxObligationTable_3') as HTMLInputElement | null;
+                const obligationTypeInput = document.getElementById('hidObligationType') as HTMLInputElement | null;
+                if (taxTypeNameInput && !taxTypeNameInput.value) {
+                    taxTypeNameInput.value = selectedSubHeadText;
+                }
+                if (obligationTypeInput && !obligationTypeInput.value) {
+                    obligationTypeInput.value = selectedTaxHeadValue;
+                }
+
+                const addLink = document.getElementById('a_taxObligationTable') as HTMLElement | null;
+                const obligationFieldSet = document.getElementById('ObligationDetailFieldSet') as HTMLElement | null;
+
+                return {
+                    success: true,
+                    radioId: radio.id,
+                    hidRadioValue: (document.getElementById('hidRadioValue') as HTMLInputElement | null)?.value ?? '',
+                    obligationId: (document.getElementById('in_taxObligationTable_7') as HTMLInputElement | null)?.value ?? '',
+                    fromDate: (document.getElementById('in_taxObligationTable_9') as HTMLInputElement | null)?.value ?? '',
+                    toDate: (document.getElementById('in_taxObligationTable_10') as HTMLInputElement | null)?.value ?? '',
+                    taxTypeName: (document.getElementById('in_taxObligationTable_3') as HTMLInputElement | null)?.value ?? '',
+                    obligationType: (document.getElementById('hidObligationType') as HTMLInputElement | null)?.value ?? '',
+                    addVisible: !!addLink && addLink.offsetParent !== null,
+                    fieldSetVisible: !!obligationFieldSet && obligationFieldSet.style.display !== 'none',
+                };
+            });
+
+            if (!selectionResult.success) {
+                throw new Error(selectionResult.reason);
             }
-            if (config.periodMonth) {
-                await page.locator('select#cmbTaxPeriodMonth').selectOption({ label: config.periodMonth }).catch(() => {});
-                await page.waitForTimeout(2000);
-            }
+
+            console.log(`[PRN] Selected liability radio ${selectionResult.radioId}; hidRadioValue=${selectionResult.hidRadioValue}; obligationId=${selectionResult.obligationId}; fromDate=${selectionResult.fromDate}; toDate=${selectionResult.toDate}; taxTypeName=${selectionResult.taxTypeName}; obligationType=${selectionResult.obligationType}; addVisible=${selectionResult.addVisible}; fieldSetVisible=${selectionResult.fieldSetVisible}`);
+            await page.locator('#a_taxObligationTable:visible').waitFor({ state: 'visible', timeout: 5_000 });
+        } catch (e: any) {
+            console.log('[PRN] Failed to interact with liability radio button:', e.message);
+            throw e;
         }
 
         console.log('[PRN] Adding Liability...');
         try {
-            const addBtnLocator = page.locator('input[value="Add"]:visible, a.subbuttonHome:has-text("Add"):visible, button:has-text("Add"):visible').first();
-            await addBtnLocator.click({ timeout: 5000 });
-            console.log('[PRN] Clicked visible Add button successfully.');
+            page.once('dialog', async (dialog) => {
+                console.log('[PRN] Add dialog popup:', dialog.message());
+                await dialog.accept();
+            });
+
+            const addResult = await page.evaluate(() => {
+                const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
+                const rowsBefore = table?.rows.length ?? 0;
+                const addvalidation = (window as any).addvalidation;
+                const beforeAdd = (window as any).beforeAddIntotaxObligationTable;
+                const addrow = (window as any).addrow;
+                const addLink = document.getElementById('a_taxObligationTable') as HTMLElement | null;
+                let validationReturnValue = 'not-called';
+                let beforeAddReturnValue = 'not-called';
+
+                if (typeof beforeAdd === 'function') {
+                    beforeAddReturnValue = String(beforeAdd());
+                }
+
+                if (typeof addvalidation === 'function') {
+                    validationReturnValue = String(addvalidation());
+                }
+
+                const rowsAfterValidation = table?.rows.length ?? 0;
+
+                if (rowsAfterValidation > rowsBefore) {
+                    return {
+                        invoked: true,
+                        mode: 'beforeAdd+validation',
+                        returnValue: validationReturnValue,
+                        beforeAddReturnValue,
+                        rowsBefore,
+                        rowsAfterValidation,
+                    };
+                }
+
+                if (addLink) {
+                    addLink.click();
+                    return {
+                        invoked: true,
+                        mode: 'beforeAdd+validation+click',
+                        returnValue: validationReturnValue,
+                        beforeAddReturnValue,
+                        rowsBefore,
+                        rowsAfterValidation,
+                    };
+                }
+
+                if (typeof addrow === 'function') {
+                    const deleteFn = (document.getElementById('taxObligationTable_beforeDeleteFunction') as HTMLInputElement | null)?.value ?? '';
+                    const modifyFn = (document.getElementById('taxObligationTable_beforeModifyClickedFunction') as HTMLInputElement | null)?.value ?? '';
+                    addrow('taxObligationTable', '4', '9', '3', deleteFn, modifyFn, 'N', 'N');
+                    return {
+                        invoked: true,
+                        mode: 'beforeAdd+validation+addrow',
+                        returnValue: validationReturnValue,
+                        beforeAddReturnValue,
+                        rowsBefore,
+                        rowsAfterValidation,
+                    };
+                }
+
+                return {
+                    invoked: false,
+                    mode: 'none',
+                    returnValue: validationReturnValue,
+                    beforeAddReturnValue,
+                    rowsBefore,
+                    rowsAfterValidation,
+                };
+            });
+
+            if (!addResult.invoked) {
+                throw new Error('KRA Add handler was not found');
+            }
+
+            console.log(`[PRN] Add attempt via ${addResult.mode}; beforeAdd returned ${addResult.beforeAddReturnValue}; addvalidation returned ${addResult.returnValue}; taxObligationTable rows before=${addResult.rowsBefore}, afterValidation=${addResult.rowsAfterValidation}`);
+
+            await page.waitForFunction(
+                (previousRows) => {
+                    const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
+                    return !!table && table.rows.length > previousRows;
+                },
+                addResult.rowsBefore,
+                { timeout: 10_000 }
+            );
+
+            const rowsAfter = await page.evaluate(() => {
+                const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
+                return table?.rows.length ?? 0;
+            });
+
+            console.log(`[PRN] Added liability row successfully via ${addResult.mode}; addvalidation returned ${addResult.returnValue}; taxObligationTable rows=${rowsAfter}`);
         } catch (e: any) {
-            console.log('[PRN] Could not click visible Add button:', e.message);
+            console.log('[PRN] Failed to add liability row:', e.message);
+            throw e;
         }
         await page.waitForTimeout(3000);
 

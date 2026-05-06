@@ -5,7 +5,7 @@ import { ClientObligation } from './PracticeDashboard'; // I need to move the ty
 interface CompanyDetailsProps {
     client: ClientObligation; // We'll pass the client from PracticeDashboard
     onBack: () => void;
-    onSave: (updatedClient: ClientObligation) => void;
+    onSave: (updatedClient: ClientObligation) => void | Promise<void>;
 }
 
 export default function CompanyDetails({ client, onBack, onSave }: CompanyDetailsProps) {
@@ -14,6 +14,8 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
     const [vatOutput, setVatOutput] = useState('');
     const [totSales, setTotSales] = useState('');
     const [isUploadingCSV, setIsUploadingCSV] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     const handleUploadCSV = async (file: File) => {
         setIsUploadingCSV(true);
@@ -32,11 +34,12 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                     masterFileLabel: responseData.masterFileLabel
                 }));
             } else {
-                alert('Failed to upload Master CSV.');
+                const errorData = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
+                alert(errorData.message || errorData.error || 'Failed to upload Master CSV.');
             }
         } catch (err) {
             console.error('Upload failed:', err);
-            alert('Network error while uploading Master CSV.');
+            alert(err instanceof Error ? err.message : 'Network error while uploading Master CSV.');
         } finally {
             setIsUploadingCSV(false);
         }
@@ -45,8 +48,21 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
     const calculatedVat = (parseFloat(vatOutput) || 0) - (parseFloat(vatInput) || 0);
     const calculatedTot = (parseFloat(totSales) || 0) * 0.015;
 
-    const handleSave = () => {
-        onSave(formData);
+    const handleSave = async () => {
+        if (isSaving) {
+            return;
+        }
+
+        setIsSaving(true);
+        setSaveError(null);
+
+        try {
+            await onSave(formData);
+        } catch (error) {
+            setSaveError(error instanceof Error ? error.message : 'Failed to save client details.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     return (
@@ -55,10 +71,16 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                 <button onClick={onBack} className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white transition">
                     <ArrowLeft className="h-4 w-4" /> Back to Dashboard
                 </button>
-                <button onClick={handleSave} className="flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
-                    <Save className="h-4 w-4" /> Save Changes
+                <button onClick={() => void handleSave()} disabled={isSaving} className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold text-slate-950 transition ${isSaving ? 'cursor-not-allowed bg-emerald-500/60 text-slate-900/70' : 'bg-emerald-500 hover:bg-emerald-400'}`}>
+                    <Save className="h-4 w-4" /> {isSaving ? 'Saving...' : 'Save Changes'}
                 </button>
             </div>
+
+            {saveError && (
+                <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    {saveError}
+                </div>
+            )}
 
             <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
                 {/* Main Details Form */}

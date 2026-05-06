@@ -106,7 +106,67 @@ type ActiveDashboardJob = {
     progress: number;
     message: string;
     failedReason?: string;
+    receiptUrl?: string;
+    prnUrl?: string;
 };
+
+function normalizeClientObligation(value: string) {
+    const normalized = value.trim().toLowerCase();
+
+    if (!normalized) return normalized;
+    if (normalized === 'monthly_rental_income' || normalized === 'monthly rental income') return 'mri';
+    if (normalized === 'turnover_tax' || normalized === 'turnover tax') return 'tot';
+    if (normalized === 'elevy' || normalized === 'elevy') return 'elevy';
+
+    return normalized;
+}
+
+function buildStoredArtifactUrl(resultPath?: string) {
+    if (!resultPath) {
+        return undefined;
+    }
+
+    const normalized = resultPath.replace(/\\/g, '/');
+
+    if (/^https?:\/\//i.test(normalized)) {
+        return normalized;
+    }
+
+    if (normalized.startsWith('/api/')) {
+        return normalized;
+    }
+
+    if (/^[A-Za-z]:\//.test(normalized)) {
+        const receiptsMarkerIndex = normalized.toLowerCase().indexOf('/receipts/');
+        if (receiptsMarkerIndex >= 0) {
+            return `/api${normalized.slice(receiptsMarkerIndex)}`;
+        }
+        return undefined;
+    }
+
+    return `/api/${normalized.replace(/^\/+/, '')}`;
+}
+
+function getReceiptUrlForObligation(client: ClientObligation, type: string) {
+    switch (type) {
+        case 'VAT':
+            return client.vatReceiptUrl;
+        case 'TOT':
+            return client.totReceiptUrl;
+        case 'MRI':
+            return client.mriReceiptUrl;
+        case 'DST':
+            return client.dstReceiptUrl;
+        case 'PAYE':
+            return client.payeReceiptUrl;
+        case 'NSSF':
+            return client.nssfReceiptUrl;
+        case 'SHA':
+            return client.shaReceiptUrl;
+        default:
+            return undefined;
+    }
+}
 
 function isPendingFilingJob(job?: ActiveDashboardJob | null) {
     return !!job && (job.state === 'waiting' || job.state === 'active' || job.state === 'delayed' || job.state === 'cancelling');
@@ -340,12 +400,14 @@ const [etimsPassword, setEtimsPassword] = useState('');
     };
 
     const openNewClientModal = (clientToEdit?: any) => {
+        setNewClientMasterCsv(null);
+
         if (clientToEdit?.id) {
             setEditingClientId(clientToEdit.id);
             setNewClientName(clientToEdit.name);
             setNewClientPin(clientToEdit.pin);
             setNewClientPassword(clientToEdit.password);
-            setNewClientObligations(clientToEdit.obligations ? clientToEdit.obligations.split(',').map((s: string) => s.trim()) : []);
+            setNewClientObligations(clientToEdit.obligations ? clientToEdit.obligations.split(',').map((s: string) => normalizeClientObligation(s)).filter(Boolean) : []);
         } else {
             setEditingClientId(null);
             setNewClientName('');
@@ -404,15 +466,16 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     name,
                     pin,
                     password,
-                    obligations: newClientObligations.join(', '),
+                    obligations: newClientObligations.map(normalizeClientObligation).join(', '),
                 })
             });
 
             if (res.ok) {
                 const updatedOrNewData = await res.json();
                 if (newClientObligations.includes('paye') && newClientMasterCsv) {
-                    setDashboardNotice({ tone: 'info', message: 'Generating standardized master CSV...' });
-                    await handleUploadMasterCsv(updatedOrNewData.id, newClientMasterCsv);
+                    setDashboardNotice({ tone: 'info', message: 'Uploading master CSV for this client...' });
+                    await handleUploadMasterCsv(String(updatedOrNewData.id), newClientMasterCsv, { propagateError: true });
+                    setDashboardNotice({ tone: 'success', message: isEdit ? 'Client updated and master CSV uploaded successfully.' : 'Client saved and master CSV uploaded successfully.' });
                 } else {
                     setDashboardNotice({ tone: 'success', message: isEdit ? 'Client updated successfully.' : 'Client saved successfully.' });
                     await fetchClients();
@@ -520,7 +583,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
-    const handleUploadMasterCsv = async (clientId: string, file: File) => {
+    const handleUploadMasterCsv = async (clientId: string, file: File, options?: { propagateError?: boolean }) => {
         setUploadingClientIds(current => ({ ...current, [clientId]: true }));
         const formData = new FormData();
         formData.append('masterCsv', file);
@@ -529,14 +592,29 @@ const [etimsPassword, setEtimsPassword] = useState('');
                 method: 'POST',
                 body: formData
             });
-            if (res.ok) {
-                setDashboardNotice({ tone: 'success', message: 'Master CSV uploaded securely.' });
-                fetchClients(); // Refresh client data to show new URL
-            } else {
-                setDashboardNotice({ tone: 'error', message: 'Failed to upload CSV.' });
+            const payload = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
+
+            if (!res.ok) {
+                const message = payload.message || payload.error || 'Failed to upload CSV.';
+                setDashboardNotice({ tone: 'error', message });
+                if (options?.propagateError) {
+                    throw new Error(message);
+                }
+                return payload;
             }
+
+            const message = payload.fallbackReason
+                ? `${payload.message} ${payload.fallbackReason}`
+                : (payload.message || 'Master CSV uploaded securely.');
+            setDashboardNotice({ tone: 'success', message });
+            await fetchClients();
+            return payload;
         } catch (err) {
-            setDashboardNotice({ tone: 'error', message: 'Upload error.' });
+            const message = err instanceof Error ? err.message : 'Upload error.';
+            setDashboardNotice({ tone: 'error', message });
+            if (options?.propagateError) {
+                throw err;
+            }
         } finally {
             setUploadingClientIds(current => {
                 const nextState = { ...current };
@@ -679,12 +757,14 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     
                     const newMessage = data.lastStep?.message ?? currentJobs[clientId].message ?? 'Processing...';
                     const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
-                    const resultReceiptPath = data.result?.receiptPath; // The backend provides this
+                    const resultReceiptUrl = buildStoredArtifactUrl(data.result?.receiptPath);
+                    const resultPrnUrl = buildStoredArtifactUrl(data.result?.prnPath);
 
                     if (currentJobs[clientId].state !== data.state || 
                         currentJobs[clientId].progress !== data.progress || 
                         currentJobs[clientId].message !== newMessage ||
-                        currentJobs[clientId].receiptUrl !== (resultReceiptPath ? `http://localhost:3001/api/${resultReceiptPath}` : undefined)) {
+                        currentJobs[clientId].receiptUrl !== resultReceiptUrl ||
+                        currentJobs[clientId].prnUrl !== resultPrnUrl) {
                         
                         currentJobs[clientId] = {
                             ...currentJobs[clientId],
@@ -693,7 +773,8 @@ const [etimsPassword, setEtimsPassword] = useState('');
                             progress: nextProgress,
                             message: newMessage,
                             failedReason: data.failedReason || '',
-                            receiptUrl: resultReceiptPath ? `http://localhost:3001/api/${resultReceiptPath}` : undefined
+                            receiptUrl: resultReceiptUrl,
+                            prnUrl: resultPrnUrl,
                         };
                         hasChanges = true;
                     }
@@ -903,7 +984,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
             const rData = await res.json();
             setActiveJobs(prev => ({
                 ...prev,
-                [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...' }
+                [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...', receiptUrl: undefined, prnUrl: undefined }
             }));
             
             setDashboardNotice({ tone: 'success', message: `${type} PRN generation queued for ${client.name}.` });
@@ -1195,6 +1276,38 @@ const [etimsPassword, setEtimsPassword] = useState('');
         }
     };
 
+    const handleSaveClientDetails = async (updatedClient: ClientObligation) => {
+        const name = updatedClient.name?.trim();
+        const pin = updatedClient.pin?.trim().toUpperCase();
+        const password = (updatedClient.iTaxPassword || (updatedClient as any).password || '').trim();
+
+        if (!updatedClient.id || !name || !pin || !password) {
+            throw new Error('Client name, KRA PIN, and KRA password are required before saving.');
+        }
+
+        const res = await apiFetch(`/clients/${updatedClient.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                pin,
+                password,
+                obligations: updatedClient.obligations || '',
+                sector: updatedClient.sector || '',
+            }),
+        });
+
+        const payload = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
+
+        if (!res.ok) {
+            throw new Error(payload.message || payload.error || 'Failed to save client details.');
+        }
+
+        await fetchClients();
+        setSelectedClient(payload);
+        setDashboardNotice({ tone: 'success', message: 'Client details saved successfully.' });
+    };
+
     const renderGlobalPayrollUpload = () => (
         <div className="my-4 overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-800/80 to-slate-900/40 shadow-sm backdrop-blur relative">
             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent"></div>
@@ -1437,69 +1550,73 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     ))}
                 </div>
                 <div className="overflow-x-auto">
-<table className="hidden lg:table w-full text-left text-sm text-slate-300">
+<table className="hidden lg:table w-full table-fixed text-left text-sm text-slate-300">
                     <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
                         <tr>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
-                            <th className="px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Master CSV</th>
+                            <th className="w-[16%] px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">Client Portfolio</th>
+                            <th className="w-[18%] px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Master CSV</th>
                             <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>PAYE</th>
                               <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>NITA</th>
                               <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>H. Levy</th>
                               <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>NSSF</th>
                               <th className='px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center'>SHA</th>
-                            <th className="px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Latest Files</th>
-                            <th className="px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider w-32 min-w-[120px]">Action</th>
+                            <th className="w-[10%] px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">Latest Files</th>
+                            <th className="w-[16%] px-2 py-3 sm:px-4 sm:py-4 font-semibold text-right uppercase tracking-wider">Action</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/50">
                         {payrollClients.map((client) => (
                             <tr key={client.id} className="transition hover:bg-slate-800/50">
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
-                                    <div className="font-semibold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
+                                    <div className="font-semibold break-words text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
                                     <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
                                 </td>
                                 <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">
                                     {client.masterFileUrl ? (
-                                        <div className="flex items-center gap-1.5 max-w-[160px] md:max-w-[240px]">
-                                            <a href={client.masterFileUrl} target="_blank" rel="noreferrer" className="flex flex-1 items-center gap-2 truncate rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition">
+                                        <div className="flex max-w-[180px] flex-col gap-1.5 xl:max-w-[220px]">
+                                            <a href={client.masterFileUrl} target="_blank" rel="noreferrer" className="flex w-full items-center gap-2 truncate rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition">
                                                 <FileSpreadsheet className="h-3 w-3 shrink-0 text-slate-500" />
                                                 <span className="truncate">{client.masterFileLabel || 'Open file'}</span>
                                             </a>
-                                            <label className="cursor-pointer shrink-0 rounded-lg border border-slate-600 bg-slate-700/30 p-1.5 hover:bg-slate-600 transition" title="Replace CSV/XLSX">
-                                                <RefreshCw className="h-3 w-3 text-slate-400" />
-                                                <input 
-                                                    type="file" 
-                                                    className="hidden" 
-                                                    accept=".csv,.xlsx" 
-                                                    onChange={(e) => {
-                                                        if (e.target.files?.[0]) {
-                                                            if (window.confirm('Replace the existing Master CSV?')) {
-                                                                handleUploadMasterCsv(client.id, e.target.files[0]);
+                                            <div className="flex items-center justify-end gap-1.5">
+                                                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-700/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300 hover:bg-slate-600 transition" title="Replace CSV/XLSX">
+                                                    <RefreshCw className="h-3 w-3 text-slate-400" />
+                                                    <span>Replace</span>
+                                                    <input 
+                                                        type="file" 
+                                                        className="hidden" 
+                                                        accept=".csv,.xlsx" 
+                                                        onChange={(e) => {
+                                                            if (e.target.files?.[0]) {
+                                                                if (window.confirm('Replace the existing Master CSV?')) {
+                                                                    handleUploadMasterCsv(client.id, e.target.files[0]);
+                                                                }
+                                                            }
+                                                        }}
+                                                    />
+                                                </label>
+                                                <button 
+                                                    onClick={async () => {
+                                                        if (window.confirm('Remove this Master CSV?')) {
+                                                            try {
+                                                                const res = await apiFetch(`/clients/${client.id}/master-csv`, { method: 'DELETE' });
+                                                                if (res.ok) {
+                                                                    fetchClients();
+                                                                    setDashboardNotice({ tone: 'success', message: 'Master CSV removed successfully.' });
+                                                                }
+                                                            } catch (err) {
+                                                                console.error('Error removing CSV:', err);
                                                             }
                                                         }
                                                     }}
-                                                />
-                                            </label>
-                                            <button 
-                                                onClick={async () => {
-                                                    if (window.confirm('Remove this Master CSV?')) {
-                                                        try {
-                                                            const res = await apiFetch(`/clients/${client.id}/master-csv`, { method: 'DELETE' });
-                                                            if (res.ok) {
-                                                                fetchClients();
-                                                                setDashboardNotice({ tone: 'success', message: 'Master CSV removed successfully.' });
-                                                            }
-                                                        } catch (err) {
-                                                            console.error('Error removing CSV:', err);
-                                                        }
-                                                    }
-                                                }}
-                                                className="shrink-0 rounded-lg border border-red-500/30 bg-red-500/10 p-1.5 hover:bg-red-500/20 transition" title="Remove Master CSV">
-                                                <X className="h-3 w-3 text-red-400" />
-                                            </button>
+                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-300 hover:bg-red-500/20 transition" title="Remove Master CSV">
+                                                    <X className="h-3 w-3 text-red-400" />
+                                                    <span>Remove</span>
+                                                </button>
+                                            </div>
                                         </div>
                                     ) : (
-                                        <label className="inline-flex min-w-[120px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-800 hover:text-white transition">
+                                        <label className="inline-flex w-full max-w-[180px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-800 hover:text-white transition xl:max-w-[220px]">
                                             {uploadingClientIds[client.id] ? (
                                                 <><RefreshCw className="h-3 w-3 mr-2 animate-spin" /> Uploading...</>
                                             ) : 'Upload Master CSV'}
@@ -1565,9 +1682,9 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         ) : null}
                                     </div>
                                 </td>
-                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right">
-                                    <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 mb-2">
-                                        <div className="flex flex-col items-end gap-1 w-full max-w-[140px] ml-auto">
+                                <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right align-top">
+                                    <div className="mb-2 ml-auto flex w-full max-w-[150px] flex-col items-stretch gap-1.5">
+                                        <div className="flex flex-col items-end gap-1 w-full">
                                             {client.payeZipUrl && (
                                                 <span className="text-[10px] text-right text-slate-500">
                                                     Generated: {new Date(client.lastGeneratedAt || Date.now()).toLocaleString()}
@@ -1585,18 +1702,26 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                         <button
                                             onClick={() => handleAutoFile(client)}
                                             disabled={!client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])}
-                                            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-tight transition ${!client.payeZipUrl || isPendingFilingJob(activeJobs[client.id]) ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed' : 'border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-slate-950'}`}
+                                            className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-tight transition ${!client.payeZipUrl || isPendingFilingJob(activeJobs[client.id]) ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed' : 'border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-slate-950'}`}
                                             title="Auto File PAYE"
                                         >
-                                            <Rocket className="h-3 w-3" /> Auto File PAYE
+                                            <Rocket className="h-3 w-3 shrink-0" /> <span className="truncate">Auto File PAYE</span>
+                                        </button>
+                                        <button
+                                            onClick={() => handleGeneratePrn(client, 'PAYE')}
+                                            disabled={isPendingFilingJob(activeJobs[client.id])}
+                                            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold leading-tight text-amber-400 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+                                            title="Print PAYE PRN"
+                                        >
+                                            <Download className="h-3 w-3 shrink-0" /> <span className="truncate">Print PAYE PRN</span>
                                         </button>
                                         <button
                                             onClick={() => handleAutoFileNssf(client)}
                                             disabled={!client.nssfFileUrl || !client.masterFileUrl}
-                                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                                            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
                                             title="Auto File NSSF"
                                         >
-                                            <Cloud className="h-3 w-3" /> NSSF
+                                            <Cloud className="h-3 w-3 shrink-0" /> <span className="truncate">Auto File NSSF</span>
                                         </button>
                                     </div>
                                     {activeJobs[client.id] && (
@@ -1629,6 +1754,30 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                         : <X className="h-3 w-3" />}
                                                     {activeJobs[client.id].state === 'cancelling' ? 'Cancelling...' : 'Cancel Job'}
                                                 </button>
+                                            )}
+                                            {isTerminalFilingJob(activeJobs[client.id]) && (activeJobs[client.id].receiptUrl || activeJobs[client.id].prnUrl) && (
+                                                <div className="mt-2 flex flex-col gap-1.5">
+                                                    {activeJobs[client.id].receiptUrl && activeJobs[client.id].receiptUrl !== activeJobs[client.id].prnUrl && (
+                                                        <a
+                                                            href={activeJobs[client.id].receiptUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[10px] font-bold text-blue-300 transition hover:bg-blue-500 hover:text-slate-950"
+                                                        >
+                                                            <Download className="h-3 w-3" /> Download Receipt
+                                                        </a>
+                                                    )}
+                                                    {activeJobs[client.id].prnUrl && (
+                                                        <a
+                                                            href={activeJobs[client.id].prnUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950"
+                                                        >
+                                                            <Download className="h-3 w-3" /> Download PRN
+                                                        </a>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     )}
@@ -1693,6 +1842,10 @@ const [etimsPassword, setEtimsPassword] = useState('');
                         <tbody className="divide-y divide-slate-800/50">
                             {obligations.map((ob, idx) => {
                                 const isEtimsConnected = etimsConnections[ob.client.id];
+                                const jobArtifacts = activeJobs[ob.client.id];
+                                const latestReceiptUrl = jobArtifacts?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
+                                const latestPrnUrl = jobArtifacts?.prnUrl;
+                                const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
                                 
                                 return (
                                 <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50 group">
@@ -1843,10 +1996,29 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                             >
                                                 Print PRN
                                             </button>
-                                            {isTerminalFilingJob(activeJobs[ob.client.id]) && activeJobs[ob.client.id].state === 'completed' && (
-                                                <button className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-500/10 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition shadow-sm disabled:opacity-50">
-                                                    Download Receipt
-                                                </button>
+                                            {isTerminalFilingJob(activeJobs[ob.client.id]) && (latestReceiptUrl || latestPrnUrl) && (
+                                                <>
+                                                    {latestReceiptUrl && !unifiedPrnUrl && latestReceiptUrl !== latestPrnUrl && (
+                                                        <a
+                                                            href={latestReceiptUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-500/10 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition shadow-sm"
+                                                        >
+                                                            Download Receipt
+                                                        </a>
+                                                    )}
+                                                    {(latestPrnUrl || unifiedPrnUrl) && (
+                                                        <a
+                                                            href={unifiedPrnUrl ?? latestPrnUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex w-full justify-center items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs font-bold text-amber-400 hover:bg-amber-500/20 hover:text-amber-300 transition shadow-sm"
+                                                        >
+                                                            Download PRN
+                                                        </a>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </td>
@@ -2000,7 +2172,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                         </div>
                     )}
 
-                    {selectedClient && <div className="mt-10"><CompanyDetails client={selectedClient} onBack={() => setSelectedClient(null)} onSave={(updated) => { setClients(clients.map(c => c.id === updated.id ? updated : c)); setSelectedClient(null); }} /></div>}
+                    {selectedClient && <div className="mt-10"><CompanyDetails client={selectedClient} onBack={() => setSelectedClient(null)} onSave={handleSaveClientDetails} /></div>}
                     {!selectedClient && view === 'overview' && (
                         <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_350px]">
                             {/* Left Col: Summary / Stats */}

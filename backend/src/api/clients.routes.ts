@@ -11,6 +11,17 @@ const upload = multer({ dest: path.resolve(__dirname, '..', '..', 'tmp') });
 import csv from 'csv-parser';
 import fsStandard from 'fs';
 
+function normalizeObligationToken(value: string): string {
+    const normalized = value.trim().toLowerCase();
+
+    if (!normalized) return normalized;
+    if (normalized === 'monthly_rental_income' || normalized === 'monthly rental income') return 'mri';
+    if (normalized === 'turnover_tax' || normalized === 'turnover tax') return 'tot';
+    if (normalized === 'elevy' || normalized === 'elevy') return 'elevy';
+
+    return normalized;
+}
+
 // Get all clients
 router.get('/', async (req, res) => {
     try {
@@ -41,20 +52,36 @@ router.post('/:id/master-csv', upload.single('masterCsv'), async (req, res) => {
 
         const targetDir = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', client.name);
         await fs.mkdir(targetDir, { recursive: true });
-        
-        // Pass through AI mapping
-        const result = await processAndStandardizePayroll(file.path, client, targetDir, file.originalname);
-        
-        // Delete the original uploaded temp file
-        await fs.unlink(file.path).catch(() => {});
 
-        if (!result.success) {
-            return res.status(500).json({ message: result.message });
+        let fileUrl = '';
+        let finalLabel = '';
+        let responseMessage = 'Master CSV uploaded successfully.';
+        let fallbackReason: string | undefined;
+
+        try {
+            const result = await processAndStandardizePayroll(file.path, client, targetDir, file.originalname);
+
+            if (!result.success) {
+                throw new Error(result.message || 'AI standardization failed.');
+            }
+
+            await fs.unlink(file.path).catch(() => {});
+
+            const filename = path.basename(result.mappedFile);
+            fileUrl = `/clients/${encodeURIComponent(client.name)}/${filename}`;
+            finalLabel = `${filename} (AI Standardized)`;
+            responseMessage = 'Master CSV updated and mapped successfully via AI';
+        } catch (error) {
+            const fallbackFileName = path.basename(file.originalname || `master-upload-${Date.now()}.csv`);
+            const fallbackPath = path.join(targetDir, fallbackFileName);
+            await fs.rename(file.path, fallbackPath);
+
+            fileUrl = `/clients/${encodeURIComponent(client.name)}/${fallbackFileName}`;
+            finalLabel = fallbackFileName;
+            fallbackReason = error instanceof Error ? error.message : 'AI standardization was unavailable.';
+            responseMessage = 'Master CSV uploaded without AI standardization.';
+            console.warn(`[Clients] Falling back to raw master CSV storage for client ${clientId}: ${fallbackReason}`);
         }
-
-        const filename = path.basename(result.mappedFile);
-        const fileUrl = `/clients/${encodeURIComponent(client.name)}/${filename}`;
-        const finalLabel = `${filename} (AI Standardized)`;
 
         await db.run('UPDATE clients SET masterFileUrl = ?, masterFileLabel = ? WHERE id = ?', [
             fileUrl,
@@ -62,7 +89,12 @@ router.post('/:id/master-csv', upload.single('masterCsv'), async (req, res) => {
             clientId
         ]);
 
-        res.json({ message: 'Master CSV updated and mapped successfully via AI', masterFileUrl: fileUrl, masterFileLabel: finalLabel });
+        res.json({
+            message: responseMessage,
+            masterFileUrl: fileUrl,
+            masterFileLabel: finalLabel,
+            fallbackReason,
+        });
     } catch (err) {
         console.error('Error updating master CSV:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -109,25 +141,27 @@ router.delete('/:id/master-csv', async (req, res) => {
 // Add new client
 router.post('/', async (req, res) => {
     try {
-        const { name, pin, password, obligations } = req.body;
-        if (!name || !pin || !password) {
+        const { name, pin, password, iTaxPassword, obligations, sector } = req.body;
+        const effectivePassword = String(iTaxPassword || password || '').trim();
+
+        if (!name || !pin || !effectivePassword) {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
-        const obsList = (obligations || '').split(',').map((s: string) => s.trim());
+        const obsList = (obligations || '').split(',').map((s: string) => normalizeObligationToken(s));
         const paye = obsList.includes('paye') ? 'due' : 'na';
         const nssf = obsList.includes('nssf') ? 'due' : 'na';
         const sha = obsList.includes('sha') ? 'due' : 'na';
         const vat = obsList.includes('vat') ? 'due' : 'na';
         const tot = obsList.includes('tot') ? 'due' : 'na';
         const mri = obsList.includes('mri') ? 'due' : 'na';
-        const eLevy = obsList.includes('eLevy') ? 'due' : 'na';
+        const eLevy = obsList.includes('elevy') ? 'due' : 'na';
         const dst = obsList.includes('dst') ? 'due' : 'na';
 
         const db = await openDb();
         const result = await db.run(
-            `INSERT INTO clients (name, pin, password, obligations, paye, nssf, sha, vat, tot, mri, eLevy, dst) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, pin, password, obligations || '', paye, nssf, sha, vat, tot, mri, eLevy, dst]
+            `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst]
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
@@ -257,27 +291,28 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
 // Update client
 router.put('/:id', async (req, res) => {
     try {
-        const { name, pin, password, obligations } = req.body;
+        const { name, pin, password, iTaxPassword, obligations, sector } = req.body;
         const clientId = req.params.id;
+        const effectivePassword = String(iTaxPassword || password || '').trim();
 
-        if (!name || !pin || !password) {
+        if (!name || !pin || !effectivePassword) {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
-        const obsList = (obligations || '').split(',').map((s: string) => s.trim());
+        const obsList = (obligations || '').split(',').map((s: string) => normalizeObligationToken(s));
         const paye = obsList.includes('paye') ? 'due' : 'na';
         const nssf = obsList.includes('nssf') ? 'due' : 'na';
         const sha = obsList.includes('sha') ? 'due' : 'na';
         const vat = obsList.includes('vat') ? 'due' : 'na';
         const tot = obsList.includes('tot') ? 'due' : 'na';
         const mri = obsList.includes('mri') ? 'due' : 'na';
-        const eLevy = obsList.includes('eLevy') ? 'due' : 'na';
+        const eLevy = obsList.includes('elevy') ? 'due' : 'na';
         const dst = obsList.includes('dst') ? 'due' : 'na';
 
         const db = await openDb();
         await db.run(
             `UPDATE clients 
-             SET name = ?, pin = ?, password = ?, obligations = ?,
+             SET name = ?, pin = ?, password = ?, obligations = ?, sector = ?,
                  paye = CASE WHEN paye = 'na' THEN ? ELSE paye END,
                  nssf = CASE WHEN nssf = 'na' THEN ? ELSE nssf END,
                  sha = CASE WHEN sha = 'na' THEN ? ELSE sha END,
@@ -287,7 +322,7 @@ router.put('/:id', async (req, res) => {
                  eLevy = CASE WHEN eLevy = 'na' THEN ? ELSE eLevy END,
                  dst = CASE WHEN dst = 'na' THEN ? ELSE dst END
              WHERE id = ?`,
-            [name, pin, password, obligations || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
+            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
         );
         
         const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);

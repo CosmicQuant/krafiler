@@ -2632,6 +2632,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         // ── Step 13: Store receipt in the workspace ───────────────────────────────
         await setJobStep(job, 94, 'Storing the receipt in the workspace');
         const { receiptPath: storedReceiptPath, relativePath } = await storeReceiptLocally(receiptPath, jobId);
+        const receiptRelativePath = relativePath.replace(/\\/g, '/');
         await appendJobLog(job, `Receipt stored locally at ${relativePath}`, { progress: 94 });
 
         try {
@@ -2645,7 +2646,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
                 const db = await openDb();
                 await db.run(
                     `UPDATE clients SET ${obligationCol}LastFiledDate = ?, ${obligationCol}ReceiptUrl = ? WHERE pin = ?`,
-                    [new Date().toISOString(), `/api/receipts/${relativePath.replace(/\\/g, '/')}`, kraPin]
+                    [new Date().toISOString(), `/api/receipts/${receiptRelativePath.replace(/^receipts\//, '')}`, kraPin]
                 );
                 await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
             }
@@ -2666,7 +2667,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{ receiptPath: str
         await setJobStep(job, 100, 'Job completed successfully');
         console.log(`[Worker][${jobId}] Job completed. Receipt path: ${storedReceiptPath}`);
         return {
-            receiptPath: storedReceiptPath,
+            receiptPath: receiptRelativePath,
             receiptNumber,
             credentialUpdate,
             prnPath: storedPrnPath || undefined,

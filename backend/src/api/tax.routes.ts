@@ -274,6 +274,10 @@ const validateFilingRequest = [
 
     body('rentalIncomeAmount')
         .custom((value: unknown, { req }) => {
+            if (req.body.printPrnOnly) {
+                return true;
+            }
+
             if (req.body.isNil) {
                 return true; // Nil returns don't need an amount
             }

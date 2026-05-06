@@ -120,6 +120,7 @@ export async function initDb() {
 
     // Dynamic schema evolution for extra credentials/details (Email, Phone, Third-Party Logins)
     const extraCredentialCols = [
+        'sector',
         'email', 'phone', 
         'nssfLogin', 'nssfPassword', 
         'shaLogin', 'shaPassword', 

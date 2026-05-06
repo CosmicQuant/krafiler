@@ -15,11 +15,16 @@ import taxRoutes from './api/tax.routes';
 import payrollRoutes from './api/payroll.routes';
 import clientRoutes from './api/clients.routes';
 import { initDb } from './db/database';
+import { logger } from './logger';
+import pinoHttp from 'pino-http';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
+
+// HTTP Request logging
+app.use(pinoHttp({ logger }));
 
 // Sets secure HTTP response headers (CSP, HSTS, X-Frame-Options, etc.)
 app.use(helmet());
@@ -89,7 +94,7 @@ app.use(
         res: express.Response,
         _next: express.NextFunction
     ) => {
-        console.error('[Server] Unhandled error:', err);
+        logger.error({ err }, 'Unhandled server error');
         res.status(500).json({ message: 'An unexpected error occurred.' });
     }
 );
@@ -98,11 +103,11 @@ app.use(
 
 initDb().then(() => {
     app.listen(PORT, () => {
-        console.log(`[Server] KRA Filing API running on http://localhost:${PORT}`);
-        console.log(`[Server] Environment: ${process.env.NODE_ENV ?? 'development'}`);
+        logger.info(`KRA Filing API running on http://localhost:${PORT}`);
+        logger.info(`Environment: ${process.env.NODE_ENV ?? 'development'}`);
     });
 }).catch(err => {
-    console.error('Failed to init DB:', err);
+    logger.error({ err }, 'Failed to init DB');
     process.exit(1);
 });
 

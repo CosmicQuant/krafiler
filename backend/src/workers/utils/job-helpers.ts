@@ -8,6 +8,7 @@
 import { Job } from 'bullmq';
 import { kraFilingQueue } from '../../queues/kraFilingQueue';
 import { FilingJob, FilingStepLog } from '../../types';
+import { logger } from '../../logger';
 
 // ─── Cancellation ────────────────────────────────────────────────────────────
 
@@ -42,7 +43,7 @@ export async function assertJobNotCancelled(
     await appendJobLog(job, `Cancellation requested by operator. Stopping during ${context}.`, {
         progress: progressValue,
     });
-    console.warn(`[Worker][${job.data.jobId}] Cancellation requested during ${context}; stopping the job.`);
+    logger.warn({ jobId: job.id ?? job.data.jobId, context }, `Cancellation requested during ${context}; stopping the job.`);
     throw new JobCancelledError();
 }
 
@@ -70,7 +71,7 @@ export async function setJobStep(job: Job<FilingJob>, progress: number, message:
     await assertJobNotCancelled(job, message, progress);
     await job.updateProgress(progress);
     await appendJobLog(job, message, { progress });
-    console.log(`[Worker][${job.data.jobId}] ${message}`);
+    logger.info({ jobId: job.id ?? job.data.jobId, progress }, message);
 }
 
 // ─── Phase Measurement ───────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ export async function measureJobPhase<T>(
     await assertJobNotCancelled(job, label, progressValue);
     const startMessage = `Timing start | ${label} | startedAt=${startedAt.toISOString()}`;
     await appendJobLog(job, startMessage, { progress: progressValue });
-    console.log(`[Worker][${job.data.jobId}] ${startMessage}`);
+    logger.info({ jobId: job.id ?? job.data.jobId, phase: label }, `Timing start`);
 
     try {
         const result = await action();
@@ -116,7 +117,7 @@ export async function measureJobPhase<T>(
             endMessage,
             { progress: progressValue }
         );
-        console.log(`[Worker][${job.data.jobId}] ${endMessage}`);
+        logger.info({ jobId: job.id ?? job.data.jobId, phase: label, durationMs }, `Timing end${context}`);
         return result;
     } catch (error) {
         const endedAt = new Date();
@@ -129,7 +130,7 @@ export async function measureJobPhase<T>(
             failureMessage,
             { progress: progressValue, level: 'error' }
         );
-        console.warn(`[Worker][${job.data.jobId}] ${failureMessage}`);
+        logger.error({ jobId: job.id ?? job.data.jobId, phase: label, durationMs, err: error }, `Timing failure${context}`);
         throw error;
     }
 }

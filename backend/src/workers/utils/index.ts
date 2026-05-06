@@ -7,3 +7,4 @@ export * from './portal-helpers';
 export * from './form-helpers';
 export * from './password';
 export * from './captcha';
+export * from './diagnostics';

@@ -10,6 +10,8 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { FilingJob } from '../types';
 
+import { logger } from '../logger';
+
 export const KRA_QUEUE_NAME = 'kra-filing-queue';
 
 /**
@@ -26,11 +28,11 @@ export const redisConnection = new IORedis({
 });
 
 redisConnection.on('error', (err: Error) => {
-    console.error('[Redis] Connection error:', err.message);
+    logger.error({ err }, '[Redis] Connection error');
 });
 
 redisConnection.on('connect', () => {
-    console.log('[Redis] Connected successfully');
+    logger.info('[Redis] Connected successfully');
 });
 
 /**

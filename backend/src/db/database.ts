@@ -1,10 +1,15 @@
-import sqlite3 from 'sqlite3';
-import { open, Database } from 'sqlite';
 import path from 'path';
 import fs from 'fs';
+import { promises as fsPromises } from 'fs';
+import { db } from './kysely';
+import { Migrator, FileMigrationProvider } from 'kysely';
+import { logger } from '../logger';
+import sqlite3 from 'sqlite3';
+import { open, Database } from 'sqlite';
 
 const dbPath = path.resolve(__dirname, 'krafiler.sqlite');
 
+// Keep openDb for backward compatibility until all routes are migrated
 export async function openDb(): Promise<Database> {
     return open({
         filename: dbPath,
@@ -13,46 +18,39 @@ export async function openDb(): Promise<Database> {
 }
 
 export async function initDb() {
-    const db = await openDb();
-    
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            pin TEXT NOT NULL UNIQUE,
-            password TEXT NOT NULL,
-            obligations TEXT NOT NULL,
-            masterFileUrl TEXT,
-            masterFileLabel TEXT,
-            payrollSourceUrl TEXT,
-            latestZipUrl TEXT,
-            latestZipLabel TEXT,
-            payeZipUrl TEXT,
-            payeZipLabel TEXT,
-            nssfFileUrl TEXT,
-            nssfFileLabel TEXT,
-            shaFileUrl TEXT,
-            shaFileLabel TEXT,
-            paye TEXT DEFAULT 'na',
-            nssf TEXT DEFAULT 'na',
-            sha TEXT DEFAULT 'na',
-            eLevy TEXT DEFAULT 'na',
-            vat TEXT DEFAULT 'na',
-            tot TEXT DEFAULT 'na',
-            mri TEXT DEFAULT 'na',
-            dst TEXT DEFAULT 'na',
-            payeAmount REAL,
-            nitaAmount REAL,
-            housingLevyAmount REAL,
-            nssfAmount REAL,
-            shaAmount REAL
-        )
-    `);
+    logger.info('Running database migrations...');
 
-    // Insert default client if not exists
-    const existing = await db.get('SELECT id FROM clients WHERE pin = ?', ['P052262687K']);
+    const migrator = new Migrator({
+        db,
+        provider: new FileMigrationProvider({
+            fs: fsPromises,
+            path,
+            migrationFolder: path.join(__dirname, 'migrations'),
+        }),
+    });
+
+    const { error, results } = await migrator.migrateToLatest();
+
+    results?.forEach((it) => {
+        if (it.status === 'Success') {
+            logger.info(`Migration "${it.migrationName}" was executed successfully`);
+        } else if (it.status === 'Error') {
+            logger.error(`Failed to execute migration "${it.migrationName}"`);
+        }
+    });
+
+    if (error) {
+        logger.error({ err: error }, 'Failed to run migrations');
+        process.exit(1);
+    }
+
+    logger.info('Database initialized');
+
+    // Default seed (only required for standard backward compatibility initially)
+    const legacyDb = await openDb();
+    const existing = await legacyDb.get('SELECT id FROM clients WHERE pin = ?', ['P052262687K']);
     if (!existing) {
-        await db.run(
+        await legacyDb.run(
             `INSERT INTO clients (
                 name, pin, password, obligations, paye, nssf, sha, vat, masterFileUrl, masterFileLabel
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -78,63 +76,4 @@ export async function initDb() {
             fs.copyFileSync(sourceExcel, path.join(frontendDir, 'Axon_Unified_Payroll_Template_v3.xlsx'));
         }
     }
-
-    // Dynamic schema evolution for the new amounts
-    const columns = ['payeAmount', 'nitaAmount', 'housingLevyAmount', 'nssfAmount', 'shaAmount'];
-    for (const col of columns) {
-        try {
-            await db.run(`ALTER TABLE clients ADD COLUMN ${col} REAL`);
-        } catch (e) {
-            // Already exist
-        }
-    }
-
-    // Dynamic schema evolution for the obligation states
-    const obligationCols = ['paye', 'nssf', 'sha', 'eLevy', 'vat', 'tot', 'mri', 'dst'];
-    for (const col of obligationCols) {
-        try {
-            await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT DEFAULT 'na'`);
-        } catch (e) {
-            // Already exist
-        }
-    }
-
-    // Dynamic schema evolution for the last filed tracking
-    const lastFiledCols = [
-        'payeLastFiledDate', 'payeReceiptUrl',
-        'nssfLastFiledDate', 'nssfReceiptUrl',
-        'shaLastFiledDate', 'shaReceiptUrl',
-        'eLevyLastFiledDate', 'eLevyReceiptUrl',
-        'vatLastFiledDate', 'vatReceiptUrl',
-        'totLastFiledDate', 'totReceiptUrl',
-        'mriLastFiledDate', 'mriReceiptUrl',
-        'dstLastFiledDate', 'dstReceiptUrl'
-    ];
-    for (const col of lastFiledCols) {
-         try {
-             await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT`);
-         } catch (e) {
-             // Already exist
-         }
-    }
-
-    // Dynamic schema evolution for extra credentials/details (Email, Phone, Third-Party Logins)
-    const extraCredentialCols = [
-        'sector',
-        'email', 'phone', 
-        'nssfLogin', 'nssfPassword', 
-        'shaLogin', 'shaPassword', 
-        'etimsLogin', 'etimsPassword', 
-        'eLevyLogin', 'eLevyPassword'
-    ];
-    for (const col of extraCredentialCols) {
-         try {
-             await db.run(`ALTER TABLE clients ADD COLUMN ${col} TEXT`);
-         } catch (e) {
-             // Already exist
-         }
-    }
-
-    console.log('Database initialized');
-    return db;
 }

@@ -14,10 +14,14 @@ import {
     FilingService,
     ReceiptService
 } from './services';
-import { measureJobPhase, setJobStep } from './utils';
+import { measureJobPhase, setJobStep, captureFailureDiagnostics } from './utils';
+import { logger } from '../logger';
+import { db } from '../db/kysely';
 
 export default async function processFilingJob(job: Job<FilingJob>): Promise<JobResult> {
-    console.log(`[Worker][${job.data.jobId}] Starting filing orchestrator for obligation: ${job.data.payload.taxObligationType}`);
+    const startedAt = new Date().toISOString();
+    const startTimeMs = Date.now();
+    logger.info({ jobId: job.id ?? job.data.jobId, obligation: job.data.payload.taxObligationType }, 'Starting filing orchestrator');
     await setJobStep(job, 0, 'Initializing worker context...');
 
     const browserService = new BrowserService(job);
@@ -71,13 +75,45 @@ export default async function processFilingJob(job: Job<FilingJob>): Promise<Job
             () => receiptService.extractReceipt()
         );
 
+        // Record success to job history
+        const completedAt = new Date().toISOString();
+        await db.insertInto('job_history').values({
+            jobId: String(job.id ?? job.data.jobId),
+            clientPin: job.data.payload.kraPin,
+            taxObligation: job.data.payload.taxObligationType,
+            status: 'completed',
+            receiptPath: result.receiptPath ?? null,
+            receiptNumber: result.receiptNumber ?? null,
+            startedAt,
+            completedAt,
+            durationMs: Date.now() - startTimeMs
+        }).execute();
+
         return result;
 
     } catch (error) {
-        console.error(`[Worker][${job.data.jobId}] Error processing job:`, error);
+        logger.error({ jobId: job.id ?? job.data.jobId, err: error }, 'Error processing job');
+        
+        // Capture diagnostics if we have a page and an error occurred
+        await captureFailureDiagnostics(page, job, error);
+
+        // Record failure to job history
+        const completedAt = new Date().toISOString();
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await db.insertInto('job_history').values({
+            jobId: String(job.id ?? job.data.jobId),
+            clientPin: job.data.payload.kraPin,
+            taxObligation: job.data.payload.taxObligationType,
+            status: 'failed',
+            errorMessage,
+            startedAt,
+            completedAt,
+            durationMs: Date.now() - startTimeMs
+        }).execute();
+
         return {
             status: 'failed',
-            error: error instanceof Error ? error.message : String(error)
+            error: errorMessage
         };
     } finally {
         await browserService.close();

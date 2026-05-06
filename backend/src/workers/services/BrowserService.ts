@@ -85,7 +85,8 @@ export class BrowserService {
                 await this.browser.close().catch(() => {});
             }
         } catch (error) {
-            console.error(`[BrowserService][${this.job.data.jobId}] Error during cleanup:`, error);
+            const { logger } = require('../../../logger');
+            logger.error({ jobId: this.job.id ?? this.job.data.jobId, err: error }, `Error during cleanup`);
         } finally {
             this.page = null;
             this.context = null;

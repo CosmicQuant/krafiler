@@ -132,6 +132,7 @@ function resolveApiJobState(
 type FilingGuardInput = {
     userId: string;
     kraPin: string;
+    clientName?: string;
     periodFrom: string;
     periodTo: string;
     taxObligationType: FileNilReturnRequest['taxObligationType'];
@@ -141,6 +142,9 @@ type FilingGuardInput = {
     totMonth?: number;
     totTurnover?: number;
     payeZipUrl?: string;
+    vatZipUrl?: string;
+    prepareVatOnly?: boolean;
+    vatPreviousCredit?: number;
     printPrnOnly?: boolean;
 };
 
@@ -152,6 +156,7 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
     return JSON.stringify({
         userId: input.userId.trim(),
         kraPin: input.kraPin.trim().toUpperCase(),
+        clientName: input.clientName?.trim() ?? '',
         periodFrom: input.periodFrom.trim(),
         periodTo: input.periodTo.trim(),
         taxObligationType: input.taxObligationType,
@@ -161,6 +166,9 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         totMonth: normaliseOptionalNumber(input.totMonth),
         totTurnover: normaliseOptionalNumber(input.totTurnover),
         payeZipUrl: input.payeZipUrl?.trim() ?? '',
+        vatZipUrl: input.vatZipUrl?.trim() ?? '',
+        prepareVatOnly: Boolean(input.prepareVatOnly),
+        vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
         printPrnOnly: Boolean(input.printPrnOnly),
     });
 }
@@ -178,6 +186,7 @@ async function findDuplicatePendingFiling(input: FilingGuardInput): Promise<{ jo
         const pendingKey = buildPendingFilingKey({
             userId: pendingJobData.userId,
             kraPin: pendingJobData.payload.kraPin,
+            clientName: pendingJobData.payload.clientName,
             periodFrom: pendingJobData.payload.periodFrom,
             periodTo: pendingJobData.payload.periodTo,
             taxObligationType: pendingJobData.payload.taxObligationType,
@@ -187,6 +196,9 @@ async function findDuplicatePendingFiling(input: FilingGuardInput): Promise<{ jo
             totMonth: pendingJobData.payload.totMonth,
             totTurnover: pendingJobData.payload.totTurnover,
             payeZipUrl: pendingJobData.payload.payeZipUrl,
+            vatZipUrl: pendingJobData.payload.vatZipUrl,
+            prepareVatOnly: pendingJobData.payload.prepareVatOnly,
+            vatPreviousCredit: pendingJobData.payload.vatPreviousCredit,
             printPrnOnly: pendingJobData.payload.printPrnOnly,
         });
 
@@ -329,6 +341,63 @@ const validateFilingRequest = [
         .optional({ values: 'falsy' })
         .isString()
         .withMessage('otpCode must be a string when provided'),
+
+    body('clientName')
+        .optional({ values: 'falsy' })
+        .isString()
+        .withMessage('clientName must be a string when provided'),
+
+    body('vatZipUrl')
+        .custom((value: unknown, { req }) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+
+            if (typeof value !== 'string') {
+                throw new Error('vatZipUrl must be a string when provided');
+            }
+
+            if (req.body.taxObligationType !== 'vat') {
+                throw new Error('vatZipUrl is only supported for VAT filings');
+            }
+
+            return true;
+        }),
+
+    body('prepareVatOnly')
+        .custom((value: unknown, { req }) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+
+            if (typeof value !== 'boolean' && value !== 'true' && value !== 'false') {
+                throw new Error('prepareVatOnly must be a boolean when provided');
+            }
+
+            if (`${value}` === 'true' && req.body.taxObligationType !== 'vat') {
+                throw new Error('prepareVatOnly is only supported for VAT filings');
+            }
+
+            return true;
+        }),
+
+    body('vatPreviousCredit')
+        .custom((value: unknown, { req }) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+
+            if (req.body.taxObligationType !== 'vat') {
+                throw new Error('vatPreviousCredit is only supported for VAT filings');
+            }
+
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                throw new Error('vatPreviousCredit must be a non-negative number');
+            }
+
+            return true;
+        }),
 ];
 
 // ─── POST /api/tax/file-return (+ legacy alias) ─────────────────────────────
@@ -352,7 +421,7 @@ router.post(
             return;
         }
 
-        const { kraPin, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, printPrnOnly } =
+        const { kraPin, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, printPrnOnly } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -368,6 +437,7 @@ router.post(
             const duplicatePendingJob = await findDuplicatePendingFiling({
                 userId,
                 kraPin,
+                clientName: typeof clientName === 'string' ? clientName : undefined,
                 periodFrom: effectivePeriod.periodFrom,
                 periodTo: effectivePeriod.periodTo,
                 taxObligationType,
@@ -381,6 +451,13 @@ router.post(
                 totMonth: typeof totMonth === 'number' ? totMonth : undefined,
                 totTurnover: typeof totTurnover === 'number' ? totTurnover : undefined,
                 payeZipUrl: typeof payeZipUrl === 'string' ? payeZipUrl : undefined,
+                vatZipUrl: typeof vatZipUrl === 'string' ? vatZipUrl : undefined,
+                prepareVatOnly: prepareVatOnly === true,
+                vatPreviousCredit: typeof vatPreviousCredit === 'number'
+                    ? vatPreviousCredit
+                    : vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
+                        ? Number(vatPreviousCredit)
+                        : undefined,
                 printPrnOnly: Boolean(req.body.printPrnOnly),
             });
 
@@ -405,6 +482,9 @@ router.post(
                 userId,
                 payload: {
                     kraPin,
+                    clientName: typeof clientName === 'string' && clientName.trim().length > 0
+                        ? clientName.trim()
+                        : undefined,
                     encryptedPassword: encryptedData,
                     iv,
                     authTag,
@@ -426,6 +506,11 @@ router.post(
                     isNil: (req.body as any).isNil === true,
                     printPrnOnly: printPrnOnly === true,
                     ...(payeZipUrl && { payeZipUrl }),
+                    ...(vatZipUrl && { vatZipUrl }),
+                    ...(prepareVatOnly === true && { prepareVatOnly: true }),
+                    ...(vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
+                        ? { vatPreviousCredit: Number(vatPreviousCredit) }
+                        : {}),
                 },
                 createdAt: new Date().toISOString(),
             };

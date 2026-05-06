@@ -1,6 +1,15 @@
 {
+  "name": "krafiler",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "worker": "npm --prefix backend run worker"
+    "worker": "npm --prefix backend run worker",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",

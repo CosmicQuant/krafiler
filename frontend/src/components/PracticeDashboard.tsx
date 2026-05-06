@@ -1,5 +1,21 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import CompanyDetails from './CompanyDetails';
+import { Sidebar } from './dashboard/Sidebar';
+import { useUIStore } from '../store/uiStore';
+import { 
+    DashboardView, PlanKey, PracticePlan, TaxStatus, VatPreparationSummary, 
+    ClientObligation, FilingJobState, ActiveDashboardJob 
+} from '../types';
+import { 
+    normalizeClientObligation, buildStoredArtifactUrl, getPreviousMonthIsoRange, 
+    formatTaxAmount, isSameMoney, getReceiptUrlForObligation, isPendingFilingJob, 
+    isTerminalFilingJob, getAutoFileLabel, getFilingStatusLabel, getFilingProgressTone, 
+    isPayrollDeskClient, markPayrollStatusesGenerated 
+} from '../utils/formatters';
+import { StatusBadge, InteractiveStatusBadge } from './ui/StatusBadge';
+import { ExcelIcon, ZipIcon } from './icons';
+import { NewClientModal } from './dashboard/NewClientModal';
+import { ClientTable } from './dashboard/ClientTable';
 import {
     Activity,
     Building2,
@@ -27,15 +43,6 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-type DashboardView = 'overview' | 'desk-9th' | 'desk-20th' | 'desk-elevy' | 'desk-nil' | 'clients' | 'settings';
-type PlanKey = 'starter' | 'growth' | 'enterprise';
-
-type PracticePlan = {
-    label: string;
-    capacity: number | 'Unlimited';
-    used: number;
-};
-
 const plans: Record<PlanKey, PracticePlan> = {
     starter: { label: 'Practice Starter', capacity: 10, used: 8 },
     growth: { label: 'Growing Firm', capacity: 50, used: 42 },
@@ -43,305 +50,6 @@ const plans: Record<PlanKey, PracticePlan> = {
 };
 
 const apiFetch = (path: string, init?: RequestInit) => fetch(`/api${path}`, init);
-
-export type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
-
-export type ClientObligation = {
-    iTaxPassword?: string;
-    sector?: string;
-    id: string;
-    name: string;
-    pin: string;
-    masterFileUrl?: string;
-    masterFileLabel?: string;
-    payrollSourceUrl?: string;
-    payeZipUrl?: string;
-    totZipUrl?: string;
-    totZipLabel?: string;
-    payeZipLabel?: string;
-    nssfFileUrl?: string;
-    nssfFileLabel?: string;
-    shaFileUrl?: string;
-    shaFileLabel?: string;
-    lastGeneratedAt?: string;
-    payeAmount?: number;
-    nitaAmount?: number;
-    housingLevyAmount?: number;
-    nssfAmount?: number;
-    shaAmount?: number;
-    // 9th/10th
-    paye: TaxStatus;
-    nssf: TaxStatus;
-    sha: TaxStatus;
-    eLevy: TaxStatus;
-    // 20th
-    vat: TaxStatus;
-    tot: TaxStatus;
-    mri: TaxStatus;
-    dst: TaxStatus;
-
-    payeLastFiledDate?: string;
-    payeReceiptUrl?: string;
-    nssfLastFiledDate?: string;
-    nssfReceiptUrl?: string;
-    shaLastFiledDate?: string;
-    shaReceiptUrl?: string;
-    eLevyLastFiledDate?: string;
-    eLevyReceiptUrl?: string;
-    vatLastFiledDate?: string;
-    vatReceiptUrl?: string;
-    totLastFiledDate?: string;
-    totReceiptUrl?: string;
-    mriLastFiledDate?: string;
-    mriReceiptUrl?: string;
-    dstLastFiledDate?: string;
-    dstReceiptUrl?: string;
-};
-
-type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
-
-type ActiveDashboardJob = {
-    id: string;
-    state: FilingJobState;
-    progress: number;
-    message: string;
-    failedReason?: string;
-    receiptUrl?: string;
-    prnUrl?: string;
-};
-
-function normalizeClientObligation(value: string) {
-    const normalized = value.trim().toLowerCase();
-
-    if (!normalized) return normalized;
-    if (normalized === 'monthly_rental_income' || normalized === 'monthly rental income') return 'mri';
-    if (normalized === 'turnover_tax' || normalized === 'turnover tax') return 'tot';
-    if (normalized === 'elevy' || normalized === 'elevy') return 'elevy';
-
-    return normalized;
-}
-
-function buildStoredArtifactUrl(resultPath?: string) {
-    if (!resultPath) {
-        return undefined;
-    }
-
-    const normalized = resultPath.replace(/\\/g, '/');
-
-    if (/^https?:\/\//i.test(normalized)) {
-        return normalized;
-    }
-
-    if (normalized.startsWith('/api/')) {
-        return normalized;
-    }
-
-    if (/^[A-Za-z]:\//.test(normalized)) {
-        const receiptsMarkerIndex = normalized.toLowerCase().indexOf('/receipts/');
-        if (receiptsMarkerIndex >= 0) {
-            return `/api${normalized.slice(receiptsMarkerIndex)}`;
-        }
-        return undefined;
-    }
-
-    return `/api/${normalized.replace(/^\/+/, '')}`;
-}
-
-function getReceiptUrlForObligation(client: ClientObligation, type: string) {
-    switch (type) {
-        case 'VAT':
-            return client.vatReceiptUrl;
-        case 'TOT':
-            return client.totReceiptUrl;
-        case 'MRI':
-            return client.mriReceiptUrl;
-        case 'DST':
-            return client.dstReceiptUrl;
-        case 'PAYE':
-            return client.payeReceiptUrl;
-        case 'NSSF':
-            return client.nssfReceiptUrl;
-        case 'SHA':
-            return client.shaReceiptUrl;
-        default:
-            return undefined;
-    }
-}
-
-function isPendingFilingJob(job?: ActiveDashboardJob | null) {
-    return !!job && (job.state === 'waiting' || job.state === 'active' || job.state === 'delayed' || job.state === 'cancelling');
-}
-
-function isTerminalFilingJob(job?: ActiveDashboardJob | null) {
-    return !!job && (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled');
-}
-
-function getAutoFileLabel(job?: ActiveDashboardJob | null) {
-    if (!job) {
-        return 'AutoFile PAYE';
-    }
-
-    if (job.state === 'waiting' || job.state === 'delayed') {
-        return 'Queued...';
-    }
-
-    if (job.state === 'active') {
-        return 'Filing...';
-    }
-
-    if (job.state === 'cancelling') {
-        return 'Cancelling...';
-    }
-
-    return 'Auto-File';
-}
-
-function getFilingStatusLabel(job: ActiveDashboardJob) {
-    if (job.state === 'completed') {
-        return '✓ Finished';
-    }
-
-    if (job.state === 'failed') {
-        return '⚠ Failed';
-    }
-
-    if (job.state === 'cancelled') {
-        return '■ Cancelled';
-    }
-
-    if (job.state === 'cancelling') {
-        return '◌ Cancelling';
-    }
-
-    return '⚙ Filing...';
-}
-
-function getFilingProgressTone(job: ActiveDashboardJob) {
-    if (job.state === 'completed') {
-        return 'bg-emerald-500';
-    }
-
-    if (job.state === 'failed') {
-        return 'bg-red-500';
-    }
-
-    if (job.state === 'cancelled') {
-        return 'bg-slate-500';
-    }
-
-    if (job.state === 'cancelling') {
-        return 'bg-amber-500';
-    }
-
-    return 'bg-blue-500';
-}
-
-
-
-function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: { status: TaxStatus; generatedAt?: string; lastFiledDate?: string; receiptUrl?: string }) {
-    if (status === 'na') return <span className="text-slate-600">-</span>;
-    if (status === 'done') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Done</span>;
-    if (status === 'generated') return (
-        <span className="inline-flex flex-col items-center">
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/20 px-2.5 py-0.5 text-xs font-semibold text-blue-400"><FileArchive className="h-3 w-3" /> Generated</span>
-            {generatedAt && <span className="mt-1 text-[9px] font-medium text-slate-500 opacity-80">{generatedAt}</span>}
-        </span>
-    );
-    if (status === 'filed') return (
-        <span className="inline-flex flex-col items-center">
-            {receiptUrl ? (
-                <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Download Returns Receipt">
-                    <CheckCircle2 className="h-3 w-3" /> Filed
-                </a>
-            ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400"><CheckCircle2 className="h-3 w-3" /> Filed</span>
-            )}
-            {lastFiledDate && <span className="mt-1 text-[10px] font-medium text-slate-400">{lastFiledDate}</span>}
-        </span>
-    );
-    if (status === 'paid') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Paid</span>;
-    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-400"><Clock className="h-3 w-3" /> Due</span>;
-}
-
-function InteractiveStatusBadge({ 
-    status, 
-    generatedAt,
-    lastFiledDate,
-    receiptUrl,
-    onUpdateStatus 
-}: { 
-    status: TaxStatus; 
-    generatedAt?: string;
-    lastFiledDate?: string;
-    receiptUrl?: string;
-    onUpdateStatus: (newStatus: TaxStatus) => void 
-}) {
-    if (status === 'na' || status === 'done' || status === 'due') {
-        return <StatusBadge status={status} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />;
-    }
-
-    return (
-        <div className="group relative inline-flex flex-col items-center justify-center">
-            <div className="cursor-pointer transition" role="button" tabIndex={0}>
-                <StatusBadge status={status} generatedAt={generatedAt} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />
-            </div>
-            <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 hidden flex-col w-32 scale-95 opacity-0 group-hover:flex group-hover:scale-100 group-hover:opacity-100 items-center justify-center transition-all origin-top duration-200">
-                <div className="rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1.5 text-xs overflow-hidden flex flex-col gap-1 w-full">
-                    <button 
-                        onClick={() => onUpdateStatus('filed')}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-indigo-400 hover:bg-indigo-500/20"
-                    >
-                        <CheckCircle2 className="h-3 w-3" /> Mark Filed
-                    </button>
-                    <button 
-                        onClick={() => onUpdateStatus('paid')}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-emerald-400 hover:bg-emerald-500/20"
-                    >
-                        <CheckCircle2 className="h-3 w-3" /> Mark Paid
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function isPayrollDeskClient(client: ClientObligation) {
-    return client.paye !== 'na' || client.nssf !== 'na' || client.sha !== 'na';
-}
-
-function markPayrollStatusesGenerated(client: ClientObligation): ClientObligation {
-    const timestamp = new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    return {
-        ...client,
-        paye: client.paye === 'na' ? 'na' : 'generated',
-        nssf: client.nssf === 'na' ? 'na' : 'generated',
-        sha: client.sha === 'na' ? 'na' : 'generated',
-        lastGeneratedAt: timestamp,
-    };
-}
-
-const ExcelIcon = ({ className }: { className?: string }) => (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#107C41" />
-        <path d="M14 2V8H20" fill="#185C37" />
-        <path d="M7 11.5L9 14L7 16.5H9L10 15L11 16.5H13L11 14L13 11.5H11L10 13L9 11.5H7Z" fill="white" />
-    </svg>
-);
-
-const ZipIcon = ({ className }: { className?: string }) => (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M13 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V9L13 2Z" fill="#F2C811" />
-        <path d="M13 2V9H20" fill="#D4AF37" />
-        <rect x="9" y="4" width="2" height="2" fill="#71717A" />
-        <rect x="9" y="8" width="2" height="2" fill="#71717A" />
-        <rect x="9" y="12" width="2" height="2" fill="#71717A" />
-        <rect x="11" y="6" width="2" height="2" fill="#71717A" />
-        <rect x="11" y="10" width="2" height="2" fill="#71717A" />
-        <rect x="9" y="14" width="4" height="3" rx="1" fill="#A1A1AA" />
-    </svg>
-);
 
 const TAX_OBLIGATION_OPTIONS = [
     { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)', filingMode: 'nil' },
@@ -354,10 +62,7 @@ const TAX_OBLIGATION_OPTIONS = [
 ];
 
 export default function PracticeDashboard() {
-    const [view, setView] = useState<DashboardView>('desk-9th');
-    const [monthlyReturnFilter, setMonthlyReturnFilter] = useState<'ALL' | 'VAT' | 'TOT' | 'MRI' | 'DST'>('VAT');
-    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-    const [selectedPlan, setSelectedPlan] = useState<PlanKey>('growth');
+    const { view, setView, monthlyReturnFilter, setMonthlyReturnFilter, isSidebarOpen, setIsSidebarOpen, selectedPlan, setSelectedPlan } = useUIStore();
     const [clients, setClients] = useState<ClientObligation[]>([]);
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
     const [isGeneratingZips, setIsGeneratingZips] = useState(false);
@@ -383,6 +88,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
     const [newClientPassword, setNewClientPassword] = useState('');
     const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
     const [totInputVals, setTotInputVals] = useState<Record<string, string>>({});
+    const [vatPreviousCreditVals, setVatPreviousCreditVals] = useState<Record<string, string>>({});
     const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
     const [isSavingClient, setIsSavingClient] = useState(false);
     const [newClientModalError, setNewClientModalError] = useState<string | null>(null);
@@ -625,7 +331,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
     };
 
     const plan = plans[selectedPlan];
-    const capacityValue = plan.capacity === 'Unlimited' ? '∞' : plan.capacity;
+    const capacityValue = plan.capacity === 'Unlimited' ? 'Ã¢Ë†Å¾' : plan.capacity;
     const capacityPercentage = plan.capacity === 'Unlimited' ? 25 : Math.round((plan.used / (plan.capacity as number)) * 100);
     const payrollClients = clients.filter(isPayrollDeskClient);
     const payrollPendingCount = payrollClients.filter((client) => client.paye === 'due' || client.nssf === 'due' || client.sha === 'due').length;
@@ -746,6 +452,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
         const checkJobs = async () => {
             const currentJobs = { ...activeJobs };
             let hasChanges = false;
+            const vatClientUpdates: Record<string, Partial<ClientObligation>> = {};
 
             for (const [clientId, job] of Object.entries(currentJobs)) {
                 if (isTerminalFilingJob(job) || !job.id) continue;
@@ -759,12 +466,22 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
                     const resultReceiptUrl = buildStoredArtifactUrl(data.result?.receiptPath);
                     const resultPrnUrl = buildStoredArtifactUrl(data.result?.prnPath);
+                    const resultGeneratedZipUrl = buildStoredArtifactUrl(data.result?.generatedZipUrl);
+                    const resultSourcePackageUrl = buildStoredArtifactUrl(data.result?.sourcePackageUrl);
+                    const resultVatSummary = data.result?.vatSummary && typeof data.result.vatSummary === 'object'
+                        ? data.result.vatSummary as VatPreparationSummary
+                        : undefined;
 
                     if (currentJobs[clientId].state !== data.state || 
                         currentJobs[clientId].progress !== data.progress || 
                         currentJobs[clientId].message !== newMessage ||
                         currentJobs[clientId].receiptUrl !== resultReceiptUrl ||
-                        currentJobs[clientId].prnUrl !== resultPrnUrl) {
+                        currentJobs[clientId].prnUrl !== resultPrnUrl ||
+                        currentJobs[clientId].generatedZipUrl !== resultGeneratedZipUrl ||
+                        currentJobs[clientId].sourcePackageUrl !== resultSourcePackageUrl ||
+                        currentJobs[clientId].generatedZipLabel !== data.result?.generatedZipLabel ||
+                        currentJobs[clientId].sourcePackageLabel !== data.result?.sourcePackageLabel ||
+                        JSON.stringify(currentJobs[clientId].vatSummary ?? null) !== JSON.stringify(resultVatSummary ?? null)) {
                         
                         currentJobs[clientId] = {
                             ...currentJobs[clientId],
@@ -775,8 +492,48 @@ const [etimsPassword, setEtimsPassword] = useState('');
                             failedReason: data.failedReason || '',
                             receiptUrl: resultReceiptUrl,
                             prnUrl: resultPrnUrl,
+                            generatedZipUrl: resultGeneratedZipUrl,
+                            generatedZipLabel: data.result?.generatedZipLabel,
+                            sourcePackageUrl: resultSourcePackageUrl,
+                            sourcePackageLabel: data.result?.sourcePackageLabel,
+                            vatSummary: resultVatSummary,
                         };
                         hasChanges = true;
+                    }
+
+                    if (currentJobs[clientId].obligationType === 'vat') {
+                        const vatUpdate: Partial<ClientObligation> = {};
+                        const finishedAt = typeof data.finishedOn === 'string' ? data.finishedOn : new Date().toISOString();
+
+                        if (resultGeneratedZipUrl) {
+                            vatUpdate.vatZipUrl = resultGeneratedZipUrl;
+                            vatUpdate.vatZipLabel = data.result?.generatedZipLabel;
+                            vatUpdate.vatSourcePackageUrl = resultSourcePackageUrl;
+                            vatUpdate.vatSourcePackageLabel = data.result?.sourcePackageLabel;
+                            vatUpdate.vatPreparedAt = finishedAt;
+                            vatUpdate.vat = 'generated';
+                        }
+
+                        if (resultVatSummary) {
+                            vatUpdate.vatInputVat = resultVatSummary.inputVat;
+                            vatUpdate.vatOutputVat = resultVatSummary.outputVat;
+                            vatUpdate.vatPreviousCredit = resultVatSummary.previousCredit;
+                            vatUpdate.vatPayableVat = resultVatSummary.payableVat;
+                            vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
+                        }
+
+                        if (data.state === 'completed' && resultReceiptUrl) {
+                            vatUpdate.vat = 'filed';
+                            vatUpdate.vatReceiptUrl = resultReceiptUrl;
+                            vatUpdate.vatLastFiledDate = finishedAt;
+                        }
+
+                        if (Object.keys(vatUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...vatUpdate,
+                            };
+                        }
                     }
                 } catch (e) {
                      // suppress network errors so UI doesn't crash
@@ -785,6 +542,20 @@ const [etimsPassword, setEtimsPassword] = useState('');
 
             if (hasChanges) {
                 setActiveJobs((prev) => ({ ...prev, ...currentJobs }));
+            }
+
+            if (Object.keys(vatClientUpdates).length > 0) {
+                setClients((current) => current.map((client) => {
+                    const update = vatClientUpdates[client.id];
+                    if (!update) {
+                        return client;
+                    }
+
+                    return {
+                        ...client,
+                        ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined)),
+                    };
+                }));
             }
         };
 
@@ -947,6 +718,176 @@ const [etimsPassword, setEtimsPassword] = useState('');
             setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: (dataResp.jobState || 'waiting') as FilingJobState, progress: 0, message: 'Queueing job...', failedReason: '' } }));
         } catch(e: any) {
             setDashboardNotice({ tone: 'error', message: e.message });
+        }
+    };
+
+    const getVatPreviousCreditAmount = (client: ClientObligation) => {
+        const rawValue = vatPreviousCreditVals[client.id];
+        if (!rawValue || rawValue.trim().length === 0) {
+            return 0;
+        }
+
+        const parsedValue = parseFloat(rawValue);
+        if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+            throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
+        }
+
+        return parsedValue;
+    };
+
+    const handlePrepareVat = async (client: ClientObligation) => {
+        try {
+            if (isPendingFilingJob(activeJobs[client.id])) {
+                setDashboardNotice({
+                    tone: 'info',
+                    message: `A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`,
+                });
+                return;
+            }
+
+            const previousCredit = getVatPreviousCreditAmount(client);
+            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+
+            setDashboardNotice({ tone: 'info', message: `Generating VAT ZIP for ${client.name}. The worker will download the KRA auto-populated package first.` });
+
+            const payload = {
+                clientName: client.name,
+                kraPin: client.pin,
+                kraPassword: (client as any).password || client.iTaxPassword || client.pin,
+                periodFrom,
+                periodTo,
+                taxObligationType: 'vat',
+                ownsRentalProperty: false,
+                prepareVatOnly: true,
+                vatPreviousCredit: previousCredit,
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = (dataResp.jobState || 'waiting') as FilingJobState;
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: {
+                            id: dataResp.jobId,
+                            state: duplicateState,
+                            progress: prev[client.id]?.id === dataResp.jobId ? prev[client.id].progress : 0,
+                            message: dataResp.message || 'A VAT ZIP generation job is already queued or active.',
+                            failedReason: '',
+                            obligationType: 'vat',
+                        },
+                    }));
+                    setDashboardNotice({ tone: 'info', message: dataResp.message || `A VAT ZIP generation job is already queued or active for ${client.name}.` });
+                    return;
+                }
+
+                throw new Error(dataResp.message || dataResp.error || 'Failed to queue VAT ZIP generation job.');
+            }
+
+            setActiveJobs((prev) => ({
+                ...prev,
+                [client.id]: {
+                    id: dataResp.jobId,
+                    state: (dataResp.jobState || 'waiting') as FilingJobState,
+                    progress: 0,
+                    message: 'Queueing VAT ZIP generation job...',
+                    failedReason: '',
+                    obligationType: 'vat',
+                },
+            }));
+            setDashboardNotice({ tone: 'success', message: `VAT ZIP generation job queued for ${client.name}. Review the summary when it finishes, then file VAT.` });
+        } catch (error: any) {
+            setDashboardNotice({ tone: 'error', message: error.message || `Failed to prepare VAT for ${client.name}.` });
+        }
+    };
+
+    const handleConfirmVatFiling = async (client: ClientObligation) => {
+        try {
+            if (isPendingFilingJob(activeJobs[client.id])) {
+                setDashboardNotice({
+                    tone: 'info',
+                    message: `A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`,
+                });
+                return;
+            }
+
+            const effectiveVatZipUrl = client.vatZipUrl ?? activeJobs[client.id]?.generatedZipUrl;
+            const preparedPreviousCredit = client.vatPreviousCredit ?? activeJobs[client.id]?.vatSummary?.previousCredit ?? 0;
+
+            if (!effectiveVatZipUrl) {
+                throw new Error(`Generate VAT ZIP for ${client.name} before filing.`);
+            }
+
+            const previousCredit = getVatPreviousCreditAmount(client);
+            if (!isSameMoney(preparedPreviousCredit, previousCredit)) {
+                throw new Error(`The VAT credit value changed for ${client.name}. Generate VAT ZIP again before filing.`);
+            }
+
+            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+
+            setDashboardNotice({ tone: 'info', message: `Filing VAT for ${client.name} with the generated ZIP.` });
+
+            const payload = {
+                clientName: client.name,
+                kraPin: client.pin,
+                kraPassword: (client as any).password || client.iTaxPassword || client.pin,
+                periodFrom,
+                periodTo,
+                taxObligationType: 'vat',
+                ownsRentalProperty: false,
+                vatZipUrl: effectiveVatZipUrl,
+            };
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) {
+                    const duplicateState = (dataResp.jobState || 'waiting') as FilingJobState;
+                    setActiveJobs((prev) => ({
+                        ...prev,
+                        [client.id]: {
+                            id: dataResp.jobId,
+                            state: duplicateState,
+                            progress: prev[client.id]?.id === dataResp.jobId ? prev[client.id].progress : 0,
+                            message: dataResp.message || 'A VAT auto filing job is already queued or active.',
+                            failedReason: '',
+                            obligationType: 'vat',
+                        },
+                    }));
+                    setDashboardNotice({ tone: 'info', message: dataResp.message || `A VAT auto filing job is already queued or active for ${client.name}.` });
+                    return;
+                }
+
+                throw new Error(dataResp.message || dataResp.error || 'Failed to queue VAT auto filing job.');
+            }
+
+            setActiveJobs((prev) => ({
+                ...prev,
+                [client.id]: {
+                    id: dataResp.jobId,
+                    state: (dataResp.jobState || 'waiting') as FilingJobState,
+                    progress: 0,
+                    message: 'Queueing VAT auto filing job...',
+                    failedReason: '',
+                    obligationType: 'vat',
+                },
+            }));
+            setDashboardNotice({ tone: 'success', message: `VAT auto filing job queued for ${client.name}. The worker will upload the generated ZIP and generate the PRN after filing.` });
+        } catch (error: any) {
+            setDashboardNotice({ tone: 'error', message: error.message || `Failed to confirm VAT filing for ${client.name}.` });
         }
     };
 
@@ -1846,6 +1787,24 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 const latestReceiptUrl = jobArtifacts?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
                                 const latestPrnUrl = jobArtifacts?.prnUrl;
                                 const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
+                                const vatGeneratedZipUrl = ob.client.vatZipUrl ?? jobArtifacts?.generatedZipUrl;
+                                const vatSourcePackageUrl = ob.client.vatSourcePackageUrl ?? jobArtifacts?.sourcePackageUrl;
+                                const vatSummary: VatPreparationSummary = {
+                                    inputVat: ob.client.vatInputVat ?? jobArtifacts?.vatSummary?.inputVat ?? 0,
+                                    outputVat: ob.client.vatOutputVat ?? jobArtifacts?.vatSummary?.outputVat ?? 0,
+                                    previousCredit: ob.client.vatPreviousCredit ?? jobArtifacts?.vatSummary?.previousCredit ?? 0,
+                                    payableVat: ob.client.vatPayableVat ?? jobArtifacts?.vatSummary?.payableVat ?? 0,
+                                    netVatBalance: ob.client.vatNetVatBalance ?? jobArtifacts?.vatSummary?.netVatBalance ?? 0,
+                                };
+                                const vatInputValue = vatPreviousCreditVals[ob.client.id]
+                                    ?? (typeof ob.client.vatPreviousCredit === 'number' ? String(ob.client.vatPreviousCredit) : '');
+                                const parsedVatInputValue = vatInputValue.trim().length > 0 ? Number.parseFloat(vatInputValue) : 0;
+                                const vatCurrentCredit = Number.isFinite(parsedVatInputValue) ? parsedVatInputValue : 0;
+                                const vatHasPreparedArtifacts = Boolean(vatGeneratedZipUrl);
+                                const vatCreditMatchesPrepared = isSameMoney(vatSummary.previousCredit, vatCurrentCredit);
+                                const vatGenerateActionLabel = vatHasPreparedArtifacts ? 'Regenerate VAT ZIP' : 'Generate VAT ZIP';
+                                const vatBalanceLabel = vatSummary.netVatBalance >= 0 ? 'VAT Payable' : 'Credit Balance';
+                                const vatBalanceValue = Math.abs(vatSummary.netVatBalance);
                                 
                                 return (
                                 <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50 group">
@@ -1873,6 +1832,41 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                         <Cloud className="h-4 w-4" /> Connect eTIMS Data
                                                     </button>
                                                 )}
+
+                                                {ob.type === 'VAT' && (
+                                                    <div className="mt-2 flex flex-col gap-2 max-w-[260px]">
+                                                        {vatGeneratedZipUrl ? (
+                                                            <>
+                                                                <a
+                                                                    href={vatGeneratedZipUrl}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition"
+                                                                    title={ob.client.vatZipLabel}
+                                                                >
+                                                                    <Download className="h-3 w-3" /> Generated VAT ZIP (KRA Upload)
+                                                                </a>
+                                                                <span className="text-[10px] text-slate-500 text-center">
+                                                                    Generated: {new Date(ob.client.vatPreparedAt || Date.now()).toLocaleString()}
+                                                                </span>
+                                                            </>
+                                                        ) : (
+                                                            <span className="text-[11px] text-slate-500">No VAT ZIP generated yet.</span>
+                                                        )}
+
+                                                        {vatSourcePackageUrl && (
+                                                            <a
+                                                                href={vatSourcePackageUrl}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-800/70 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700/80 transition"
+                                                                title={ob.client.vatSourcePackageLabel}
+                                                            >
+                                                                <Download className="h-3 w-3" /> Download VAT Source Package
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                         {ob.type === 'DST' && (
@@ -1898,19 +1892,61 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     </td>
                                     <td className="px-4 py-4 min-w-[280px]">
                                         {ob.type === 'VAT' && (
-                                            <div className="flex flex-col gap-2 rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-slate-600 transition">
+                                            <div className="flex flex-col gap-3 rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-slate-600 transition">
+                                                <div>
+                                                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Previous Month VAT Credit</label>
+                                                    <div className="mt-1 flex items-center gap-2">
+                                                        <span className="text-xs font-medium text-slate-500">KES</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            placeholder="Carry-forward credit"
+                                                            value={vatInputValue}
+                                                            onChange={e => setVatPreviousCreditVals(prev => ({ ...prev, [ob.client.id]: e.target.value }))}
+                                                            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white placeholder-slate-500 outline-none focus:border-blue-500 transition shadow-inner"
+                                                        />
+                                                    </div>
+                                                </div>
                                                 <div className="flex justify-between items-center text-xs">
                                                     <span className="text-slate-400 font-medium">Input VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Purchases)</span></span>
-                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {isEtimsConnected ? '68,400.00' : '0.00'}</span>
+                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {formatTaxAmount(vatSummary.inputVat)}</span>
                                                 </div>
                                                 <div className="flex justify-between items-center text-xs">
                                                     <span className="text-slate-400 font-medium">Output VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Sales)</span></span>
-                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {isEtimsConnected ? '124,500.00' : '0.00'}</span>
+                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {formatTaxAmount(vatSummary.outputVat)}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center text-xs">
+                                                    <span className="text-slate-400 font-medium">Previous Credit <span className="font-normal text-[10px] ml-1 text-slate-500">(Applied)</span></span>
+                                                    <span className="text-slate-200 font-bold border-b border-transparent">KES {formatTaxAmount(vatSummary.previousCredit)}</span>
                                                 </div>
                                                 <div className="border-t border-slate-700/80 my-1 pt-2.5 flex justify-between items-center text-xs">
-                                                    <span className="font-bold text-blue-400">VAT Payable <span className="font-normal text-[10px] ml-1 opacity-70">(Remaining)</span></span>
-                                                    <span className="font-black text-[13px] text-blue-400 drop-shadow-sm">KES {isEtimsConnected ? '56,100.00' : '0.00'}</span>
+                                                    <span className={`font-bold ${vatSummary.netVatBalance >= 0 ? 'text-blue-400' : 'text-emerald-400'}`}>{vatBalanceLabel} <span className="font-normal text-[10px] ml-1 opacity-70">(After credit)</span></span>
+                                                    <span className={`font-black text-[13px] drop-shadow-sm ${vatSummary.netVatBalance >= 0 ? 'text-blue-400' : 'text-emerald-400'}`}>KES {formatTaxAmount(vatBalanceValue)}</span>
                                                 </div>
+                                                {vatHasPreparedArtifacts ? (
+                                                    <div className="flex flex-col gap-2 rounded-lg border border-slate-700/70 bg-slate-950/40 p-3 text-[11px] text-slate-300">
+                                                        <span className={`font-semibold ${vatCreditMatchesPrepared ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                                            {vatCreditMatchesPrepared
+                                                                ? 'VAT summary is ready. File VAT when you are satisfied with the figures.'
+                                                                : 'The VAT credit input changed after generation. Regenerate VAT ZIP before filing VAT.'}
+                                                        </span>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {vatSourcePackageUrl && (
+                                                                <a href={vatSourcePackageUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 font-semibold text-slate-300 hover:bg-slate-800/80 transition" title={ob.client.vatSourcePackageLabel}>
+                                                                    <Download className="h-3 w-3" /> Source Package
+                                                                </a>
+                                                            )}
+                                                            {vatGeneratedZipUrl && (
+                                                                <a href={vatGeneratedZipUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 font-semibold text-emerald-400 hover:bg-emerald-500/20 transition" title={ob.client.vatZipLabel}>
+                                                                    <Download className="h-3 w-3" /> Generated VAT ZIP
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-[11px] text-slate-500">Generate VAT ZIP to download the KRA package, build the upload ZIP, and review the summary before filing VAT.</span>
+                                                )}
                                             </div>
                                         )}
                                         {ob.type === 'TOT' && (
@@ -1975,18 +2011,37 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                     </td>
                                     <td className="px-4 py-4 pt-5 align-top text-right">
                                         <div className="flex flex-col gap-2 w-full max-w-[140px] ml-auto">
-                                            <button 
-                                                onClick={() => {
-                                                    if (ob.type === 'MRI') handleFileMri(ob.client);
-                                                    else if (ob.type === 'TOT') handleFileTot(ob.client);
-                                                    else if (ob.type === 'VAT') handleAutoFile(ob.client);
-                                                    else if (ob.type === 'PAYE') handleAutoFile(ob.client);
-                                                    else if (ob.type === 'NSSF') handleAutoFileNssf(ob.client);
-                                                }}
-                                                disabled={isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl)}
-                                                className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl) ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'}`}>
-                                                                                                Process Return
-                                            </button>
+                                            {ob.type === 'VAT' ? (
+                                                <>
+                                                    <button
+                                                        onClick={() => handlePrepareVat(ob.client)}
+                                                        disabled={isPendingFilingJob(activeJobs[ob.client.id])}
+                                                        className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${isPendingFilingJob(activeJobs[ob.client.id]) ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed' : 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300'}`}
+                                                    >
+                                                        {vatGenerateActionLabel}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleConfirmVatFiling(ob.client)}
+                                                        disabled={isPendingFilingJob(activeJobs[ob.client.id]) || !vatHasPreparedArtifacts || !vatCreditMatchesPrepared}
+                                                        className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${isPendingFilingJob(activeJobs[ob.client.id]) || !vatHasPreparedArtifacts || !vatCreditMatchesPrepared ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'}`}
+                                                    >
+                                                        File VAT (Auto File)
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button
+                                                    onClick={() => {
+                                                        if (ob.type === 'MRI') handleFileMri(ob.client);
+                                                        else if (ob.type === 'TOT') handleFileTot(ob.client);
+                                                        else if (ob.type === 'PAYE') handleAutoFile(ob.client);
+                                                        else if (ob.type === 'NSSF') handleAutoFileNssf(ob.client);
+                                                    }}
+                                                    disabled={isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl)}
+                                                    className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${isPendingFilingJob(activeJobs[ob.client.id]) || (ob.type === 'TOT' && !ob.client.totZipUrl) ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'}`}
+                                                >
+                                                    Process Return
+                                                </button>
+                                            )}
                                             
                                             <button 
                                                 onClick={() => handleGeneratePrn(ob.client, ob.type)}
@@ -2055,76 +2110,13 @@ const [etimsPassword, setEtimsPassword] = useState('');
             
             <div className="flex w-full overflow-hidden relative">
                 {/* Sidebar */}
-                <aside className={`absolute inset-y-0 left-0 z-50 w-72 shrink-0 border-r border-slate-800 bg-slate-950 p-6 flex flex-col transform transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-                    <div className="flex items-center justify-between px-2">
-                        <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-slate-950">
-                                <Building2 className="h-5 w-5" />
-                            </div>
-                            <div>
-                                <span className="text-xl font-bold tracking-tight text-white">Kwanta<span className="text-emerald-500">.</span></span>
-                            </div>
-                        </div>
-                        <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-slate-400 hover:text-white">
-                            <X className="h-6 w-6" />
-                        </button>
-                    </div>
-
-                    <nav className="mt-10 space-y-1.5 flex-1">
-                        <button onClick={() => { setView('overview'); setIsSidebarOpen(false); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'overview' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}>
-                            <LayoutDashboard className="h-4 w-4" /> Overview
-                        </button>
-                        
-                        <div className="pt-6 pb-2 px-3">
-                            <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Tax Filing Desks</p>
-                        </div>
-                        <button onClick={() => { setView('desk-9th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-9th' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><Users className="h-4 w-4" /> Payroll Processing</span>
-                            <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-amber-500/20 px-1 text-xs font-bold text-amber-500">{payrollPendingCount}</span>
-                        </button>
-                        <button onClick={() => { setView('desk-20th'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-20th' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><TerminalSquare className="h-4 w-4" /> VAT & Monthly Returns</span>
-                            <span className="flex h-5 min-w-[1.25rem] items-center justify-center rounded bg-amber-500/20 px-1 text-xs font-bold text-amber-500">{taxPendingCount}</span>
-                        </button>
-                        <button onClick={() => { setView('desk-elevy'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-elevy' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><Activity className="h-4 w-4" /> Tourism Fund Desk</span>
-                        </button>
-                        <button onClick={() => { setView('desk-nil'); setIsSidebarOpen(false); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'desk-nil' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'text-slate-400 hover:bg-slate-900 border border-transparent'}`}>
-                            <span className="flex items-center gap-3"><FileArchive className="h-4 w-4" /> Nil & ITR Desk</span>
-                        </button>
-
-                        <div className="pt-6 pb-2 px-3">
-                            <p className="text-xs font-bold uppercase tracking-wider text-slate-600">Tax Practice</p>
-                        </div>
-                        <button onClick={() => { setView('clients'); setIsSidebarOpen(false); }} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${view === 'clients' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-900 hover:text-white'}`}>
-                            <Building2 className="h-4 w-4" /> Client Database
-                        </button>
-                    </nav>
-
-                    <div className="mt-auto border-t border-slate-800 pt-6">
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
-                            <p className="text-xs font-medium text-slate-400">{plan.label}</p>
-                            <div className="mt-2 flex items-end justify-between">
-                                <p className="text-xl font-bold text-white">{plan.used} <span className="text-sm font-normal text-slate-500">/ {capacityValue} PINs</span></p>
-                            </div>
-                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                                <div className={`h-full rounded-full ${capacityPercentage > 85 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${capacityPercentage}%` }} />
-                            </div>
-                            <select 
-                                value={selectedPlan} 
-                                onChange={(e) => setSelectedPlan(e.target.value as PlanKey)}
-                                className="mt-4 w-full rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-white border border-slate-700 outline-none"
-                            >
-                                <option value="starter">Practice Starter</option>
-                                <option value="growth">Growing Firm</option>
-                                <option value="enterprise">Enterprise Desk</option>
-                            </select>
-                        </div>
-                        <Link to="/" className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white">
-                            <LogOut className="h-4 w-4" /> Sign Out
-                        </Link>
-                    </div>
-                </aside>
+                <Sidebar 
+                    payrollPendingCount={payrollPendingCount} 
+                    taxPendingCount={taxPendingCount} 
+                    plan={plan} 
+                    capacityValue={capacityValue} 
+                    capacityPercentage={capacityPercentage} 
+                />
 
                 {/* Main Content */}
                 <main className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative bg-slate-950">
@@ -2205,7 +2197,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                 </div>
                                                 <div>
                                                     <p className="text-sm font-bold text-white">Blue Coast Hotels</p>
-                                                    <p className="text-xs text-slate-500">PAYE data ready â€¢ 2 hours ago</p>
+                                                    <p className="text-xs text-slate-500">PAYE data ready ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ 2 hours ago</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -2216,7 +2208,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                 </div>
                                                 <div>
                                                     <p className="text-sm font-bold text-white">TechFlow Solutions</p>
-                                                    <p className="text-xs text-slate-500">VAT pending â€¢ 4 hours ago</p>
+                                                    <p className="text-xs text-slate-500">VAT pending ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ 4 hours ago</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -2227,7 +2219,7 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                                 </div>
                                                 <div>
                                                     <p className="text-sm font-bold text-white">System Status: KRA Portal</p>
-                                                    <p className="text-xs text-slate-500">Operational â€¢ Updated 5 min ago</p>
+                                                    <p className="text-xs text-slate-500">Operational ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Updated 5 min ago</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -2492,42 +2484,11 @@ const [etimsPassword, setEtimsPassword] = useState('');
                     )}
                     
                     {view === 'clients' && !selectedClient && (
-                        <div className="mt-10 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
-                            <div className="overflow-x-auto pb-8">
-                                <table className="w-full text-left text-sm text-slate-300">
-                                    <thead className="border-b border-slate-800 bg-slate-900/50">
-                                        <tr>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">Firm / Client</th>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">KRA PIN</th>
-                                            <th className="px-4 py-4 font-semibold uppercase tracking-wider">Active Obligations</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-800/50">
-                                        {clients.map(client => (
-                                            <tr key={client.id} className="transition hover:bg-slate-800/50">
-                                                <td className="px-4 py-4">
-                                                    <button onClick={() => setSelectedClient(client)} className="flex items-center gap-3 text-left hover:opacity-80">
-                                                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400"><Building2 className="h-5 w-5" /></div>
-                                                        <div className="font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer" onClick={() => openNewClientModal(client)} title="Edit client details">{client.name}</div>
-                                                    </button>
-                                                </td>
-                                                <td className="px-4 py-4 font-mono text-slate-400">{client.pin}</td>
-                                                <td className="px-4 py-4">
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {Object.entries({ vat: client.vat, tot: client.tot, mri: client.mri, paye: client.paye, nssf: client.nssf, sha: client.sha, eLevy: client.eLevy }).map(([obs, status]) => {
-                                                            if (status !== 'na' && status) {
-                                                                return <span key={obs} className="inline-flex rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">{obs}</span>;
-                                                            }
-                                                            return null;
-                                                        })}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                        <ClientTable
+                            clients={clients}
+                            onSelectClient={setSelectedClient}
+                            onEditClient={openNewClientModal}
+                        />
                     )}
        </div>
                 </main>
@@ -2537,198 +2498,24 @@ const [etimsPassword, setEtimsPassword] = useState('');
                                 
 
                     {showNewClientModal && (
-                        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm">
-                            <div className="flex min-h-full items-start justify-center py-4 sm:items-center">
-                                <div className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl">
-                                    <div className="flex shrink-0 items-center justify-between border-b border-slate-800 p-6">
-                                        <div>
-                                            <h2 className="text-xl font-bold text-white">{editingClientId ? 'Edit Client' : 'Onboard New Client'}</h2>
-                                            <p className="mt-1 text-sm text-slate-400">Add a client and select their active obligations.</p>
-                                        </div>
-                                        <button type="button" onClick={resetNewClientForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white">
-                                            <X className="h-5 w-5" />
-                                        </button>
-                                    </div>
-
-                                    <div className="flex-1 overflow-y-auto p-6">
-                                        <div className="space-y-6">
-                                            <div className="grid gap-4 sm:grid-cols-2">
-                                                <div>
-                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Client Name</label>
-                                                    <input value={newClientName} onChange={(e) => setNewClientName(e.target.value)} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. Acme Corp" />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA PIN</label>
-                                                    <input value={newClientPin} onChange={(e) => setNewClientPin(e.target.value.toUpperCase())} type="text" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="e.g. P123456789A" />
-                                                </div>
-                                                <div className="sm:col-span-2">
-                                                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">KRA Password</label>
-                                                    <input value={newClientPassword} onChange={(e) => setNewClientPassword(e.target.value)} type="password" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-emerald-500" placeholder="Keep this secure" />
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Select Active Obligations</label>
-                                                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                                                    {[
-                                                        { id: 'paye', label: 'PAYE' },
-                                                        { id: 'nssf', label: 'NSSF' },
-                                                        { id: 'sha', label: 'SHA' },
-                                                        { id: 'elevy', label: 'eLevy' },
-                                                        { id: 'vat', label: 'VAT' },
-                                                        { id: 'tot', label: 'TOT' },
-                                                        { id: 'mri', label: 'MRI' },
-                                                        { id: 'dst', label: 'DST' },
-                                                    ].map((obs) => {
-                                                        const isActive = newClientObligations.includes(obs.id);
-                                                        return (
-                                                            <button
-                                                                key={obs.id}
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    setNewClientModalError(null);
-                                                                    setNewClientObligations((prev) => (
-                                                                        prev.includes(obs.id)
-                                                                            ? prev.filter((currentObligation) => currentObligation !== obs.id)
-                                                                            : [...prev, obs.id]
-                                                                    ));
-                                                                }}
-                                                                className={`flex items-center justify-center rounded-xl border p-4 text-sm font-bold transition-all ${
-                                                                    isActive
-                                                                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                                                                        : 'border-slate-700 bg-slate-800/30 text-slate-400 hover:border-slate-600 hover:bg-slate-800'
-                                                                }`}
-                                                            >
-                                                                {obs.label}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-
-                                            {newClientObligations.some((obligation) => ['paye', 'nssf', 'sha'].includes(obligation)) && (
-                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
-                                                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-                                                        <div className="mb-4 flex items-center justify-between gap-3">
-                                                            <div className="flex items-center gap-3">
-                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-emerald-400">
-                                                                    <Building2 className="h-4 w-4" /> Unified Payroll Master
-                                                                </h3>
-                                                                <span className="flex h-5 items-center rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300">Optional</span>
-                                                            </div>
-                                                            {newClientMasterCsv && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        if (window.confirm('Are you sure you want to remove this Master CSV?')) {
-                                                                            setNewClientMasterCsv(null);
-                                                                        }
-                                                                    }}
-                                                                    className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400 transition hover:bg-red-500/20 hover:text-red-300"
-                                                                >
-                                                                    Remove File
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                        <p className="mt-2 text-xs text-emerald-200/70">
-                                                            Upload any master payroll spreadsheet containing employee details (Name, ID, PIN, NHIF, NSSF).
-                                                            The system will automatically ingest the data, format it to the KRA Unified Payroll standard,
-                                                            and generate the Master CSV for you.
-                                                        </p>
-
-                                                        {!newClientMasterCsv && (
-                                                            <div className="mt-4 flex w-full items-center justify-center">
-                                                                <label htmlFor="dropzone-file" className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-emerald-500/30 bg-slate-900/50 transition hover:border-emerald-500/50 hover:bg-emerald-500/10">
-                                                                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                                                        <p className="mb-1 text-sm font-bold text-slate-400">
-                                                                            Click to upload <span className="font-normal text-slate-500">or drag and drop</span>
-                                                                        </p>
-                                                                        <p className="text-xs text-slate-500">.CSV or .XLSX</p>
-                                                                    </div>
-                                                                    <input
-                                                                        id="dropzone-file"
-                                                                        type="file"
-                                                                        accept=".csv, .xlsx, .xls"
-                                                                        className="hidden"
-                                                                        onChange={(e) => {
-                                                                            if (e.target.files && e.target.files.length > 0) {
-                                                                                setNewClientMasterCsv(e.target.files[0]);
-                                                                            }
-                                                                        }}
-                                                                    />
-                                                                </label>
-                                                            </div>
-                                                        )}
-
-                                                        {newClientMasterCsv && (
-                                                            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/20 p-4">
-                                                                <CheckCircle2 className="h-8 w-8 text-emerald-400" />
-                                                                <span className="text-sm font-bold text-emerald-300">File Selected: {newClientMasterCsv.name}</span>
-                                                                <span className="text-xs text-emerald-400/80">Ready to automatically generate standard KRA templates on process.</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {newClientObligations.some((obligation) => ['vat', 'tot', 'dst'].includes(obligation)) && (
-                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
-                                                    <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-5">
-                                                        <div className="mb-2 flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400">
-                                                                    <Activity className="h-4 w-4" /> Non-Payroll Return Obligations
-                                                                </h3>
-                                                            </div>
-                                                        </div>
-                                                        <p className="text-xs text-blue-300">For VAT, TOT, and DST setup, proceed to the <strong>VAT & Monthly Returns</strong> after saving. There, you can upload the specific Sales & Purchases CSV datasets dynamically per period.</p>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {newClientObligations.includes('mri') && (
-                                                <div className="animate-in slide-in-from-top-2 fade-in duration-300">
-                                                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-5">
-                                                        <div className="mb-2 flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <h3 className="flex items-center gap-2 text-sm font-bold text-rose-400">
-                                                                    <Building2 className="h-4 w-4" /> Monthly Rental Income Setup
-                                                                </h3>
-                                                            </div>
-                                                        </div>
-                                                        <p className="text-xs text-rose-300">Proceed to the <strong>VAT & Monthly Returns</strong> to enter the real-time rent amount manually per client before filing.</p>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {newClientModalError && (
-                                                <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200">
-                                                    {newClientModalError}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-800 bg-slate-900/50 p-6">
-                                        <button type="button" onClick={resetNewClientForm} className="rounded-xl px-5 py-2.5 text-sm font-bold text-slate-400 transition hover:text-white">
-                                            Cancel
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleSaveClient}
-                                            disabled={isSavingClient}
-                                            className={`rounded-xl px-6 py-2.5 text-sm font-bold text-slate-950 shadow-[0_0_20px_rgba(16,185,129,0.2)] transition ${
-                                                isSavingClient
-                                                    ? 'cursor-not-allowed bg-emerald-500/60 text-slate-900/70'
-                                                    : 'bg-emerald-500 hover:bg-emerald-400'
-                                            }`}
-                                        >
-                                            {isSavingClient ? 'Saving...' : 'Save Client'}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        <NewClientModal
+                            editingClientId={editingClientId}
+                            newClientName={newClientName}
+                            setNewClientName={setNewClientName}
+                            newClientPin={newClientPin}
+                            setNewClientPin={setNewClientPin}
+                            newClientPassword={newClientPassword}
+                            setNewClientPassword={setNewClientPassword}
+                            newClientObligations={newClientObligations}
+                            setNewClientObligations={setNewClientObligations}
+                            newClientMasterCsv={newClientMasterCsv}
+                            setNewClientMasterCsv={setNewClientMasterCsv}
+                            newClientModalError={newClientModalError}
+                            setNewClientModalError={setNewClientModalError}
+                            isSavingClient={isSavingClient}
+                            resetNewClientForm={resetNewClientForm}
+                            handleSaveClient={handleSaveClient}
+                        />
                     )}
         </div>
     );

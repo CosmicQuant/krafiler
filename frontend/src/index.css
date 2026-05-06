@@ -1,41 +1,40 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-    --kw-paper: #f4f5ef;
-    --kw-ink: #0f172a;
-    --kw-red: #dc2626;
-    --kw-green: #15803d;
-}
-
 @layer base {
     html {
         scroll-behavior: smooth;
+        color-scheme: dark;
     }
 
     body {
-        background:
-            radial-gradient(circle at top left, rgba(220, 38, 38, 0.08), transparent 28%),
-            radial-gradient(circle at top right, rgba(21, 128, 61, 0.08), transparent 22%),
-            var(--kw-paper);
-        color: var(--kw-ink);
-        font-family: 'Manrope', sans-serif;
+        @apply bg-slate-950 text-slate-200 antialiased selection:bg-indigo-500/30 selection:text-indigo-200;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background-image: 
+            radial-gradient(circle at top right, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
+            radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.05) 0%, transparent 40%);
+        background-attachment: fixed;
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    h6 {
-        font-family: 'Sora', sans-serif;
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Outfit', sans-serif;
+        @apply tracking-tight font-semibold text-slate-100;
     }
 }
 
-/* Smooth transitions for the toggle */
+@layer components {
+    .glass-panel {
+        @apply bg-slate-900/60 backdrop-blur-xl border border-white/5 shadow-2xl;
+    }
+    
+    .neon-text-primary {
+        @apply text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400;
+    }
+}
+
 @layer utilities {
     .animate-in {
         animation-fill-mode: both;

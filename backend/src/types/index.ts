@@ -23,6 +23,7 @@ export type TaxObligationType = (typeof TAX_OBLIGATION_TYPES)[number];
 
 export interface NilReturnPayload {
     kraPin: string;
+    clientName?: string;
     /** AES-256-GCM ciphertext (hex) — plaintext password is NEVER stored */
     encryptedPassword: string;
     /** GCM initialisation vector (hex) */
@@ -46,6 +47,9 @@ export interface NilReturnPayload {
     totTurnover?: number;
     otpCode?: string;
     payeZipUrl?: string;
+    vatZipUrl?: string;
+    prepareVatOnly?: boolean;
+    vatPreviousCredit?: number;
     nssfFileUrl?: string;
     masterFileUrl?: string;
 }
@@ -90,6 +94,7 @@ export interface JobResult {
 
 export interface FileNilReturnRequest {
     kraPin: string;
+    clientName?: string;
     kraPassword: string;
     periodFrom?: string;
     periodTo?: string;
@@ -101,6 +106,9 @@ export interface FileNilReturnRequest {
     totTurnover?: number;
     otpCode?: string;
     payeZipUrl?: string;
+    vatZipUrl?: string;
+    prepareVatOnly?: boolean;
+    vatPreviousCredit?: number;
     printPrnOnly?: boolean;
 }
 

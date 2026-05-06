@@ -1,108 +1,96 @@
-// ─── Form ─────────────────────────────────────────────────────────────────────
+export type DashboardView = 'overview' | 'desk-9th' | 'desk-20th' | 'desk-elevy' | 'desk-nil' | 'clients' | 'settings';
+export type PlanKey = 'starter' | 'growth' | 'enterprise';
 
-export const TAX_OBLIGATION_OPTIONS = [
-    {
-        value: 'income_tax_resident_individual',
-        label: 'Income Tax - Resident Individual',
-        description: 'Nil filing for resident individual income tax.',
-        filingMode: 'nil',
-    },
-    {
-        value: 'monthly_rental_income',
-        label: 'Income Tax - Rent Income (MRI)',
-        description: 'Transaction-based MRI filing that requires the rental income amount.',
-        filingMode: 'transactional',
-    },
-    {
-        value: 'income_tax_non_resident_individual',
-        label: 'Income Tax - Non-Resident Individual',
-        description: 'Nil filing for non-resident individual income tax.',
-        filingMode: 'nil',
-    },
-    {
-        value: 'income_tax_company',
-        label: 'Income Tax - Company',
-        description: 'Nil filing for company income tax.',
-        filingMode: 'nil',
-    },
-    {
-        value: 'vat',
-        label: 'VAT',
-        description: 'Nil filing for VAT.',
-        filingMode: 'nil',
-    },
-    {
-        value: 'paye',
-        label: 'PAYE',
-        description: 'Nil filing for PAYE.',
-        filingMode: 'nil',
-    },
-    {
-        value: 'turnover_tax',
-        label: 'Turnover Tax (TOT)',
-        description: 'Transaction-based turnover tax filing that calculates 1.5% tax directly from your Gross Turnover input.',
-        filingMode: 'transactional',
-    },
-] as const;
+export type PracticePlan = {
+    label: string;
+    capacity: number | 'Unlimited';
+    used: number;
+};
 
-export type TaxObligationType = (typeof TAX_OBLIGATION_OPTIONS)[number]['value'];
-export type FilingMode = (typeof TAX_OBLIGATION_OPTIONS)[number]['filingMode'];
+export type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
 
-export interface FilingFormData {
-    kraPin: string;
-    kraPassword: string;
-    periodFrom: string;
-    periodTo: string;
-    taxObligationType: TaxObligationType;
-    ownsRentalProperty: boolean;
-    rentalIncomeAmount?: number;
-    totYear?: number;
-    totMonth?: number;
-    totTurnover?: number;
+export type VatPreparationSummary = {
+    inputVat: number;
+    outputVat: number;
+    previousCredit: number;
+    payableVat: number;
+    netVatBalance: number;
+};
+
+export type ClientObligation = {
+    iTaxPassword?: string;
+    sector?: string;
+    obligations?: string;
+    id: string;
+    name: string;
+    pin: string;
+    masterFileUrl?: string;
+    masterFileLabel?: string;
+    payrollSourceUrl?: string;
     payeZipUrl?: string;
-    otpCode?: string;
-}
+    vatZipUrl?: string;
+    vatZipLabel?: string;
+    vatSourcePackageUrl?: string;
+    vatSourcePackageLabel?: string;
+    totZipUrl?: string;
+    totZipLabel?: string;
+    payeZipLabel?: string;
+    nssfFileUrl?: string;
+    nssfFileLabel?: string;
+    shaFileUrl?: string;
+    shaFileLabel?: string;
+    lastGeneratedAt?: string;
+    payeAmount?: number;
+    nitaAmount?: number;
+    housingLevyAmount?: number;
+    nssfAmount?: number;
+    shaAmount?: number;
+    vatInputVat?: number;
+    vatOutputVat?: number;
+    vatPreviousCredit?: number;
+    vatPayableVat?: number;
+    vatNetVatBalance?: number;
+    vatPreparedAt?: string;
+    paye: TaxStatus;
+    nssf: TaxStatus;
+    sha: TaxStatus;
+    eLevy: TaxStatus;
+    vat: TaxStatus;
+    tot: TaxStatus;
+    mri: TaxStatus;
+    dst: TaxStatus;
+    payeLastFiledDate?: string;
+    payeReceiptUrl?: string;
+    nssfLastFiledDate?: string;
+    nssfReceiptUrl?: string;
+    shaLastFiledDate?: string;
+    shaReceiptUrl?: string;
+    eLevyLastFiledDate?: string;
+    eLevyReceiptUrl?: string;
+    vatLastFiledDate?: string;
+    vatReceiptUrl?: string;
+    totLastFiledDate?: string;
+    totReceiptUrl?: string;
+    mriLastFiledDate?: string;
+    mriReceiptUrl?: string;
+    dstLastFiledDate?: string;
+    dstReceiptUrl?: string;
+};
 
-// ─── API ──────────────────────────────────────────────────────────────────────
+export type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
 
-export interface FilingResponse {
-    success: boolean;
+export type ActiveDashboardJob = {
+    id: string;
+    state: FilingJobState;
+    progress: number;
     message: string;
-    jobId?: string;
-    duplicate?: boolean;
-    jobState?: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
-    cancelRequested?: boolean;
-}
-
-export interface FilingStepLog {
-    timestamp: string;
-    message: string;
-    progress: number | null;
-    level: 'info' | 'error';
-}
-
-export interface CredentialUpdate {
-    passwordChanged: boolean;
-    newPassword: string;
-    changedAt: string;
-}
-
-export interface FilingResult {
-    receiptPath?: string;
-    receiptNumber?: string | null;
-    credentialUpdate?: CredentialUpdate | null;
-}
-
-export interface FilingStatusResponse {
-    jobId: string;
-    state: 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'unknown' | 'cancelling' | 'cancelled';
-    progress: number | object;
-    attemptsMade: number;
-    failedReason: string | null;
-    stepLogs: FilingStepLog[];
-    lastStep: FilingStepLog | null;
-    credentialUpdate: CredentialUpdate | null;
-    result: FilingResult | null;
-    processedOn: string | null;
-    finishedOn: string | null;
-}
+    obligationType?: string;
+    failedReason?: string;
+    receiptUrl?: string;
+    prnUrl?: string;
+    generatedZipUrl?: string;
+    generatedZipLabel?: string;
+    sourcePackageUrl?: string;
+    sourcePackageLabel?: string;
+    vatSummary?: VatPreparationSummary;
+};

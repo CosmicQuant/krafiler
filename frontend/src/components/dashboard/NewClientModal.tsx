@@ -1,5 +1,4 @@
 import { Building2, CheckCircle2, Activity, X } from 'lucide-react';
-import { ClientObligation } from '../../types';
 
 type NewClientModalProps = {
     editingClientId: number | null;

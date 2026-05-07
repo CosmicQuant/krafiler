@@ -2,7 +2,6 @@ import { Link } from 'react-router-dom';
 import {
     Activity,
     Building2,
-    CalendarClock,
     LayoutDashboard,
     LogOut,
     TerminalSquare,

@@ -1,4 +1,4 @@
-import { ClientObligation, ActiveDashboardJob, TaxStatus } from '../types';
+import { ClientObligation, ActiveDashboardJob } from '../types';
 
 export function normalizeClientObligation(value: string) {
     const normalized = value.trim().toLowerCase();

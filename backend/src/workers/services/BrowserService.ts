@@ -11,6 +11,7 @@ import {
     KRA_BROWSER_PROFILE_DIR,
     KRA_REUSE_BROWSER_PROFILE,
     PLAYWRIGHT_SLOW_MO,
+    PLAYWRIGHT_HEADLESS,
     KRA_BROWSER_CHANNEL,
     KRA_BROWSER_EXECUTABLE_PATH,
     WINDOWS_BROWSER_EXECUTABLE_CANDIDATES
@@ -37,7 +38,7 @@ export class BrowserService {
         try {
             if (KRA_REUSE_BROWSER_PROFILE && KRA_BROWSER_PROFILE_DIR) {
                 this.context = await chromium.launchPersistentContext(KRA_BROWSER_PROFILE_DIR, {
-                    headless: true,
+                    headless: PLAYWRIGHT_HEADLESS,
                     slowMo: PLAYWRIGHT_SLOW_MO,
                     viewport: { width: 1280, height: 800 },
                     channel: KRA_BROWSER_CHANNEL || undefined,
@@ -47,7 +48,7 @@ export class BrowserService {
                 this.page = this.context.pages()[0] ?? await this.context.newPage();
             } else {
                 this.browser = await chromium.launch({
-                    headless: true,
+                    headless: PLAYWRIGHT_HEADLESS,
                     slowMo: PLAYWRIGHT_SLOW_MO,
                     channel: KRA_BROWSER_CHANNEL || undefined,
                     executablePath: KRA_BROWSER_EXECUTABLE_PATH || undefined,

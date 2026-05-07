@@ -1,9 +1,9 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import CompanyDetails from './CompanyDetails';
 import { Sidebar } from './dashboard/Sidebar';
 import { useUIStore } from '../store/uiStore';
 import { 
-    DashboardView, PlanKey, PracticePlan, TaxStatus, VatPreparationSummary, 
+    PlanKey, PracticePlan, TaxStatus, VatPreparationSummary, 
     ClientObligation, FilingJobState, ActiveDashboardJob 
 } from '../types';
 import { 
@@ -19,18 +19,12 @@ import { ClientTable } from './dashboard/ClientTable';
 import {
     Activity,
     Building2,
-    CalendarClock,
     CheckCircle2,
-    Clock,
-    LayoutDashboard,
-    LogOut,
     Menu,
     Plus,
     Search,
     ShieldAlert,
-    TerminalSquare,
     UploadCloud,
-    Users,
     X,
     FileSpreadsheet,
     FileArchive,
@@ -41,7 +35,6 @@ import {
   Cloud,
     Download,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 
 const plans: Record<PlanKey, PracticePlan> = {
     starter: { label: 'Practice Starter', capacity: 10, used: 8 },
@@ -62,7 +55,7 @@ const TAX_OBLIGATION_OPTIONS = [
 ];
 
 export default function PracticeDashboard() {
-    const { view, setView, monthlyReturnFilter, setMonthlyReturnFilter, isSidebarOpen, setIsSidebarOpen, selectedPlan, setSelectedPlan } = useUIStore();
+    const { view, setView, monthlyReturnFilter, setMonthlyReturnFilter, isSidebarOpen, setIsSidebarOpen, selectedPlan } = useUIStore();
     const [clients, setClients] = useState<ClientObligation[]>([]);
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
     const [isGeneratingZips, setIsGeneratingZips] = useState(false);

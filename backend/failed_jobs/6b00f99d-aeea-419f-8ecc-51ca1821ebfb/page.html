@@ -1,0 +1,1205 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html><head>
+	<title> Kenya Revenue Authority</title>
+	<script type="text/javascript">
+		
+		var disableAdminManagedLinks = "Y";
+		var disableEServicesLinks = "Y";
+	</script>
+    <link rel="shortcut icon" type="image/ico" href="/KRA-Portal/themes/images/favicon.ico">
+    <script type="text/javascript" src="/KRA-Portal/scripts/common/newHomeTemplate_min.js"></script>
+<script src="https://itax.kra.go.ke/elastic-apm-rum.umd.min.js" crossorigin=""></script>
+<script>
+var parts = window.location.href.split('&'); 
+var pageHref = window.location.href;
+if (parts.length > 0) {
+    pageHref = parts[0] 
+}
+  elasticApm.init({
+    serviceName: 'itax-portal-prod-ux-internal',
+    serverUrl: 'https://itax.kra.go.ke',
+    pageLoadTransactionName: pageHref,
+    environment: 'itax-portal-prod'
+  })
+</script><style>
+#statusbar {
+	position: absolute;
+	display: inherit;
+	z-index: 10000;
+	width: 380px;
+	height: 72px;
+	visibility: hidden;
+	margin-left: auto;
+	margin-right: auto;
+	vertical-align: middle;
+}
+
+#statusbar table { 
+	padding: 8px;
+}
+
+#statusbar td {
+	font-size: 18px;
+	font-style: italic;
+	font-weight: bold;
+	white-space: nowrap;
+	color: #777777;
+	padding: 5px;
+}
+
+#top-band-1 {
+    height : 25px;	
+}
+#top-band-1 TD , #top-band-1 A, #top-band-1 A:HOVER {
+	font-size:12px;
+	color: white;
+}
+#top-band-table-1 {
+	background: #FF1919;
+}
+.textAlignLeft {
+	text-align: left;	
+}
+
+.textAlignRight {
+	text-align: right;	
+}
+</style></head>
+
+
+<body topmargin="0" onload="onloadFunction();">
+<input type="hidden" name="chk" id="chk" value="true" style="">
+	<!-- <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"> -->
+<script type="text/javascript" src="/KRA-Portal/scripts/common/common.js"></script>
+
+<center>
+<div id="statusbar" style="visibility: hidden;">
+<table class="img">
+<tbody><tr>
+<td id="imgtd">
+<img src="/KRA-Portal/themes/images/pageLoader.gif" height="60px" width="60px" alt="image is not supported.">
+</td>
+<td id="statuBarTd1" class="showProgressBar"></td>
+</tr>
+</tbody></table>
+</div>
+</center>
+<div id="fadeBackground" class="fade_background" style="display: none;"></div>
+
+
+	
+	
+<!-- 	<a href="#" onclick="javascript:showHomePage();">Home</a>&nbsp;|&nbsp; -->
+	
+
+<div align="center" id="top-band-1">
+<table width="960px" height="100%" id="top-band-table-1"><tbody>
+<tr>
+<td class="textAlignLeft">Welcome to iTax Online Service Area
+</td>
+<td class="textAlignRight top-link"><a href="#" onclick="javascript:openFAQ();">FAQs</a>&nbsp;|&nbsp;<a href="#" onclick="javascript:downloads();">Forms</a>&nbsp;|&nbsp;<a href="#" onclick="javascript:reportProblem();">Report Problem</a>&nbsp;|&nbsp;<a href="#" onclick="javascript:contactUs();">Contact us</a>&nbsp;|&nbsp;<a href="#" onclick="javascript:window.open('http://www.kra.go.ke/web-help/index.htm','_blank','directories=0,titlebar=0,toolbar=0,location=0,status=0,menubar=0,resizable=yes');">Online Help</a>&nbsp;|&nbsp;<a href="#" onclick="javascript:displayParentChild('ITAX Videos');">iTax Videos</a>
+</td>
+</tr></tbody>
+</table>
+</div>
+	
+	<!-- Main DIV Started  -->
+	<div class="templateMainDiv" align="center">
+		<!-- Header DIV Started  --> 
+		<div class="templateHeaderDiv">
+			
+
+<!-- Header Image DIV Started -->
+<div class="mainHeaderDIV">
+	<table class="mainHeaderTable" id="header_TD" cellspacing="0" cellpadding="0">
+		<tbody><tr>
+			<td>
+				<img usemap="#KRALogo" title="KRA" src="/KRA-Portal/themes/images/P1Head.jpg" height="122px">
+				
+				
+				<map name="KRALogo">
+	  				<area shape="rect" coords="62,26,300,118" href="main.htm?actionCode=showOnlineServicesHomeLnclick">
+	  			</map>
+	  			
+			</td>
+		</tr>
+	</tbody></table>
+</div>
+<!-- Header Image DIV ended -->
+		</div>
+		<!-- Header DIV Ended  -->
+		<!-- Menu DIV Started  -->
+		<div class="templateMenuDiv">
+			
+<!-- <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"> -->
+
+
+
+<title>Insert title here</title>
+<script src="https://itax.kra.go.ke/elastic-apm-rum.umd.min.js" crossorigin=""></script>
+<script>
+var parts = window.location.href.split('&'); 
+var pageHref = window.location.href;
+if (parts.length > 0) {
+    pageHref = parts[0] 
+}
+  elasticApm.init({
+    serviceName: 'itax-portal-prod-ux-internal',
+    serverUrl: 'https://itax.kra.go.ke',
+    pageLoadTransactionName: pageHref,
+    environment: 'itax-portal-prod'
+  })
+</script>
+
+
+
+	
+		</div>
+		<!-- Menu DIV Ended  -->
+		
+<!-- 		<div class="textAlignLeft" id="breadcrumb" style="width: 960px;"><span><font style="color:black;font-size:30px;vertical-align: text-bottom;">&nbsp;&nbsp;&nbsp;Log On to iTax Services</font></span></div> -->
+<!-- 		<div  class="textAlignLeft" id="breadcrumb1" style="width: 960px;"><span><font style="color: black;vertical-align:middle; font-weight: normal;padding-left:65px; font-family: halvett, arial, verdana; font-size: 16px;">&nbsp;&nbsp;&nbsp;If you have PIN and will like to Update your details in iTax,</font> <A href="#" style="color: white;" onclick="javascript:loadERegistrationLegacyPage();">CLICK HERE</A></span></div> -->
+<!-- 		<div class="textAlignLeft"  id="breadcrumb2" style="width: 960px; "><span><font style="color: black; vertical-align:middle;font-weight: normal;padding-left:65px;font-family: halvett, arial, verdana; font-size: 16px;">&nbsp;&nbsp;&nbsp;If you do not have PIN and will like to Acquire a New PIN, </font> <A href="#"  style="color: white;"	onclick="javascript:loadERegistrationLegacyPage();">CLICK HERE</A></span></div> -->
+		<!-- Content DIV Started  -->
+		<div class="templateContentDiv" id="contentDiv"><table class="templateContentDivTable" cellpadding="0" cellspacing="0"><tbody><tr><td class="templateContentDivTableMainPanel"><div class="templateContentDivTableNewLoginDiv">
+
+
+
+
+
+<meta http-equiv="Expires" content="-1">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Cache-Control" content="No-Cache">
+<meta http-equiv="X-UA-Compatible" content="IE=7"> 
+<link rel="stylesheet" href="/KRA-Portal/themes/styles/common/newLoginLayout_kra_min.css" type="text/css">	
+
+<script type="text/javascript" src="/KRA-Portal/scripts/common/login_merged.js"></script>
+ 
+<script type="text/javascript" src="/KRA-Portal/dwr/engine.js"></script>
+<script type="text/javascript" src="/KRA-Portal/dwr/util.js"></script>
+<script type="text/javascript" src="/KRA-Portal/dwr/interface/CheckLoginPin.js"></script>
+<script type="text/javascript" src="/KRA-Portal/dwr/interface/findPinByIdno.js"></script>
+
+
+
+<script language="Javascript1.1" src="/KRA-Portal/scripts/common/loginPage.js"></script>
+
+
+
+<title>Insert title here</title>
+	
+
+<script>
+function showHidePKI(yn)
+{
+	if(yn=='N'){
+		document.getElementById('mainTable').style.display='block';
+		document.getElementById('pkiTable').style.display='none';
+	}else{
+		document.getElementById('mainTable').style.display='none';
+		document.getElementById('pkiTable').style.display='block';
+		$('#KICA_SECUKITNXDIV_ID').append(KICA_SECUKITNXDIV);
+        secunx_Loading();
+        function SecuKitNX_Ready(res) {
+            if (res) {
+            	alert('SecuKitNXS Ready!');
+                console.log('SecuKitNXS Ready');
+            }
+        }
+	}
+}
+function goBack()
+{
+
+		window.location.href = "/KRA-Portal/main.htm?actionCode=showOnlineServicesHomeLnclick";	
+}
+function passkey_downHandler()
+{
+	
+	var theEvent=window.event/*this is for IE*/ || arguments[0]
+	 if ( (theEvent.keyCode == 118 && theEvent.ctrlKey) || (theEvent.keyCode == 86 && theEvent.ctrlKey) || (theEvent.keyCode == 45 ) ) {
+		 alert("Paste functionality cannot be used for Password");
+		 theEvent.keyCode = 0; 
+		 theEvent.returnValue = false; 
+	 }
+}
+function goBack1()
+{
+	goBack();
+}
+function CheckPIN(){
+	var pinNo=document.getElementById("logid").value;
+	var mPin=(trim(document.getElementById("NIP").value)=="")? pinNo : document.getElementById("NIP").value;
+	if(trim(pinNo)==""){  
+		
+		alert("Please enter the PIN/User ID");
+
+		document.getElementById("logid").focus();
+		
+	}
+	CheckLoginPin.checkLoginPin(pinNo,{async:false,callback: function(data){
+
+		if(data != 'null' &&  data != null){
+			if(data == "New_Reg"){ // Handled Scenario : 1) if no call made from Controller to impl 2) impl to facade
+				alert("Please Enter Valid  PIN/User ID");
+			}
+			else if(data == "iPage"){// Handled Scenario : 1) No call made to validate taxpayer with agent 2) or got exception in same scenario
+				document.getElementById("migrateDiv").style.display='table-row';
+				document.getElementById("mainDiv").style.display='none';
+				document.getElementById("newReg").style.display='none';
+				document.getElementById("hdrNewReg").style.display='none';
+				document.getElementById("newManReg").style.display='none';
+				document.getElementById("hdrManReg").style.display='none';
+				document.getElementById("frgtPwd").style.visibility='hidden';
+			}
+			else if(data == "Login"){// Handled Scenario : 1) Invalid taxpayer while agnet login
+				document.getElementById("successDiv").style.display='table-row';
+				document.getElementById("userName").value=mPin;
+				
+				document.getElementById("mainDiv").style.display='none';
+				document.getElementById("newReg").style.display='none';
+				document.getElementById("hdrNewReg").style.display='none';
+				document.getElementById("newManReg").style.display='none';
+				document.getElementById("hdrManReg").style.display='none';
+				document.getElementById("frgtPwd").style.display='none';				
+			
+			}
+		}
+		}});
+	
+}
+	function loadClient(){
+
+		var loginId=document.getElementById("userNamePKI");
+
+		if(trim(loginId.value)==""){
+			
+			alert("Please enter the User ID (PIN / EUN / KRAID)");
+
+			document.getElementById("userNamePKI").focus();
+			
+		}else{		
+			processLogic.init();
+            processLogic.setProcessLogic('LOGIN');
+			// call certificate selection box
+			NX_ShowDialog();			
+		}	
+	}
+
+	function validatePKICertificate(){
+	//	parent.closePopup(true);
+
+		document.loginForm.action="pki.htm?actionCode=validateLoginDetailsOutsideLogin";
+
+		document.loginForm.submit();  // send the signed data to server.
+	}
+
+	// values after login logic done before submit to server
+	var vid = null; // Virture Identify Value in Certificate
+	var PKCS7SignedData = null;  // VID PKCS7SignedData 
+	var userDN = null;
+	var userSN = null;
+
+	NXsetMediaDisable('BIOHSM');  // disable biotoken dialog.
+	NXsetMediaDisable('EXTENSION');  // disable extension dialog.
+
+	// return the result of calling functions
+	function SecuKitNXS_RESULT(cmd, res) {
+		// Error Check
+		var Err = 999;
+		try {
+			Err = res.ERROR_CODE;
+		} catch (e) {
+			console.log(e);
+		}
+
+		if (Err === undefined) {
+			switch (cmd) {
+			
+			 // PKCS7 Sign Start
+			case 'LOGIN' :
+			 	var isViewVID = '1';							   // 0 : do not extract VID ,  1 : extract VID
+				var certID = certListInfo.getCertID();             // certID
+				var cmd = 'GET_VID.viewCertInfomationWithVID';
+				var Data = {
+						'certType': 'signCert',
+                     	'certID': certID,
+						'isViewVID': isViewVID	
+				};
+				var param = JSON.stringify(Data);
+				secukitnxInterface.SecuKitNXS(cmd, param);
+				break;
+
+				// Generate PKCS7SignedData
+			case 'GET_VID':
+				vid = res.vidRandom;   // get VID Value to SelectCertificate
+				userDN = res.userDN;   //userDN
+				userSN = res.serial;  //userSerial
+                var certType = 'SignCert';                                               // For Sign : SignCert, For Encrypt : EncryptCert
+                var sourceString = vid           // OriginalMessage(VID)
+                var certID = certListInfo.getCertID();                                   // Select Certificate ID
+                var cmd = 'KICA_USE_P7Sign_Result.generatePKCS7SignedData';
+                var Data = {
+                    'certType': certType,
+                    'sourceString': sourceString,
+                    'certID': certID
+                };
+                var param = JSON.stringify(Data);
+                secukitnxInterface.SecuKitNXS(cmd, param);
+                break;
+
+                // PKCS7 Sign result
+            case 'KICA_USE_P7Sign_Result':
+            	PKCS7SignedData = res.generatePKCS7SignedData;      // PKCS#7 Signed Data
+                document.loginForm.PKCS7SignedData.value = PKCS7SignedData;
+                validatePKICertificate();
+            	break;
+
+				default: break;
+			}
+		}else {
+			// print Error Message
+			$('.nx-cert-select').hide(); $('#nx-pki-ui-wrapper').hide(); KICA_Error.init();
+			KICA_Error.setError(res.ERROR_CODE, res.ERROR_MESSAGE);
+			var errorMsg = KICA_Error.getError();
+			alert(errorMsg);
+		}
+
+	}
+	
+</script>
+<script type="text/javascript">
+
+function ajaxCaptchaLoad(){
+	
+	var randomnumber=Math.floor(Math.random()*1001);
+
+	document.getElementById("captcha_img").src = "/KRA-Portal/GenerateCaptchaServlet.do?sourcePage=LOGIN&rand="+randomnumber;
+}
+
+function trim(s) {
+	
+	return s.replace( /^\s*/, "" ).replace( /\s*$/, "" );
+}
+
+function toUpper(uname){
+	
+	var s=document.getElementById(uname.id).value;	
+
+	s=s.toUpperCase();
+
+	document.getElementById(uname.id).value=s;
+
+    return 
+}
+function toUpperUserName(uname){
+	var s=document.getElementById(uname.id).value;	
+
+	s=s.toUpperCase();
+	s=s.trim();
+	document.getElementById(uname.id).value=s;
+    return 
+}
+function initKeyBoard(){
+	
+		passElem=document.getElementById("xxZTT9p2wQ");
+
+		keyElem=document.getElementById("keybrdChk");
+
+		hidElem=document.getElementById("keyImgChk");
+
+		if(hidElem.value == "false"){
+			
+			hidElem.value = "true";
+
+			useVirtualKeys(passElem,keyElem,hidElem);
+			
+		}else{
+			
+			hidElem.value = "false";
+
+			disableKeyBoard();	
+		}
+		
+}
+
+function loginDigCertificate(){
+	
+	document.loginForm.action="loginDigCert.htm?actionCode=fwdCert";
+
+	document.loginForm.submit();
+}
+
+function submitForm1(){
+	var loginId=(trim(document.getElementById("zCheck").value)=="")? document.getElementById("userName") : document.getElementById("zCheck");
+
+	if(document.getElementById("zCheck").value !=="")
+	{
+		var NIP=document.getElementById("NIP").value;
+		const mNum=loginId.value.split('').reverse().join('');
+		document.getElementById("userName").value=NIP.replace('*****',mNum);
+		document.getElementById("zCheck").value=NIP.replace('*****',mNum);
+	}
+	
+
+	var password=document.getElementById("xxZTT9p2wQ");
+
+	cryptpwd=hex_sha1(password.value+loginId.value);
+
+	document.loginForm.pwd.value= hex_sha1(document.loginForm.pwd.value);
+
+	var answer = document.getElementById("captcahText");
+	
+	if(trim(loginId.value)==""){
+		
+		alert("Please enter the PIN/User ID");
+
+		document.getElementById("userName").focus();
+		
+	}else if(trim(password.value)==""){
+		
+		alert("Please enter the Password");
+		
+	
+		document.getElementById("xxZTT9p2wQ").focus();
+		if(document.getElementById("zCheck").value !=="")
+			{
+			document.getElementById("NIP").value='';
+			document.getElementById("userName").value='';
+			document.getElementById("zCheck").value='';
+			document.getElementById("xxZTT9p2wQ").value=''
+			}
+		
+	}else if(answer.value == null || trim(answer.value)==""){
+		
+		alert("Please enter answer of the arithmetic operation.");
+		
+		if(document.getElementById("zCheck").value !=="")
+			{
+			document.getElementById("NIP").value='';
+			document.getElementById("userName").value='';
+			document.getElementById("zCheck").value='';
+			document.getElementById("xxZTT9p2wQ").value=''
+			}
+	}else{		
+			///////////////////////ENCRYPTIO/////////////////
+		var rcpntIntrmKey = "";
+
+        var sharedSecretKey = "";
+
+        var secretNoClient = "";
+
+        var encryptedPassword = "";
+
+        var generator = document.getElementById("generator").value;
+
+        var modulus = document.getElementById("modulus").value;
+
+        var senderIntrmKey = document.getElementById("senderIntrmKey").value;
+
+  		secretNoClient = generateSecretNoClient();
+         
+        rcpntIntrmKey = createRecipientInterimKey(generator,modulus,senderIntrmKey);
+
+        sharedSecretKey = createSharedSecretKey(senderIntrmKey,secretNoClient,modulus);
+
+        var encryptedPwd =  AESEncryptCtr(password.value,sharedSecretKey,'256');
+
+        document.getElementById("encryptPassword").value = encryptedPwd;
+
+        document.getElementById("rcpntIntrmKey").value = rcpntIntrmKey;	
+
+		///////////////////////ENCRYPTIO/////////////////
+		
+		document.getElementById("xxZTT9p2wQ").value=cryptpwd;
+
+		//var flag = document.getElementById("loginTypeName").value;
+		
+		var strFlag="";
+
+
+		//alert(strFlag);
+		
+		//document.loginForm.action = "login.htm?actionCode=loginUser&flag="+strFlag;
+		
+		document.loginForm.action = "login.htm";
+
+		document.getElementById("actionCode").value="loginUser";
+
+		document.loginForm.submit();
+		disableLoginButton();
+	}	
+}
+
+function setVisible(a){a=document.getElementById(a);a.style.display=(a.style.display=="")?"none":"";}
+
+function checkCapsLockOnOff ( e ) 
+{
+	//e= e || arguments[0];
+	var keyCode=0;
+	var shiftKey=false;
+	var agt=navigator.userAgent.toLowerCase();
+	var msg='Caps Lock is On.\nTo prevent entering your Password incorrectly,\nyou should press Caps Lock to turn it off.';
+	// Internet Explorer 4+
+	if ( document.all ) 
+	{
+		keyCode=e.keyCode;
+		shiftKey=e.shiftKey;
+	}
+	// Netscape 4
+	else if ( document.layers ) 
+	{
+		keyCode=e.which;
+		shiftKey=e.shiftKey;
+	}
+	// Netscape 6,Opera,Safari
+	else if ( document.getElementById ) 
+	{ 
+		if(agt.indexOf("opera") != -1 || agt.indexOf("safari") != -1 || agt.indexOf("firefox") != -1 || agt.indexOf("chrome") != -1)
+		{				
+				keyCode=e.which;
+				shiftKey=e.shiftKey;
+		}
+		else
+		{
+			keyCode=e.keyCode;
+			shiftKey = e.shiftKey;
+		}
+	}
+	//alert('keyCode='+keyCode);
+	//Upper case letters are seen without depressing the Shift key, therefore Caps Lock is on
+	if (((keyCode >= 65 && keyCode <= 90) && !shiftKey) || ((keyCode >= 97 && keyCode <= 122) && shiftKey)) 
+	{
+		//alert( msg );
+		 document.getElementById('divMayus').style.visibility = 'visible';
+			
+	}else{
+		 document.getElementById('divMayus').style.visibility = 'hidden';
+					
+	}
+}
+
+function findPos(obj) {
+	
+	var curleft = curtop = 0;
+
+	if (obj.offsetParent) { 
+
+		curleft = obj.offsetLeft;
+
+		curtop = obj.offsetTop;
+		
+		while (obj = obj.offsetParent) { 
+
+			curleft += obj.offsetLeft;
+
+			curtop += obj.offsetTop;
+		}
+	}
+	//alert(curleft + " " + curtop);
+	return [curleft,curtop]; 
+}
+
+function onloadFunction(){
+	
+	
+	
+	
+}
+function disableLoginButton()
+{
+		document.getElementById("loginButton").setAttribute('href', "#");
+		showProgressbar();
+}
+
+function displayIdInputdiv(){
+	if(document.getElementById('idnoradio').checked)
+	{
+		document.getElementById("normalDiv1").style.display='none';
+		document.getElementById("normalDiv2").style.display='';
+	}
+	if(document.getElementById('pinradio').checked)
+		{
+		document.getElementById("normalDiv2").style.display='none';
+		document.getElementById("normalDiv1").style.display='';
+
+		}
+}
+
+function validateId(){
+	var idNo=document.getElementById("lognid").value;
+	if(trim(idNo)==""){  
+		
+		alert("Please enter your national ID");
+
+		document.getElementById("lognid").focus();
+		
+	}
+	findPinByIdno.findPinByIdnumber(idNo,{async:false,callback: function(data){
+
+		if(data != 'null' &&  data != null){
+				const prts=data.split("#$");
+				const mNum=prts[1].split('').reverse().join('');
+				document.getElementById("logid").value=prts[0].replace('*****',mNum);
+				document.getElementById("NIP").value=prts[0];
+				document.getElementById("zCheck").value=prts[1];
+				CheckPIN();
+				document.getElementById("radioswitch").style.display='none';
+				
+		}else{
+			alert("Please Enter Valid  national ID");
+		}
+		}});
+	
+}
+function checkNumeric(textObj)
+{
+    var textString = textObj.value;
+    for(i=0;i<textString.length;i++)
+    {
+        if("0123456789".indexOf(textString.charAt(i)) == -1)
+        {
+            alert("Please Enter a valid number.")
+            textObj.value= "";
+            textObj.focus();
+            return false;
+        }
+    }
+}
+
+</script>
+
+<script src="https://itax.kra.go.ke/elastic-apm-rum.umd.min.js" crossorigin=""></script>
+<script>
+var parts = window.location.href.split('&'); 
+var pageHref = window.location.href;
+if (parts.length > 0) {
+    pageHref = parts[0] 
+}
+  elasticApm.init({
+    serviceName: 'itax-portal-prod-ux-internal',
+    serverUrl: 'https://itax.kra.go.ke',
+    pageLoadTransactionName: pageHref,
+    environment: 'itax-portal-prod'
+  })
+</script>
+
+<form id="loginForm" name="loginForm" action="login.htm" method="post" autocomplete="off">
+
+<!-- Hidden Input Fields started -->
+<input type="hidden" name="captchaResult_" id="captchaResult_" style="">
+<input type="hidden" name="pwd" value="" style="">
+<input type="hidden" name="actionCode" id="actionCode" value="loginUser" style="">
+<input type="hidden" name="operation" style="">
+<input type="hidden" name="loginType" style="">
+<input type="hidden" name="regType" style="">
+<input type="hidden" name="keyImgChk" id="keyImgChk" value="false" style="">
+<input type="hidden" id="NIP" style="">
+
+<!-- Hidden Input Fields ended -->
+
+<input type="hidden" name="generator" id="generator" value="113278" style="">
+<input type="hidden" name="modulus" id="modulus" value="542237" style="">
+<input type="hidden" name="senderIntrmKey" id="senderIntrmKey" value="79780" style="">
+<input type="hidden" name="rcpntIntrmKey" id="rcpntIntrmKey" value="" style="">
+<input type="hidden" name="encryptPassword" id="encryptPassword" value="" style="">
+<input type="hidden" name="fieldsToSkip" id="fieldsToSkip_1" value="encryptPassword" style="">
+<input type="hidden" name="PKCS7SignedData" style="">
+<input type="hidden" name="fieldsToSkip" id="fieldsToSkip_1" value="PKCS7SignedData" style="">
+<!-- <input type="hidden" name="Challenge" value="" /> --> 
+<input type="hidden" id="zCheck" style="">		
+
+
+<!-- Added By Keval(761040) for new updated landing page of portal date:13-7-2014 -->
+<table width="100%" cellspacing="0" cellpadding="0" style="padding-right: 1px; ">
+<tbody><tr>
+	<td width="380px" valign="top" height="385px" class="bcheck">
+	<div id="normalDiv" style="margin-top: 10px;">
+
+													<div style="float: left; padding-right: 5px">
+														<p style="COLOR: black; padding-left:25px; font-size: 18px;font-weight: bolder;">Login With PIN or ID?</p>
+													</div>
+													<div id="radioswitch">
+														<div style="float: left; padding-right: 5px">
+														 <label for="pin">PIN</label>
+														 <input type="radio" name="switchInput" id="pinradio" value="1" onclick="displayIdInputdiv()" checked="" style="">
+														</div>
+														
+														<div style="float: left; padding-right: 5px">
+														 <label for="idno">ID</label>
+														 <input type="radio" name="switchInput" id="idnoradio" value="2" onclick="displayIdInputdiv()" style="">
+														</div>
+													</div>	
+													
+													</div><table width="380px" border="0" cellspacing="0" cellpadding="0" class="QuestionBox">
+		<tbody>
+													<tr style="margin-top: 10px;">
+													<!-- <td  style="COLOR: black; padding-left:25px; font-size: 18px;font-weight: bolder; padding-top: 10px;" >Login With PIN or ID?</td> -->
+																	
+													</tr>
+														
+													
+													
+	<tr id="mainDiv" style="height: 50px;">
+														<td style="vertical-align: top;">
+															<div id="normalDiv1" style="width:340px; background: #ededed; margin-right :10px; margin-top:10px; padding: 10px;">
+															<table>
+																	<!-- Content Table with css -->
+
+																	<tbody>
+																	
+																		<tr height="30">
+																			<td width="40%" style="FONT-SIZE: 12px;">Enter PIN/User ID <font style="COLOR: red">*</font>
+																			</td>
+																			<td width="40%" class="newLoginId1"><input onblur="javascript:toUpperUserName(this);" id="logid" class="tb10Small" maxlength="15" name="logid" autocomplete="off" style=""></td>
+																				
+																				
+																		</tr>
+																		<tr><td>&nbsp;</td></tr>
+																		<tr>
+																		<td>&nbsp;</td>
+																		<td width="20%"><a href="javascript:CheckPIN();" class="btn">Continue</a></td>
+																		</tr>
+																		
+
+																	</tbody>
+																</table>
+															</div>
+															<!--START:: checking ID NO  -->
+															<div id="normalDiv2" style="width:340px; background: #ededed; margin-right :10px; margin-top:10px; padding: 10px;display: none">
+															<table>
+																	<!-- Content Table with css -->
+
+																	<tbody>
+																	
+																		<tr height="30">
+																			<td width="40%" style="FONT-SIZE: 12px;">Enter National ID <font style="COLOR: red">*</font>
+																			</td>
+																			<td width="40%" class="newLoginId1"><input onkeyup="javascript:checkNumeric(this);" id="lognid" class="tb10Small" maxlength="10" name="logid" autocomplete="off" style=""></td>
+																				
+																				
+																		</tr>
+																		<tr><td>&nbsp;</td></tr>
+																		<tr>
+																		<td>&nbsp;</td>
+																		<td width="20%"><a href="javascript:validateId();" class="btn">Validate</a></td>
+																		</tr>
+																		
+
+																	</tbody>
+																</table>
+															</div>
+																											
+															<!--END:: checking ID NO  -->
+															</td></tr>
+														<tr style="display: none;" id="successDiv">
+														<td style="vertical-align: top;">
+														<div id="divMayus" class="capsLockMsg" style="visibility: hidden;">&nbsp;Caps Lock is on.</div>
+
+																	
+															<div id="normalDiv" style="background: #ededed; margin: 10px; padding: 10px;">
+																<table width="81%" align="center">
+																<tbody><tr>
+																	
+																	
+																	<td width="50%" colspan="3" class="textAlignLeft loginErrorTD"><font class="loginError">&nbsp;</font></td>
+																	
+																</tr>
+																</tbody></table>
+																
+																<table id="mainTable" border="0" style="display:block;">
+																	<tbody>
+																	
+																		<tr>
+																			<td style="FONT-SIZE: 13px; VERTICAL-ALIGN: text-bottom">Enter PIN/User ID<font style="COLOR: red">*</font></td>
+																			<td class="newLoginId1">&nbsp;<input id="userName" name="userName" class="tb10Small" tabindex="1" onblur="javascript:toUpperUserName(this);" type="text" value="" maxlength="15" autocomplete="off" style="">
+																			</td>
+																		</tr>
+																		<tr>
+																			<td style="FONT-SIZE: 13px; VERTICAL-ALIGN: text-bottom; PADDING-TOP: 5px">Password<font style="COLOR: red">*</font></td>
+																			<td style="PADDING-TOP: 5px">&nbsp;<input id="xxZTT9p2wQ" name="xxZTT9p2wQ" class="tb10Small" tabindex="2" onkeypress="javascript:checkCapsLockOnOff(event)" onkeydown="return passkey_downHandler()" onfocus="javascript:checkCapsLockOnOff(event)" type="password" value="" maxlength="50" autocomplete="off" style="">
+																			</td>
+																		</tr>
+																		<tr>
+																			<td style="FONT-SIZE: 13px; PADDING-TOP: 5px" class="textAlignLeft">Virtual Keyboard</td>
+																			<td valign="top" style="PADDING-TOP: 5px" class="textAlignLeft">&nbsp;<a href="javascript:initKeyBoard();" class="KeyBoard" id="keybrdChk" name="keybrdChk"></a>
+<!-- 																			<img alt="Virtual Keyboard" title="Virtual Keyboard"   /> -->
+																			</td>
+																		</tr>
+																		<tr>
+																			<td width="150px;" style="FONT-SIZE: 13px; VERTICAL-ALIGN: bottom; PADDING-TOP: 5px" class="textAlignLeft">Security Stamp<font style="COLOR: red">*</font></td>
+																			<td width="200px;" style="PADDING-TOP: 5px"><a style="float: left; padding-right: 5px;" href="javascript:ajaxCaptchaLoad()" class="refresh_captcha" title="Refresh Captcha"></a>
+																				<img alt="Captcha Image" id="captcha_img" name="captcha_img" title="Captcha" width="65" height="15" style="vertical-align:middle;" src="/KRA-Portal/GenerateCaptchaServlet.do?sourcePage=LOGIN&amp;rand=941.0">
+																				<input tabindex="3" title="Please enter the result of arithmatic expression in Security Stamp" name="captcahText" type="text" id="captcahText" maxlength="11" class="tb10Smaller" style="vertical-align: bottom;">
+																			</td>
+																		</tr>
+																		<tr><td>&nbsp;</td></tr>
+																		<tr>
+																																		
+																			
+																				<td align="center"><a tabindex="5" id="backButton" href="javascript:goBack();" class="btn">Back</a></td>
+																				<td align="center"><a tabindex="4" id="loginButton" href="javascript:submitForm1();" class="btn">Login</a></td>
+																				
+																		</tr>
+																		<tr><td>&nbsp;</td></tr>
+																		<tr>
+																		   	<td align="center">&nbsp;</td>
+																			<td align="center">
+																				<div>
+																				 <p><a href="#" onclick="javascript:forgotPassword();" style="COLOR: red;">Forgot Password/Unlock Account</a></p>
+																				</div>
+																			</td>
+																		</tr>
+																	</tbody>
+																</table>
+																
+								</div>
+														</td>
+													</tr>
+													<tr style="display: none;" id="migrateDiv">
+													<td style="vertical-align: top;">
+													<div id="normalDiv" style="background: #ededed; margin: 10px; padding: 10px;">
+													<p style="font-size: 14px;vertical-align: middle;">You have not updated your details in iTax.  </p><p style="font-size: 14px">To update now,<a href="#" onclick="javascript:loadERegistrationLegacyPage();"><img style=" margin-left: 10px; margin-top: 10px; width: 60px; height: 60px;" src="/KRA-Portal/themes/images/kra_login/clickhere.png"></a></p>
+													<p align="center" style="padding-top: 10px;"><a id="backButton1" href="javascript:goBack1();" class="btn">Back</a></p>
+													</div>
+													</td>
+										
+													</tr>
+													<!-- <tr height="20px" style="display: none;" id="frgtPwd"><td align="right" style="vertical-align: top; padding-left: 25px;"><div>
+												 <P id="frgtPwd" style="margin-top:1em; margin-right: 15px;"><A href="#" onclick="javascript:forgotPassword();">Forgot Password/Unlock Account</A></P>
+												</div></td></tr> -->
+												<tr style="height:20px;" id="frgtPwd"><td align="right" style="vertical-align: top;">
+												<div style="background: #ededed;width:340px;margin-right :10px; padding: 10px;">
+												 <p id="frgtPwd"><a href="#" onclick="javascript:forgotPassword();" style="COLOR: red;">Forgot Password/Unlock Account</a></p>
+												</div></td></tr>
+													<tr id="hdrNewReg" height="20px;">
+														<td style="COLOR: black; padding-left: 25px; font-size: 18px; font-weight: bolder; padding-top: 10px;" align="left">Do you want to apply for a PIN?</td>
+
+													</tr>
+													<tr id="newReg">
+														<td style="padding-left: 20px; vertical-align: top;">
+															<div id="normalDiv" style="background:; margin-top: 10px;">
+<!-- 																<div style="float: right; padding-right: 120px; padding-top: 8px;"> -->
+<!-- 																	<A href="javascript:guidelines();"> -->
+<!-- 																	<img title="Guidelines for PIN Registration" -->
+<!-- 																		style="float: right; margin: 0; width: 15px; height: 15px;" -->
+
+<!-- 																	</A> -->
+<!-- 																</div> -->
+																<div style="float: left; padding-right: 5px">
+																<a href="#" onclick="javascript:loadERegistrationMainPage();">
+																	<img style="float: left; margin: 0; width: 50px; height: 50px;" src="/KRA-Portal/themes/images/kra_login/Register_Icon3_50.png">
+																</a>
+																</div>
+																<div align="left" style="background:; color: Black; padding-top: 5px;">
+																	<font style="">New PIN Registration</font>
+																</div>
+																<div>
+																	<p style=" font-size: 12px; color: black; padding-left: 5px;" align="left">
+																		  To get a new PIN,<a href="#" onclick="javascript:loadERegistrationMainPage();">Click Here</a></p>
+																</div>
+																<div align="right">	<p style="background:; font-size: 12px;padding-top:2em;color: black;">
+																		<a href="javascript:guidelines();">Guidelines for PIN Registration</a></p></div>
+															</div>
+														</td>
+													</tr>
+													
+									<tr id="hdrManReg" height="20px;">
+														<td style="COLOR: black; padding-left: 25px; font-size: 18px; font-weight: bolder; padding-top: 10px;" align="left">Manufacturer Authorization</td>
+
+													</tr>	
+										
+					                           <tr id="newManReg">
+														<td style="padding-left: 20px; vertical-align: top;">
+															<div id="normalDiv" style="background:; margin-top: 10px;">
+<!-- 																<div style="float: right; padding-right: 120px; padding-top: 8px;"> -->
+<!-- 																	<A href="javascript:guidelines();"> -->
+<!-- 																	<img title="Guidelines for PIN Registration" -->
+<!-- 																		style="float: right; margin: 0; width: 15px; height: 15px;" -->
+
+<!-- 																	</A> -->
+<!-- 																</div> -->
+																<div style="float: left; padding-right: 5px">
+																<!-- <A href="#" onclick="javascript:manufacturerAuthorization();"> -->
+																<a href="#" onclick=""> 
+																<!-- <A href="#" > --><!-- commented by Bijal -->
+																	<img style="float: left; margin: 0; width: 50px; height: 50px;" src="/KRA-Portal/themes/images/kra_login/Register_Icon3_50.png">
+																</a>
+																</div>
+																<div align="left" style="background:; color: Black; padding-top: 5px;">
+																	<font style="">Manufacturer Authorization</font>
+																</div>
+																<div>
+																	<p style=" font-size: 12px; color: black; padding-left: 5px;" align="left">
+																		 <!--  To authorize manufacturer,<A href="#" onclick="javascript:manufacturerAuthorization();">Click Here</a></p> -->
+																		 To authorize manufacturer,<a href="#" onclick="">Click Here</a></p>
+																		   <!--  To authorize manufacturer,<A href="#" >Click Here</a></p> -->
+																</div>
+																<!-- <div align="right">	<p style="background:; font-size: 12px;padding-top:2em;color: black;" >
+																		<A href="javascript:guidelines();">Guidelines for PIN Registration</a></p></div> -->
+															</div>
+														</td>
+													</tr>			
+													<!-- 	<TR>
+																	<TD style="padding-left: 2px" class=verticalAlignBottom width="50%">
+																	<div style="background: #ededed;color: Black;padding-top: 10px;padding-left: 10px; "><font style=" color: Black; ">Manufacturer Authorization</font></div>
+																		<div ><p style="background: #ededed; font-size: 12px;color: black;padding-left: 10px;" >To apply for authorization of manufacturer,<A href="#" onclick="javascript:manufacturerAuthorization();">Click Here</a></div>
+																	</TD>
+																	</TR> -->
+   </tbody>
+	</table>
+	</td>
+	<td width="570px" valign="top" height="385px" style="vertical-align: top;">
+			<table width="100%" height="100%" style="background: #ededed;" align="left">
+												<tbody><tr align="left">
+														<td><table align="center" height="100%" style="background: #ededed" class="QuestionBox1">
+																<tbody>
+																<tr><td style="padding-left: 10px"><p style="font-size: 18px;font-weight: bolder;">iTax Online eServices</p></td></tr></tbody></table></td></tr>
+												<tr align="left">
+														<td><table align="center" class="QuestionBox2" cellspacing="0" cellpadding="0" style="background:#ededed; vertical-align: middle;">
+																<tbody>
+																	<tr>
+																		<td style="border-right:#cbcbcb 1px solid; margin: 5px">
+																			<div style="padding: 2px;  color: Black;">PIN Checker</div>
+																		</td>
+																
+																		<td style=" border-right:#cbcbcb 1px solid;">
+																			<div style="padding: 2px;padding-left:10px;color: Black;">TCC/Exemption/Excise License Checker</div>
+																		</td>
+																		<td>
+																			<div style="padding: 2px;padding-left:10px;  color: Black;">WHT Checker</div>
+																		</td>
+																	</tr>
+																	<tr>
+																		<td style=" border-right:#cbcbcb 1px solid;">
+																			<div>
+																				<p style=" padding: 5px; padding-left:2px; font-size: 12px; color: black;">
+																					To verify PIN, <a href="#" onclick="javascript:pinchecker();">Click Here</a>
+																			</p></div>
+																		</td>
+																		<td style=" border-right:#cbcbcb 1px solid;">
+																			<div>
+																				<p style=" padding: 5px;padding-left:10px; font-size: 12px; color: black;">
+																					To verify your Tax compliance/Exemption Certificate/Excise License,<a href="#" onclick="javascript:showTCCChecker();">Click Here</a>
+																			</p></div>
+																		</td>
+																		<td>
+																			<div>
+																				<p style=" padding: 5px;padding-left:10px; font-size: 12px; color: black;">
+																					To verify a Withholding Certificate,<a href="#" onclick="javascript:whtChecker();">Click Here</a>
+																			</p></div>
+																		</td>
+																	
+																	</tr>
+																	
+																</tbody>
+															</table></td>
+													</tr>
+													<tr align="left">
+														<td><table align="center" height="100%" style="background: #ededed;border-bottom:#cbcbcb 1px solid;padding-bottom: 15px; " class="QuestionBox1">
+																<tbody>
+																<tr>
+																
+																		<td style="padding-left: 2px" class="verticalAlignBottom" width="50%">
+																		<div style="background: #ededed;color: Black;padding-top: 10px;padding-left: 10px; "><font style=" color: Black; ">Status Checker</font></div>
+																		<div><p style="background: #ededed; font-size: 12px;color: black;padding-left: 10px;">To consult status of your applications,<a href="#" onclick="javascript:consultStatus();">Click Here</a></p></div>
+																		
+																		</td>
+ 																		<td style="padding-left: 2px" class="verticalAlignBottom" width="50%"> 
+ 																		<div style="background: #ededed;color: Black;padding-top: 10px;padding-left: 10px; "><font style=" color: Black; ">Agent Checker</font></div>
+																		<div><p style="background: #ededed; font-size: 12px;color: black;padding-left: 10px;">To verify Witholding Agent,<a href="#" onclick="javascript:checkVATWHTPIN();">Click Here</a></p></div>
+																		</td>
+ 																	</tr>															
+																<tr>
+																	<td style="padding-left: 2px" class="verticalAlignBottom" width="50%">
+																		<div style="background: #ededed;color: Black;padding-top: 10px;padding-left: 10px; "><font style=" color: Black; ">Control Unit Checker</font></div>
+																		 <div><p style="background: #ededed; font-size: 12px;color: black;padding-left: 10px;">To verify Control Unit Serial Number,<a href="#" onclick="javascript:serialNumberchecker()">Click Here</a></p></div> 
+																		<!--<div ><p style="background: #ededed; font-size: 12px;color: black;padding-left: 10px;" >To verify Control Unit Serial Number,<A href="#" >Click Here</a></div>--> <!-- commented by Bijal -->
+																	</td>
+																	<td style="padding-left: 2px" class="verticalAlignBottom" width="50%">
+																		<div style="background: #ededed;color: black;padding-top: 10px;padding-left: 10px;">
+																			<font style="color: black;">Invoice Number Checker</font>
+																		</div>
+																		<div>
+																			<!-- commented by Bijal -->
+																			<p style="background: #ededed;font-size: 12px;color: black;padding-left: 10px;">To verify Control Unit Invoice Number,<a href="#" onclick="javascript:invoiceNumberchecker();">Click Here</a>
+																			<!--  <p style="background: #ededed;font-size: 12px;color: black;padding-left: 10px;">To verify Control Unit Invoice Number,<a href="#">Click Here</a> -->
+																		</p></div>
+																	</td>
+																</tr>
+																
+																	
+																</tbody>
+
+
+															</table>
+															</td>
+													</tr>
+													
+														
+													<tr align="left"><td style="padding-left: 10px;font-weight: bolder;font-size: 18px;padding-top: 15px;">Need Assistance?</td></tr>
+													<tr align="left">
+													<td>
+													<table class="assistanceDiv">
+													
+													<tbody><tr align="left">
+													<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+															<td valign="middle" class="imgTd">
+																<a href="#" onclick="javascript:contactUs();" class="ContactUs_50"></a>
+<!-- 																<img border="0" class="ContactUs_50" style="float: left; margin: 0;"> -->
+																</td><td class="txtTd">
+        															<a href="#" onclick="javascript:contactUs();">
+        															<span style="font-size: 14px;  font-family:'Segoe UI Light'">
+        																Contact Us<br>
+        															</span></a>
+        												
+															</td><td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+															<td class="imgTd">
+																<a href="#" class="problem_30" onclick="javascript:reportProblem();"></a>	
+<!--         														<img border="0" style="float: left; margin: 0;"> -->
+        														</td><td class="txtTd"><a href="#" onclick="javascript:reportProblem();">
+        															<span style="font-size: 14px;  font-family:'Segoe UI Light'">
+        																Report Problem<br>
+        															</span></a>
+        													
+															</td>
+															<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+<!-- 															Commented by keval to disable itax videos link for now -->
+<!-- 															<td > -->
+<!--         														<img style="float: left; margin: 0;width: 30px;height: 30px;" src="images/videos-1_50(1).png">	</td><td><a id="href1" href="#"> -->
+<!--         															<span style="font-size: 14px;  font-family:'Segoe UI Light'"> -->
+<!--         																iTax Videos<br> -->
+<!--         															</span></a> -->
+<!--         															<span style="font-family: 'Segoe UI', sans-serif;padding-left:2px; font-size: 12px; ">Need Any Help?</span> -->
+        													
+<!-- 															</td><td>&nbsp;&nbsp;&nbsp;&nbsp;</td> -->
+															<td class="imgTd">
+																<a href="#" class="FAQ_30" onclick="javascript:openFAQ();"></a>	
+<!--         														<img border="0" style="float: left; margin: 0;" > -->
+        														</td><td class="txtTd"><a href="#" onclick="javascript:openFAQ();">
+        															<span style="font-size: 14px;  font-family:'Segoe UI Light'">
+        																FAQs<br>
+        															</span></a>
+        													
+															</td>
+															<td>&nbsp;&nbsp;&nbsp;&nbsp;</td>
+															<td class="imgTd">
+																<a href="#" class="OnlineHelp" onclick="javascript:window.open('http://www.kra.go.ke/web-help/index.htm','_blank','directories=0,titlebar=0,toolbar=0,location=0,status=0,menubar=0,resizable=yes');"></a>
+<!--         														<img border="0" style="float: left; margin: 0;"> -->
+        															</td><td class="txtTd"><a id="href1" href="#">
+        															</a><a href="#" onclick="javascript:window.open('http://www.kra.go.ke/web-help/index.htm','_blank','directories=0,titlebar=0,toolbar=0,location=0,status=0,menubar=0,resizable=yes');">
+        															<span style="font-size: 14px; font-family:'Segoe UI Light'">
+        																Online Help<br>
+        															</span></a>
+        														
+															</td>
+															</tr>
+															</tbody></table>
+														</td>
+														
+													</tr>
+
+												
+												</tbody></table>
+	</td>
+	<td style="background-color: #cdcdcd">&nbsp;</td>
+	<td style="background-color: #cdcdcd">&nbsp;</td>
+</tr>
+<tr><td height="2px;" style="background-color: #cdcdcd"></td><td height="2px;" style="background-color: #cdcdcd"></td><td height="2px;" style="background-color: #cdcdcd"></td><td height="2px;" style="background-color: #cdcdcd"></td></tr>
+</tbody></table>
+<!-- Changes End by Keval(761040) -->
+</form>
+<script>
+//var relClosePos = findPos(document.getElementById("loginDiv"));
+//document.getElementById("closeButton").style.left = relClosePos[0] + 580;
+//document.getElementById("closeButton").style.top =  relClosePos[1] - 20;
+//ajaxCaptchaLoad();
+</script>
+
+<!-- PKI Failuer DIV Ended -->
+
+<script>
+
+document.loginForm.userName.focus();
+</script>
+
+
+<!-- include KICA WebUI DIV area -->
+   <div id="KICA_SECUKITNXDIV_ID"></div>
+<!-- include KICA WebUI DIV area -->
+
+</div></td></tr></tbody></table></div>
+		<!-- Content DIV Ended  -->
+		
+		<div class="templateContentDiv" style="display: none;" id="progressDiv"><table class="templateContentDivTable"><tbody><tr><td class="templateContentDivTableMainPanel"><div class="templateContentDivTableMainPanelDiv" align="center">
+
+&nbsp;&nbsp;&nbsp;<table class="img">
+<tbody><tr></tr>
+<tr></tr>
+<tr></tr>
+<tr>
+<td id="imgtd">
+<img src="/KRA-Portal/themes/images/pageLoader.gif" height="60px" width="60px" alt="image is not supported.">
+</td>
+</tr>
+</tbody></table>
+</div></td></tr></tbody></table></div>
+		<!-- Footer DIV Started  -->
+		<div class="templateFooterDiv"><table class="templateFooterDivTable"><tbody><tr><td class="templateFooterDivTableFooter">
+
+
+
+
+
+
+
+
+
+<form name="frmFooter" method="post">
+
+
+<!-- Footer DIV Started-->
+   	
+ <div> <!-- Footer Main DIV-->
+   	<table width="100%"> <!-- Footer Content Table -->
+   		<tbody><tr>
+			<!-- TCSLogo and Message Part Started -->
+			<td class="textAlignCenter">
+				<div>
+					<table width="100%">
+						<tbody><tr>
+							<td class="textAlignCenter"><img title="KRA VISION 2030.jpg" src="/KRA-Portal/themes/images/KRA_VISION_2030.png" height="70"></td>
+							<td class="manageSite">Times Tower, Haile Selassie Avenue, <br> P.O.Box 48240 - 00100 GPO Nairobi Tel: 020-310300, 020-281000 Fax: 341342 <br><br>Call Center details Tel:020-4999999,020-4998000 Cell:0711-099999 Email: 	callcentre@kra.go.ke<br>
+									<font class="bestViewMsg">Site best viewed in 1024 X 768 resolution with IE 7.0 and above.&nbsp;©2011-2026</font>
+							</td>
+							<td class="textAlignCenter manageSite">Powered By<br><img title="Kenya Revenue Authority" src="/KRA-Portal/themes/images/kra_logo.png" height="70"></td>
+						</tr>
+					</tbody></table>
+				</div>
+			</td>
+		</tr>
+	</tbody></table>
+</div>
+   	
+<!-- Footer DIV Ended-->
+
+
+</form>
+
+<script type="text/javascript">
+	supressEnterKeySubmit();
+//	ddlevelsmenu.setup("ddtopmenubar", "topbar");
+</script>
+</td></tr></tbody></table></div>
+		<!-- Footer DIV Ended  -->
+	</div>
+	<!-- Main DIV Ended  -->
+	<script>
+		hideProgressbar();
+		hideProgressbar1();
+	</script>
+
+<script type="text/javascript">
+setRowOddEvenBackColor();
+setSelectObjAltText();
+</script>
+</body></html>

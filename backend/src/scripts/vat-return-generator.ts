@@ -75,6 +75,7 @@ export type PreparedVatReturnArtifacts = {
     sourcePackageUrl: string;
     sourcePackageLabel: string;
     summary: PreparedVatReturnSummary;
+    vatSummary: PreparedVatReturnSummary;
     namedValues: Record<string, string>;
     generatedFiles: string[];
     autoPopulationSucceeded: boolean;
@@ -662,6 +663,14 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const sourcePackageArtifact = await copyArtifactToClientWorkspace(params.sourceZipPath, params.clientName);
     const generatedZipArtifact = await copyArtifactToClientWorkspace(finalZipPath, params.clientName, finalZipFileName);
 
+    const resultSummary = {
+        inputVat: round(parseAmount(namedValues['TaxDue.TotalVatPurCharged']), 2),
+        outputVat: round(parseAmount(namedValues['TaxDue.OutputTaxCharged']), 2),
+        previousCredit: round(params.previousCredit, 2),
+        payableVat: round(parseAmount(namedValues['SecD.FinalTaxPayable']), 2),
+        netVatBalance: round(parseAmount(namedValues['SecD.NetTaxPayableClaimable']), 2),
+    };
+
     return {
         generatedZipPath: generatedZipArtifact.path,
         generatedZipUrl: generatedZipArtifact.url,
@@ -669,13 +678,8 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
         sourcePackagePath: sourcePackageArtifact.path,
         sourcePackageUrl: sourcePackageArtifact.url,
         sourcePackageLabel: sourcePackageArtifact.label,
-        summary: {
-            inputVat: round(parseAmount(namedValues['TaxDue.TotalVatPurCharged']), 2),
-            outputVat: round(parseAmount(namedValues['TaxDue.OutputTaxCharged']), 2),
-            previousCredit: round(params.previousCredit, 2),
-            payableVat: round(parseAmount(namedValues['SecD.FinalTaxPayable']), 2),
-            netVatBalance: round(parseAmount(namedValues['SecD.NetTaxPayableClaimable']), 2),
-        },
+        summary: resultSummary,
+        vatSummary: resultSummary,
         namedValues,
         generatedFiles,
         autoPopulationSucceeded: true,

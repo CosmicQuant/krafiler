@@ -5,11 +5,13 @@
  * Run with: npm run dev
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import rateLimit from 'express-rate-limit';
 import taxRoutes from './api/tax.routes';
 import payrollRoutes from './api/payroll.routes';

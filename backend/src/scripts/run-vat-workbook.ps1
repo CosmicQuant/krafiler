@@ -78,7 +78,7 @@ function Get-ParsedCsvRows {
     return $rows
 }
 
-function Normalise-InvoiceNumber {
+function Convert-InvoiceNumber {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return ''
@@ -136,7 +136,7 @@ function Get-WorkbookDefinedNameMap {
 
     $map = @{}
     foreach ($node in $nodes) {
-        $name = Normalize-DefinedName ([string]$node.name)
+        $name = Convert-DefinedName ([string]$node.name)
         if ([string]::IsNullOrWhiteSpace($name) -or $name.StartsWith('_xlnm.')) {
             continue
         }
@@ -170,7 +170,7 @@ function Resolve-ReferenceParts {
     }
 }
 
-function Map-SalesRows {
+function Convert-SalesRows {
     param([object[]]$Rows)
 
     $mappedRows = New-Object System.Collections.Generic.List[object]
@@ -187,7 +187,7 @@ function Map-SalesRows {
             (Get-TrimmedValue $row 1),
             (Get-TrimmedValue $row 2),
             (Get-TrimmedValue $row 3),
-            (Normalise-InvoiceNumber $row[4]),
+            (Convert-InvoiceNumber $row[4]),
             (Get-TrimmedValue $row 5),
             $salesAmount,
             $vatAmount,
@@ -200,7 +200,7 @@ function Map-SalesRows {
     return $mappedRows
 }
 
-function Map-PurchaseRows {
+function Convert-PurchaseRows {
     param(
         [object[]]$Rows,
         [string]$RateCode
@@ -220,7 +220,7 @@ function Map-PurchaseRows {
             (Get-TrimmedValue $row 1),
             (Get-TrimmedValue $row 2),
             (Get-TrimmedValue $row 3),
-            (Normalise-InvoiceNumber $row[4]),
+            (Convert-InvoiceNumber $row[4]),
             (Get-TrimmedValue $row 5),
             $(if ($row.Length -gt 6) { Get-TrimmedValue $row 6 } else { '' }),
             $purchaseAmount,
@@ -270,7 +270,7 @@ function Write-WorksheetRows {
     Invoke-ComAction { $target.Value2 = $array }
 }
 
-function Normalize-DefinedName {
+function Convert-DefinedName {
     param([Parameter(Mandatory = $true)] [string]$Name)
 
     $normalized = $Name.Trim()
@@ -339,7 +339,7 @@ function Get-WorksheetByName {
     return Invoke-ComAction { $Workbook.Worksheets.Item($SheetName) }
 }
 
-function Try-RunAutoPopulation {
+function Test-RunAutoPopulation {
     param(
         $Excel,
         $Workbook
@@ -471,7 +471,7 @@ try {
     Set-NamedValue $workbook 'SecA.VatNonResident' 'No'
     Set-NamedValue $workbook 'SecD.CrdtBroughtFrwd' $PreviousCredit
 
-    $autoPopulationSucceeded = Try-RunAutoPopulation $excel $workbook
+    $autoPopulationSucceeded = Test-RunAutoPopulation $excel $workbook
 
     if (-not $autoPopulationSucceeded) {
         $sheetB = Get-WorksheetByName $workbook 'B_General_Rated_Sales_Dtls'
@@ -485,13 +485,13 @@ try {
         $salesRows = New-Object System.Collections.Generic.List[object]
         foreach ($candidate in @('SEC_B_WITH_VAT_PIN1.CSV', 'SEC_B_WITHOUT_PIN_AND_NON-VAT_PIN1.CSV')) {
             $rows = Get-ParsedCsvRows (Join-Path $CsvDirectory $candidate)
-            foreach ($mappedRow in (Map-SalesRows $rows)) {
+            foreach ($mappedRow in (Convert-SalesRows $rows)) {
                 $salesRows.Add($mappedRow)
             }
         }
 
-        $generalPurchaseRows = Map-PurchaseRows (Get-ParsedCsvRows (Join-Path $CsvDirectory 'SEC_F_WITH_VAT_PIN1.CSV')) 'GNRL'
-        $otherPurchaseRows = Map-PurchaseRows (Get-ParsedCsvRows (Join-Path $CsvDirectory 'SEC_G_WITH_VAT_PIN1.CSV')) 'OTHR'
+        $generalPurchaseRows = Convert-PurchaseRows (Get-ParsedCsvRows (Join-Path $CsvDirectory 'SEC_F_WITH_VAT_PIN1.CSV')) 'GNRL'
+        $otherPurchaseRows = Convert-PurchaseRows (Get-ParsedCsvRows (Join-Path $CsvDirectory 'SEC_G_WITH_VAT_PIN1.CSV')) 'OTHR'
 
         Write-WorksheetRows $sheetB 3 $salesRows
         Write-WorksheetRows $sheetF 3 $generalPurchaseRows

@@ -203,6 +203,26 @@ async function extractVatPackage(sourceZipPath: string, outputDir: string): Prom
     return nestedDir;
 }
 
+async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string]: string[] }> {
+    const files = await fs.readdir(nestedCsvDir);
+    const csvFiles = files.filter((f) => f.endsWith('.CSV'));
+    const sections: { [key: string]: string[] } = {};
+
+    for (const file of csvFiles) {
+        // Match patterns like SEC_B_WITH_VAT_PIN1.CSV, SEC_H_ZERO_RATED_PIN1.CSV, etc.
+        const match = file.match(/^SEC_([A-Z])_(.+?)(?:_PIN\d+)?\.CSV$/i);
+        if (match) {
+            const sectionLetter = match[1].toUpperCase();
+            if (!sections[sectionLetter]) {
+                sections[sectionLetter] = [];
+            }
+            sections[sectionLetter].push(path.join(nestedCsvDir, file));
+        }
+    }
+
+    return sections;
+}
+
 function mapGeneralSalesRows(withPinRows: CsvRow[], withoutPinRows: CsvRow[]): SalesPreparation {
     const lookup = new Map<string, string>();
     const lines: PreparedVatLineItem[] = [];
@@ -254,7 +274,7 @@ function mapGeneralSalesRows(withPinRows: CsvRow[], withoutPinRows: CsvRow[]): S
     return { lines, withPinBase, withPinVat, withoutPinBase, withoutPinVat };
 }
 
-function mapPurchaseRows(rows: CsvRow[], rateCode: 'GNRL' | 'OTHR'): PurchasePreparation {
+function mapPurchaseRows(rows: CsvRow[], rateCode: 'GNRL' | 'OTHR' | 'ZERO' | 'EXEM' | 'IMPT'): PurchasePreparation {
     const lookup = new Map<string, string>();
     const lines: PreparedVatLineItem[] = [];
     let purchaseBase = 0;
@@ -529,14 +549,48 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     await ensureDirectory(generatedDir);
 
     const nestedCsvDir = await extractVatPackage(params.sourceZipPath, extractedDir);
-    const salesWithPinRows = await readCsvRows(path.join(nestedCsvDir, 'SEC_B_WITH_VAT_PIN1.CSV'));
-    const salesWithoutPinRows = await readCsvRows(path.join(nestedCsvDir, 'SEC_B_WITHOUT_PIN_AND_NON-VAT_PIN1.CSV'));
-    const generalPurchaseRows = await readCsvRows(path.join(nestedCsvDir, 'SEC_F_WITH_VAT_PIN1.CSV'));
-    const otherPurchaseRows = await readCsvRows(path.join(nestedCsvDir, 'SEC_G_WITH_VAT_PIN1.CSV'));
+    const discoveredSections = await discoverVatSections(nestedCsvDir);
+
+    // Process Section B (Sales) - read all B* files
+    const salesWithPinRows = discoveredSections['B']?.length > 0 
+        ? await readCsvRows(discoveredSections['B'].find((f) => f.includes('WITH_VAT_PIN')) || discoveredSections['B'][0])
+        : [];
+    const salesWithoutPinRows = discoveredSections['B']?.length > 1
+        ? await readCsvRows(discoveredSections['B'].find((f) => f.includes('WITHOUT_PIN')) || discoveredSections['B'][1])
+        : [];
+
+    // Process Section F (General Rated Purchases)
+    const generalPurchaseRows = discoveredSections['F']?.length > 0
+        ? await readCsvRows(discoveredSections['F'][0])
+        : [];
+
+    // Process Section G (Other Rated Purchases)
+    const otherPurchaseRows = discoveredSections['G']?.length > 0
+        ? await readCsvRows(discoveredSections['G'][0])
+        : [];
+
+    // Process Section H (Zero Rated Purchases) - if present
+    const zeroRatedRows = discoveredSections['H']?.length > 0
+        ? await readCsvRows(discoveredSections['H'][0])
+        : [];
+
+    // Process Section I (Exempted Purchases) - if present
+    const exemptedRows = discoveredSections['I']?.length > 0
+        ? await readCsvRows(discoveredSections['I'][0])
+        : [];
+
+    // Process Section J (VAT Claimable on Imported Services) - if present
+    const importedServicesRows = discoveredSections['J']?.length > 0
+        ? await readCsvRows(discoveredSections['J'][0])
+        : [];
 
     const salesLines = mapGeneralSalesRows(salesWithPinRows, salesWithoutPinRows);
     const generalPurchases = mapPurchaseRows(generalPurchaseRows, 'GNRL');
     const otherPurchases = mapPurchaseRows(otherPurchaseRows, 'OTHR');
+    const zeroRatedPurchases = mapPurchaseRows(zeroRatedRows, 'ZERO');
+    const exemptedPurchases = mapPurchaseRows(exemptedRows, 'EXEM');
+    const importedServicesPurchases = mapPurchaseRows(importedServicesRows, 'IMPT');
+
     const namedValues = buildNamedValues({
         taxpayerPin: params.taxpayerPin,
         periodFrom: params.periodFrom,
@@ -566,6 +620,33 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     if (await writeCsvArtifact(otherPurchasesCsvPath, otherPurchases.lines)) {
         generatedFiles.push(otherPurchasesCsvPath);
         zipEntries.push({ path: otherPurchasesCsvPath, name: 'G_Other_Rated_Purchases_Dtls.csv' });
+    }
+
+    // Add Section H (Zero Rated Purchases) if it exists
+    if (zeroRatedPurchases.lines.length > 0) {
+        const zeroRatedCsvPath = path.join(generatedDir, 'H_Zero_Rated_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(zeroRatedCsvPath, zeroRatedPurchases.lines)) {
+            generatedFiles.push(zeroRatedCsvPath);
+            zipEntries.push({ path: zeroRatedCsvPath, name: 'H_Zero_Rated_Purchases_Dtls.csv' });
+        }
+    }
+
+    // Add Section I (Exempted Purchases) if it exists
+    if (exemptedPurchases.lines.length > 0) {
+        const exemptedCsvPath = path.join(generatedDir, 'I_Exempted_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(exemptedCsvPath, exemptedPurchases.lines)) {
+            generatedFiles.push(exemptedCsvPath);
+            zipEntries.push({ path: exemptedCsvPath, name: 'I_Exempted_Purchases_Dtls.csv' });
+        }
+    }
+
+    // Add Section J (VAT Claimable on Imported Services) if it exists
+    if (importedServicesPurchases.lines.length > 0) {
+        const importedServicesCsvPath = path.join(generatedDir, 'J_VAT_Imported_Services_Dtls.csv');
+        if (await writeCsvArtifact(importedServicesCsvPath, importedServicesPurchases.lines)) {
+            generatedFiles.push(importedServicesCsvPath);
+            zipEntries.push({ path: importedServicesCsvPath, name: 'J_VAT_Imported_Services_Dtls.csv' });
+        }
     }
 
     const vatXmlFileName = `${formatArtifactTimestamp(new Date())}_${params.taxpayerPin.toUpperCase()}_VAT.xml`;

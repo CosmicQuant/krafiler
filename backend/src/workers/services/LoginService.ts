@@ -35,7 +35,8 @@ export class LoginService {
     }
 
     async login(): Promise<void> {
-        const { kraPin, encryptedPassword } = this.job.data.payload;
+        const { kraPin, kraPassword, encryptedPassword } = this.job.data.payload;
+        const activePassword = kraPassword || encryptedPassword || '';
 
         await setJobStep(this.job, 10, 'Navigating to KRA Portal login page...');
         await this.page.goto(KRA_PORTAL_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
@@ -62,9 +63,7 @@ export class LoginService {
         });
 
         await setJobStep(this.job, 20, 'Entering password and resolving Captcha...');
-        // KRA's frontend clears the password field on focus sometimes; fill carefully
-        // Note: Password needs to be decrypted here, but using encrypted for mock
-        await this.page.fill('input[type="password"]', escapeAttributeValue(encryptedPassword));
+        await this.page.fill('input[type="password"]', escapeAttributeValue(activePassword));
         await humanDelay();
 
         // Solve Captcha
@@ -105,8 +104,8 @@ export class LoginService {
         await appendJobLog(this.job, `System generated new password. Ensure this is saved back to the DB!`, { level: 'info' });
         // NOTE: In a real environment, you must propagate this `newPassword` back to the orchestrator to update the database.
 
-        // Note: Password needs to be decrypted here, but using encrypted for mock
-        await this.page.fill('input[name="oldPassword"]', escapeAttributeValue(this.job.data.payload.encryptedPassword));
+        const currentPassword = this.job.data.payload.kraPassword || this.job.data.payload.encryptedPassword || '';
+        await this.page.fill('input[name="oldPassword"]', escapeAttributeValue(currentPassword));
         await this.page.fill('input[name="newPassword"]', escapeAttributeValue(newPassword));
         await this.page.fill('input[name="confirmPassword"]', escapeAttributeValue(newPassword));
 

@@ -1,0 +1,159 @@
+import { ClientObligation } from '../../../types';
+import { isTerminalFilingJob } from '../../../utils/dashboardUtils';
+import { getPreviousYearIsoRange } from '../../../utils/taxPeriods';
+
+const TAX_OBLIGATION_OPTIONS = [
+  { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)', filingMode: 'nil' },
+  { value: 'income_tax_non_resident_individual', label: 'Income Tax - Non-Resident Individual (Nil)', filingMode: 'nil' },
+  { value: 'income_tax_company', label: 'Income Tax - Company (Nil)', filingMode: 'nil' },
+  { value: 'vat', label: 'Value Added Tax (Nil)', filingMode: 'nil' },
+  { value: 'paye', label: 'PAYE (Nil)', filingMode: 'nil' },
+  { value: 'turnover_tax', label: 'Turnover Tax (Nil)', filingMode: 'nil' },
+  { value: 'monthly_rental_income', label: 'Monthly Rental Income (Nil)', filingMode: 'nil' },
+];
+
+interface DeskNilViewProps {
+  clients: ClientObligation[];
+  activeJobs: Record<string, { state: string }>;
+  nilSelections: Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>;
+  setNilSelections: React.Dispatch<
+    React.SetStateAction<
+      Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>
+    >
+  >;
+  onFileNil: (client: ClientObligation) => Promise<void>;
+}
+
+export function DeskNilView({
+  clients,
+  activeJobs,
+  nilSelections,
+  setNilSelections,
+  onFileNil,
+}: DeskNilViewProps) {
+  return (
+    <div className="mt-10">
+      <div className="mb-6 flex flex-col gap-2 border-b border-slate-800 pb-5">
+        <h2 className="text-xl font-bold text-white">Nil & ITR Filing Desk</h2>
+        <p className="text-sm text-slate-400">File Nil returns and Annual Income Tax Returns for your clients.</p>
+      </div>
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+        <div className="overflow-x-auto pb-16">
+          <table className="w-full text-left text-sm text-slate-300">
+            <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
+              <tr>
+                <th className="px-6 py-4 font-semibold tracking-wider w-1/3">Client & PIN</th>
+                <th className="px-6 py-4 font-semibold tracking-wider">Tax Obligation</th>
+                <th className="px-6 py-4 font-semibold tracking-wider">Period (From - To)</th>
+                <th className="px-6 py-4 font-semibold tracking-wider text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/50">
+              {clients.map((client) => {
+                const sel = nilSelections[client.id] || {
+                  type: '',
+                  periodFrom: getPreviousYearIsoRange().periodFrom,
+                  periodTo: getPreviousYearIsoRange().periodTo,
+                };
+                const job = activeJobs[client.id];
+                const isProcessing = job && !isTerminalFilingJob(job as any);
+
+                return (
+                  <tr key={client.id} className="group transition hover:bg-slate-800/30">
+                    <td className="px-6 py-4">
+                      <div className="font-bold text-white">{client.name}</div>
+                      <div className="text-xs text-slate-500 font-mono mt-0.5">{client.pin}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <select
+                        className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-amber-500"
+                        value={sel.type}
+                        onChange={(e) =>
+                          setNilSelections((prev) => ({
+                            ...prev,
+                            [client.id]: { ...sel, type: e.target.value },
+                          }))
+                        }
+                      >
+                        <option value="" disabled>
+                          Choose Obligation
+                        </option>
+                        {TAX_OBLIGATION_OPTIONS.filter((o) => o.filingMode === 'nil').map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <input
+                            type="date"
+                            value={sel.periodFrom}
+                            onChange={(e) =>
+                              setNilSelections((prev) => ({
+                                ...prev,
+                                [client.id]: { ...sel, periodFrom: e.target.value },
+                              }))
+                            }
+                            className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+                          />
+                          <span className="flex items-center text-slate-500">-</span>
+                          <input
+                            type="date"
+                            value={sel.periodTo}
+                            onChange={(e) =>
+                              setNilSelections((prev) => ({
+                                ...prev,
+                                [client.id]: { ...sel, periodTo: e.target.value },
+                              }))
+                            }
+                            className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white outline-none focus:border-amber-500"
+                          />
+                        </div>
+                        {(sel.type === 'income_tax_resident_individual' ||
+                          sel.type === 'income_tax_non_resident_individual') && (
+                          <label className="flex items-center gap-2 mt-1 cursor-pointer w-max">
+                            <input
+                              type="checkbox"
+                              checked={sel.ownsRentalProperty || false}
+                              onChange={(e) =>
+                                setNilSelections((prev) => ({
+                                  ...prev,
+                                  [client.id]: {
+                                    ...sel,
+                                    ownsRentalProperty: e.target.checked,
+                                  },
+                                }))
+                              }
+                              className="rounded bg-slate-800 border-slate-700 focus:ring-amber-500 accent-amber-500 h-3.5 w-3.5"
+                            />
+                            <span className="text-[11px] text-slate-400">Owns Rental Property?</span>
+                          </label>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={() => void onFileNil(client)}
+                        disabled={isProcessing}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition ${
+                          isProcessing
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            : 'bg-amber-500 hover:bg-amber-400 text-amber-950 shadow-lg'
+                        }`}
+                      >
+                        {isProcessing ? 'Processing' : 'File Nil'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

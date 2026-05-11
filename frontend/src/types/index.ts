@@ -18,6 +18,7 @@ export type VatPreparationSummary = {
 };
 
 export type ClientObligation = {
+    password?: string;
     iTaxPassword?: string;
     sector?: string;
     obligations?: string;
@@ -93,4 +94,64 @@ export type ActiveDashboardJob = {
     sourcePackageUrl?: string;
     sourcePackageLabel?: string;
     vatSummary?: VatPreparationSummary;
+};
+
+export type TaxObligationType =
+    | 'income_tax_resident_individual'
+    | 'income_tax_non_resident_individual'
+    | 'income_tax_company'
+    | 'vat'
+    | 'paye'
+    | 'turnover_tax'
+    | 'monthly_rental_income';
+
+export const TAX_OBLIGATION_OPTIONS: { value: TaxObligationType; label: string; filingMode: 'nil' | 'transactional'; description?: string }[] = [
+    { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)', filingMode: 'nil', description: 'File a nil income tax return for resident individuals.' },
+    { value: 'income_tax_non_resident_individual', label: 'Income Tax - Non-Resident Individual (Nil)', filingMode: 'nil', description: 'File a nil income tax return for non-resident individuals.' },
+    { value: 'income_tax_company', label: 'Income Tax - Company (Nil)', filingMode: 'nil', description: 'File a nil income tax return for companies.' },
+    { value: 'vat', label: 'Value Added Tax (Nil)', filingMode: 'nil', description: 'File a nil VAT return when there are no taxable supplies.' },
+    { value: 'paye', label: 'PAYE (Nil)', filingMode: 'nil', description: 'File a nil PAYE return when no salaries were paid.' },
+    { value: 'turnover_tax', label: 'Turnover Tax (Nil)', filingMode: 'nil', description: 'File a nil Turnover Tax return.' },
+    { value: 'monthly_rental_income', label: 'Monthly Rental Income (Nil)', filingMode: 'nil', description: 'File a nil Monthly Rental Income return.' },
+];
+
+export type FilingStepLog = {
+    timestamp: string;
+    message: string;
+    level?: 'info' | 'error' | 'warn';
+    progress?: number;
+};
+
+export type FilingStatusResponse = {
+    jobId: string;
+    state: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
+    progress: number;
+    attemptsMade: number;
+    failedReason: string | null;
+    stepLogs: FilingStepLog[];
+    lastStep: FilingStepLog | null;
+    credentialUpdate: { newPassword: string } | null;
+    result: { receiptPath?: string; receiptNumber?: string } | null;
+    processedOn: string | null;
+    finishedOn: string | null;
+};
+
+export type FilingResponse = {
+    success: boolean;
+    message: string;
+    jobId?: string;
+};
+
+export type FilingFormData = {
+    kraPin: string;
+    kraPassword: string;
+    periodFrom: string;
+    periodTo: string;
+    taxObligationType: TaxObligationType;
+    ownsRentalProperty: boolean;
+    rentalIncomeAmount?: number;
+    totYear: number;
+    totMonth: number;
+    totTurnover?: number;
+    otpCode?: string;
 };

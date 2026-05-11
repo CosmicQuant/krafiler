@@ -709,6 +709,86 @@ async function solveCaptchaWithTesseract(screenshotPath: string, jobId: string):
     return { expression, answer: expectedAnswer };
 }
 
+async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
+    if (!GEMINI_API_KEY) {
+        throw new Error('GEMINI_API_KEY is required for Gemini captcha extraction');
+    }
+
+    const imageBuffer = await fs.readFile(screenshotPath);
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            systemInstruction: {
+                parts: [
+                    {
+                        text: 'Extract the KRA Security Stamp arithmetic captcha from screenshots and respond in the exact requested format only.',
+                    },
+                ],
+            },
+            contents: [
+                {
+                    parts: [
+                        {
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: imageBuffer.toString('base64'),
+                            },
+                        },
+                        {
+                            text: [
+                                'Read the Kenya Revenue Authority login page screenshot.',
+                                'Find the Security Stamp arithmetic captcha only.',
+                                'Return exactly one line and nothing else in this format:',
+                                'expression=<left><operator><right>;answer=<integer>',
+                                'Example: expression=78+9;answer=87',
+                                'Do not include words, markdown, or explanations.',
+                            ].join(' '),
+                        },
+                    ],
+                },
+            ],
+            generationConfig: {
+                responseMimeType: 'text/plain',
+                temperature: 0,
+                topP: 0.1,
+                candidateCount: 1,
+                maxOutputTokens: 32,
+                mediaResolution: 'MEDIA_RESOLUTION_HIGH',
+                thinkingConfig: {
+                    thinkingBudget: 0,
+                },
+            },
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
+    }
+
+    const payload = await response.json();
+    const rawText = extractGeminiText(payload);
+    const match = rawText.match(/expression\s*=\s*(\d+)\s*([\+\-\*\/])\s*(\d+)\s*;\s*answer\s*=\s*(-?\d+)/i);
+
+    if (!match) {
+        throw new Error(`Gemini returned an unexpected captcha format: "${rawText}"`);
+    }
+
+    const expression = `${match[1]} ${match[2]} ${match[3]}`;
+    const answer = match[4].trim();
+    const expectedAnswer = String(solveCaptcha(expression));
+
+    if (answer !== expectedAnswer) {
+        throw new Error(`Gemini answer mismatch: expression ${expression}, expected ${expectedAnswer}, got ${answer}`);
+    }
+
+    return answer;
+}
+
 async function selectOptionByTextPatterns(
     locator: any,
     patterns: RegExp[]
@@ -1118,7 +1198,6 @@ async function performKraLogin(
     await page.fill('#logid', kraPin);
 
     console.log(`[Worker][${jobId}] Clicking Continue (CheckPIN)…`);
-    const checkPinDialogPromise = waitForDialogMessage(page, 10_000);
     const continueFound = await page.$('a[href="javascript:CheckPIN();"]');
     if (continueFound) {
         await continueFound.click();
@@ -1127,7 +1206,8 @@ async function performKraLogin(
         await page.evaluate(() => { (globalThis as any).CheckPIN(); });
     }
 
-    const checkPinDialogMessage = await checkPinDialogPromise;
+    // Check for immediate PIN error dialogs (fast, non-blocking timeout)
+    const checkPinDialogMessage = await waitForDialogMessage(page, 1_000);
     if (checkPinDialogMessage) {
         console.log(`[Worker][${jobId}] KRA dialog: "${checkPinDialogMessage}"`);
     }
@@ -1143,12 +1223,8 @@ async function performKraLogin(
         throw new Error(`PIN validation failed: ${errMsg}`);
     }
 
-    await humanDelay(150, 350);
-
     await setJobStep(job, options.passwordProgress, options.passwordMessage);
     await page.fill('input[type="password"]', kraPassword);
-
-    await humanDelay(150, 350);
 
     await setJobStep(job, options.captchaProgress, options.captchaMessage);
     await page.waitForSelector('input[name="captcahText"]', { timeout: 10_000 });
@@ -1188,25 +1264,15 @@ async function performKraLogin(
     }
 
     try {
-        // Temporarily bypassing Tesseract because it hallucinations on KRA noise lines.
-        throw new Error('OCR disabled to force manual input');
-    } catch (e) {
-        console.warn(`[Worker][${jobId}] OCR captcha extraction failed:`, (e as Error).message);
-    }
-
-    if (!captchaAnswer) {
-        console.warn(`[Worker][${jobId}] Could not solve captcha automatically. PLEASE TYPE IT MANUALLY in the browser! (Waiting 40 seconds)`);
-        await page.focus('input[name="captcahText"]');
-        await humanDelay(40000, 40000); // Wait 40s for the user to key it in.
-        captchaAnswer = await page.inputValue('input[name="captcahText"]');
-    } else {
+        captchaAnswer = await solveCaptchaWithGemini(screenPath);
+        console.log(`[Worker][${jobId}] Gemini solved captcha: ${captchaAnswer}`);
         await page.fill('input[name="captcahText"]', captchaAnswer);
+    } catch (e) {
+        console.warn(`[Worker][${jobId}] Gemini captcha solving failed:`, (e as Error).message);
+        throw new Error(`Captcha solving failed: ${(e as Error).message}`);
     }
-
-    await humanDelay(500, 1_000);
 
     await setJobStep(job, options.submitProgress, options.submitMessage);
-
     await page.click('#loginButton');
     const postLoginOutcome = await measureJobPhase(job, 'post-login landing selector', options.submitProgress, async () => {
         return await waitForPostLoginOutcome(page, job, options.submitProgress);
@@ -1514,7 +1580,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
     console.log(`[Worker] Starting job ${jobId} for identifier ${kraPin}`);
     await appendJobLog(job, 'Job accepted by worker');
 
-    let activePassword = decrypt(encryptedPassword, iv, authTag);
+    let activePassword = payload.kraPassword || decrypt(encryptedPassword!, iv!, authTag!);
     let credentialUpdate: CredentialUpdate | null = job.data.credentialUpdate ?? null;
 
     if (isNssfReturn) {

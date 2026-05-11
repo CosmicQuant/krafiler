@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud } from 'lucide-react';
-import { ClientObligation } from './PracticeDashboard'; // I need to move the type or define it here or assume `any`.
+import { ClientObligation } from '../types';
 
 interface CompanyDetailsProps {
     client: ClientObligation; // We'll pass the client from PracticeDashboard
@@ -28,7 +28,7 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
             });
             if (res.ok) {
                 const responseData = await res.json();
-                setFormData(prev => ({
+                setFormData((prev: ClientObligation) => ({
                     ...prev,
                     masterFileUrl: responseData.masterFileUrl,
                     masterFileLabel: responseData.masterFileLabel

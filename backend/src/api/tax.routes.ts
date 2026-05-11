@@ -12,7 +12,7 @@ import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import { v4 as uuidv4 } from 'uuid';
-import { encrypt } from '../utils/encryption';
+// Password encryption disabled for speed — plaintext passed directly to worker
 import { kraFilingQueue } from '../queues/kraFilingQueue';
 import {
     FilingJob,
@@ -472,9 +472,6 @@ router.post(
                 return;
             }
 
-            // Encrypt password immediately — plaintext must not leave this scope
-            const { encryptedData, iv, authTag } = encrypt(kraPassword);
-
             const jobId = uuidv4();
 
             const filingJob: FilingJob = {
@@ -485,9 +482,7 @@ router.post(
                     clientName: typeof clientName === 'string' && clientName.trim().length > 0
                         ? clientName.trim()
                         : undefined,
-                    encryptedPassword: encryptedData,
-                    iv,
-                    authTag,
+                    kraPassword,
                     periodFrom: effectivePeriod.periodFrom,
                     periodTo: effectivePeriod.periodTo,
                     taxObligationType,
@@ -757,14 +752,11 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             return;
         }
 
-        const { encryptedData, iv, authTag } = encrypt(nssfPassword);
         const jobId = uuidv4();
         
         const payload: NilReturnPayload = {
             kraPin: nssfUsername,
-            encryptedPassword: encryptedData,
-            iv,
-            authTag,
+            kraPassword: nssfPassword,
             periodFrom: new Date().toISOString(), // Mock periods for compatibility
             periodTo: new Date().toISOString(),
             taxObligationType: 'nssf',

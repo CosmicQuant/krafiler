@@ -551,7 +551,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                         />
                         <FieldError message={errors.kraPassword?.message} />
                         <p id="password-hint" className="mt-1 text-xs text-gray-400">
-                            Encrypted with AES-256-GCM before leaving your browser.
+                            Submitted securely to the automation worker.
                         </p>
                     </div>
 
@@ -826,7 +826,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                 {/* Security footnote */}
                 <div className="mt-6 flex items-center justify-center gap-1.5 text-xs text-gray-400">
                     <LockIcon />
-                    <span>AES-256-GCM encrypted · Processed securely in background</span>
+                    <span>Processed securely in background</span>
                 </div>
             </div>
         </div>

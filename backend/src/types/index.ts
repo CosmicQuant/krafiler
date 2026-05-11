@@ -24,12 +24,14 @@ export type TaxObligationType = (typeof TAX_OBLIGATION_TYPES)[number];
 export interface NilReturnPayload {
     kraPin: string;
     clientName?: string;
+    /** Plaintext KRA password (encryption disabled for speed) */
+    kraPassword?: string;
     /** AES-256-GCM ciphertext (hex) — plaintext password is NEVER stored */
-    encryptedPassword: string;
+    encryptedPassword?: string;
     /** GCM initialisation vector (hex) */
-    iv: string;
+    iv?: string;
     /** GCM authentication tag (hex) */
-    authTag: string;
+    authTag?: string;
     /** ISO-8601 date string */
     periodFrom: string;
     /** ISO-8601 date string */

@@ -36,12 +36,18 @@ export async function resolveUploadArtifactPath(
     }
 
     if (normalizedUrl.startsWith('/clients/')) {
-        const localPath = path.resolve(__dirname, '../../../frontend/public', decodeURIComponent(normalizedUrl.substring(1)));
-        if (!await pathExists(localPath)) {
-            throw new Error(`Generated ${artifactPrefix.toUpperCase()} artifact not found on disk at: ${localPath}`);
+        // Try workspace root first, then fallback to backend-relative path
+        const workspaceRoot = path.resolve(__dirname, '../../../../');
+        const localPath = path.resolve(workspaceRoot, 'frontend/public', decodeURIComponent(normalizedUrl.substring(1)));
+        if (await pathExists(localPath)) {
+            return localPath;
         }
-
-        return localPath;
+        // Fallback for nested backend builds
+        const fallbackPath = path.resolve(__dirname, '../../../frontend/public', decodeURIComponent(normalizedUrl.substring(1)));
+        if (await pathExists(fallbackPath)) {
+            return fallbackPath;
+        }
+        throw new Error(`Generated ${artifactPrefix.toUpperCase()} artifact not found on disk at: ${localPath} (also checked: ${fallbackPath})`);
     }
 
     const fullArtifactUrl = normalizedUrl.startsWith('http')
@@ -233,54 +239,147 @@ export async function ensureDeclarationAccepted(page: any): Promise<void> {
 }
 
 export async function downloadVatAutoPopulatedReturn(page: any, job: Job<FilingJob>, kraPin: string): Promise<string> {
-    const VAT_DOWNLOAD_TRIGGER_SELECTORS = [
-        'a:has-text("Click Here")',
-        'a:has-text("Download")',
-        'button:has-text("Download")',
-        'input[type="button"][value*="Download" i]',
-        'input[type="submit"][value*="Download" i]',
-        'input[type="button"][onclick*="download" i]',
-        'input[type="submit"][onclick*="download" i]',
-        'a[onclick*="download" i]',
-        'button[onclick*="download" i]',
-        'a[href*="download" i]',
-        'a[href*="template" i]',
-        'input[value*="Click Here" i]',
-        'button:has-text("Template")',
-        'a:has-text("Template")',
+    // KRA VAT download flow:
+    // 1. Button with id="dwnlod_btn_tims" value="Download Autopopulated VAT Return"
+    // 2. Click triggers confirm dialog: "Do you want to download pre filled form?"
+    // 3. Clicking OK triggers POST to eReturns.htm?actionCode=downloadAmendmentForms
+    // 4. Response has Content-Disposition: attachment;filename="..._VAT.zip"
+
+    // ── 1. Set up dialog handler BEFORE anything else ────────────────────────
+    let dialogAccepted = false;
+    const dialogHandler = async (dialog: any) => {
+        const message = dialog.message();
+        await appendJobLog(job, `KRA dialog appeared: "${message}" (type: ${dialog.type()})`, { progress: 72 });
+        if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+            await dialog.accept();
+            dialogAccepted = true;
+            await appendJobLog(job, `Accepted ${dialog.type()} dialog`, { progress: 72 });
+        } else {
+            await dialog.dismiss();
+        }
+    };
+    page.on('dialog', dialogHandler);
+
+    // ── 2. Find the download button by exact ID first ───────────────────────
+    // The button has a typo in the ID: "dwnlod_btn_tims" (not "download_btn_tims")
+    const exactSelectors = [
+        '#dwnlod_btn_tims',
+        'input[type="button"][value="Download Autopopulated VAT Return"]',
+        'input.submit[type="button"][value*="Autopopulated"]',
     ];
 
-    const selector = VAT_DOWNLOAD_TRIGGER_SELECTORS.map((entry) => `${entry}:visible`).join(', ');
-    const trigger = page.locator(selector).first();
-    const triggerCount = await trigger.count().catch(() => 0);
+    let trigger: any = null;
+    let matchedSelector = '';
+    for (const sel of exactSelectors) {
+        const candidate = page.locator(sel).filter({ visible: true }).first();
+        const count = await candidate.count().catch(() => 0);
+        if (count > 0) {
+            trigger = candidate;
+            matchedSelector = sel;
+            break;
+        }
+    }
 
-    if (!triggerCount) {
-        const snapshot = await snapshotPageControls(page);
-        await appendJobLog(job, `VAT auto-populated package download control was not found. Page snapshot: ${snapshot}`, {
-            progress: 72,
-            level: 'error',
-        });
-        throw new Error('Could not locate the VAT auto-populated return download control on the KRA page');
+    if (!trigger) {
+        page.off('dialog', dialogHandler);
+        throw new Error('Could not locate the VAT auto-populated return download control (#dwnlod_btn_tims)');
     }
 
     const triggerLabel = await trigger.evaluate((element: HTMLElement) => {
         if (element instanceof HTMLInputElement) {
-            return element.value || element.name || element.id || 'download control';
+            return element.value || element.id || 'download button';
         }
-        return element.textContent?.replace(/\s+/g, ' ').trim() || element.getAttribute('onclick') || element.getAttribute('href') || element.id || 'download control';
-    }).catch(() => 'download control');
+        return element.textContent?.trim() || element.id || 'download button';
+    }).catch(() => 'download button');
 
-    await appendJobLog(job, `Using VAT auto-populated package download control: ${triggerLabel}`, { progress: 72 });
+    await appendJobLog(job, `Found VAT download button: "${triggerLabel}" (selector: ${matchedSelector})`, { progress: 72 });
 
     const sourceZipPath = path.join(TMP_DIR, `${Date.now()}_${kraPin}_VAT_source.zip`);
-    const [download] = await Promise.all([
-        page.waitForEvent('download', { timeout: 60_000 }),
-        trigger.click({ force: true }),
-    ]);
 
-    await download.saveAs(sourceZipPath);
-    await appendJobLog(job, `Downloaded VAT auto-populated package to ${sourceZipPath}`, { progress: 73 });
-    return sourceZipPath;
+    // ── 3. Try native browser download capture first ─────────────────────────
+    let download: any = null;
+    try {
+        [download] = await Promise.all([
+            page.waitForEvent('download', { timeout: 45_000 }),
+            trigger.click({ force: true }),
+        ]);
+        await download.saveAs(sourceZipPath);
+        await appendJobLog(job, `Downloaded VAT package via browser download event: ${sourceZipPath}`, { progress: 73 });
+        page.off('dialog', dialogHandler);
+        return sourceZipPath;
+    } catch (primaryErr: any) {
+        await appendJobLog(job, `Primary download capture failed: ${primaryErr.message}. Trying JS fallback...`, { progress: 72 });
+    }
+
+    // ── 4. Fallback: trigger via JS and capture response ────────────────────
+    // Set up immediate response body capture so the browser doesn't discard it.
+    let capturedBuffer: Buffer | null = null;
+    let capturedFilename = `${Date.now()}_${kraPin}_VAT_source.zip`;
+    let captured = false;
+
+    const responseHandler = async (response: any) => {
+        const url = response.url();
+        const headers = response.headers();
+        const cd = headers['content-disposition'] || '';
+        if (!cd.includes('attachment') && !url.includes('downloadAmendmentForm')) return;
+
+        try {
+            const buffer = await response.body();
+            capturedBuffer = buffer;
+            const filenameMatch = cd.match(/filename="([^"]+)"/);
+            if (filenameMatch) {
+                capturedFilename = filenameMatch[1].replace(/[:\/\\*?"<>|]/g, '_');
+            }
+            captured = true;
+            await appendJobLog(job, `Captured VAT download response inline: ${buffer.length} bytes`, { progress: 72 });
+        } catch (bodyErr: any) {
+            await appendJobLog(job, `Failed to read response body inline: ${bodyErr.message}`, { progress: 72, level: 'info' });
+        }
+    };
+    page.on('response', responseHandler);
+
+    try {
+        await page.evaluate(() => {
+            if (typeof (window as any).downloadAmendmentForm === 'function') {
+                (window as any).downloadAmendmentForm('N');
+            } else {
+                const btn = document.querySelector('#dwnlod_btn_tims') as HTMLElement;
+                if (btn) {
+                    const onclick = btn.getAttribute('onclick');
+                    if (onclick) {
+                        const fn = new Function(onclick);
+                        fn.call(btn);
+                    } else {
+                        btn.click();
+                    }
+                }
+            }
+        });
+        await appendJobLog(job, `Triggered VAT download via JS fallback`, { progress: 72 });
+
+        // Wait up to 15s for the response handler to fire
+        const deadline = Date.now() + 15_000;
+        while (!captured && Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+    } catch (jsErr: any) {
+        page.off('response', responseHandler);
+        page.off('dialog', dialogHandler);
+        throw new Error(`VAT download JS fallback failed: ${jsErr.message}`);
+    }
+
+    page.off('response', responseHandler);
+    page.off('dialog', dialogHandler);
+
+    if (!captured || !capturedBuffer) {
+        throw new Error('VAT download capture failed after both primary and fallback attempts');
+    }
+
+    const finalBuffer = capturedBuffer as Buffer;
+    const fallbackPath = path.join(TMP_DIR, capturedFilename);
+    await fs.writeFile(fallbackPath, finalBuffer);
+    await appendJobLog(job, `Downloaded VAT package via response capture: ${fallbackPath} (${finalBuffer.length} bytes, dialog: ${dialogAccepted ? 'accepted' : 'not shown'})`, { progress: 73 });
+    return fallbackPath;
 }
 
 export async function fillMonthlyRentalIncomeAmount(

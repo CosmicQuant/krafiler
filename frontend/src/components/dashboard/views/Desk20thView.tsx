@@ -6,6 +6,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { ClientObligation, TaxStatus, VatPreparationSummary } from '../../../types';
+import { VatSummaryCard } from '../VatSummaryCard';
 import {
   StatusBadge,
 } from '../StatusBadges';
@@ -313,6 +314,18 @@ export function Desk20thView({
                               Generate VAT ZIP to download the KRA package, build the upload ZIP, and review the summary before filing VAT.
                             </span>
                           )}
+
+                          {/* Detailed VAT Breakdown — shown when breakdown data is available */}
+                          {(vatSummary.sales?.length || vatSummary.purchases?.length) ? (
+                            <div className="mt-2">
+                              <VatSummaryCard
+                                sales={vatSummary.sales}
+                                purchases={vatSummary.purchases}
+                                previousCredit={vatSummary.previousCredit}
+                                netVatBalance={vatSummary.netVatBalance}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       )}
                       {ob.type === 'TOT' && (

@@ -45,18 +45,11 @@ type PreparedVatLineItem = {
     vatAmount: number;
 };
 
-type SalesPreparation = {
-    lines: PreparedVatLineItem[];
-    withPinBase: number;
-    withPinVat: number;
-    withoutPinBase: number;
-    withoutPinVat: number;
-};
-
-type PurchasePreparation = {
-    lines: PreparedVatLineItem[];
-    purchaseBase: number;
-    purchaseVat: number;
+export type VatBreakdownItem = {
+    label: string;
+    base: number;
+    vat: number;
+    rate: number;
 };
 
 export type PreparedVatReturnSummary = {
@@ -65,6 +58,8 @@ export type PreparedVatReturnSummary = {
     previousCredit: number;
     payableVat: number;
     netVatBalance: number;
+    sales?: VatBreakdownItem[];
+    purchases?: VatBreakdownItem[];
 };
 
 export type PreparedVatReturnArtifacts = {
@@ -107,6 +102,17 @@ function formatArtifactTimestamp(date = new Date()): string {
 function round(value: number, decimals = 2): number {
     const multiplier = 10 ** decimals;
     return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
+}
+
+function getVatRate(rateCode: string): number {
+    switch (rateCode) {
+        case 'GNRL': return 0.16;
+        case 'OTHR': return 0.08;
+        case 'ZERO': return 0.00;
+        case 'EXEM': return 0.00;
+        case 'IMPT': return 0.16;
+        default: return 0.16;
+    }
 }
 
 function formatXmlNumber(value: number, decimals = 4): string {
@@ -189,12 +195,33 @@ async function readCsvRows(filePath: string): Promise<CsvRow[]> {
 }
 
 async function extractVatPackage(sourceZipPath: string, outputDir: string): Promise<string> {
+    // Verify the downloaded file is actually a ZIP
+    const fileBuffer = fsSync.readFileSync(sourceZipPath);
+    const isZip = fileBuffer.length >= 4 &&
+        fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4B &&
+        fileBuffer[2] === 0x03 && fileBuffer[3] === 0x04;
+
+    if (!isZip) {
+        throw new Error(
+            `Downloaded file is not a valid ZIP archive. ` +
+            `The automation likely clicked the wrong download button (e.g., a template link instead of "Download Autopopulated VAT Return"). ` +
+            `Please check the KRA portal page structure — the correct button should download a ZIP containing csv.zip inside.`
+        );
+    }
+
     const outerZip = new AdmZip(sourceZipPath);
     outerZip.extractAllTo(outputDir, true);
 
     const nestedZipPath = path.join(outputDir, 'csv.zip');
     if (!fsSync.existsSync(nestedZipPath)) {
-        throw new Error('Downloaded VAT package did not contain the nested csv.zip file.');
+        const extractedFiles = fsSync.readdirSync(outputDir);
+        throw new Error(
+            `Downloaded VAT package did not contain the nested csv.zip file. ` +
+            `Extracted contents: [${extractedFiles.join(', ')}]. ` +
+            `This usually means the wrong download button was clicked — ` +
+            `the "Download Autopopulated VAT Return" button should produce a ZIP with csv.zip inside, ` +
+            `but template download links only produce an .xls file.`
+        );
     }
 
     const nestedDir = path.join(outputDir, 'nested-csv');
@@ -210,8 +237,8 @@ async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string
     const sections: { [key: string]: string[] } = {};
 
     for (const file of csvFiles) {
-        // Match patterns like SEC_B_WITH_VAT_PIN1.CSV, SEC_H_ZERO_RATED_PIN1.CSV, etc.
-        const match = file.match(/^SEC_([A-Z])_(.+?)(?:_PIN\d+)?\.CSV$/i);
+        // Match patterns like SEC_B_WITH_VAT_PIN1.CSV, SEC_D1_WITH_VAT_PIN1.CSV, SEC_H_ZERO_RATED_PIN1.CSV, etc.
+        const match = file.match(/^SEC_([A-Z]\d*)_(.+?)(?:_PIN\d+)?\.CSV$/i);
         if (match) {
             const sectionLetter = match[1].toUpperCase();
             if (!sections[sectionLetter]) {
@@ -224,97 +251,187 @@ async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string
     return sections;
 }
 
-function mapGeneralSalesRows(withPinRows: CsvRow[], withoutPinRows: CsvRow[]): SalesPreparation {
-    const lookup = new Map<string, string>();
-    const lines: PreparedVatLineItem[] = [];
-    let withPinBase = 0;
-    let withPinVat = 0;
-    let withoutPinBase = 0;
-    let withoutPinVat = 0;
-
-    const mapRow = (row: CsvRow, countsAsWithPin: boolean) => {
-        if (row.length < 7) {
-            return;
+function findAmountInRow(row: CsvRow): number {
+    // Source CSVs place the amount at different positions.
+    // Scan from the right for the first positive numeric value.
+    for (let i = row.length - 1; i >= 0; i--) {
+        const val = parseAmount(row[i]);
+        if (val > 0) {
+            return val;
         }
-
-        const taxableAmount = parseAmount(row[6]);
-        if (taxableAmount <= 0) {
-            return;
-        }
-
-        const vatAmount = round(taxableAmount * 0.16, 4);
-        const pin = (row[0] || '').trim();
-        const values = [
-            pin,
-            normalizeName(row[1] || '', lookup, pin),
-            (row[2] || '').trim(),
-            (row[3] || '').trim(),
-            normalizeInvoiceNumber(row[4] || ''),
-            (row[5] || '').trim(),
-            formatXmlNumber(taxableAmount, 4),
-            formatXmlNumber(vatAmount, 4),
-            '',
-            '',
-            'GNRL',
-        ];
-
-        lines.push({ values, taxableAmount, vatAmount });
-
-        if (countsAsWithPin) {
-            withPinBase += taxableAmount;
-            withPinVat += vatAmount;
-        } else {
-            withoutPinBase += taxableAmount;
-            withoutPinVat += vatAmount;
-        }
-    };
-
-    withPinRows.forEach((row) => mapRow(row, true));
-    withoutPinRows.forEach((row) => mapRow(row, false));
-
-    return { lines, withPinBase, withPinVat, withoutPinBase, withoutPinVat };
+    }
+    return 0;
 }
 
-function mapPurchaseRows(rows: CsvRow[], rateCode: 'GNRL' | 'OTHR' | 'ZERO' | 'EXEM' | 'IMPT'): PurchasePreparation {
+function mapSectionRows(params: {
+    rows: CsvRow[];
+    section: 'B' | 'C' | 'D1' | 'D2' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
+}): { lines: PreparedVatLineItem[]; totalBase: number; totalVat: number } {
+    const { rows, section } = params;
     const lookup = new Map<string, string>();
     const lines: PreparedVatLineItem[] = [];
-    let purchaseBase = 0;
-    let purchaseVat = 0;
+    let totalBase = 0;
+    let totalVat = 0;
 
     for (const row of rows) {
-        if (row.length < 8) {
-            continue;
-        }
-
-        const taxableAmount = parseAmount(row[7]);
+        const taxableAmount = findAmountInRow(row);
         if (taxableAmount <= 0) {
             continue;
         }
 
-        const vatAmount = round(taxableAmount * 0.16, 4);
-        const supplierPin = (row[1] || '').trim();
-        const values = [
-            (row[0] || '').trim(),
-            supplierPin,
-            normalizeName(row[2] || '', lookup, supplierPin),
-            (row[3] || '').trim(),
-            normalizeInvoiceNumber(row[4] || ''),
-            (row[5] || '').trim(),
-            (row[6] || '').trim(),
-            formatXmlNumber(taxableAmount, 4),
-            formatXmlNumber(vatAmount, 4),
-            '',
-            '',
-            (row[0] || '').trim(),
-            rateCode,
-        ];
+        let values: string[] = [];
+        let vatAmount = 0;
+
+        switch (section) {
+            case 'B':
+            case 'C': {
+                // Sales with PIN (10-col source)
+                // Output: 11 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, empty, empty, Rate]
+                vatAmount = round(taxableAmount * 0.16, 4);
+                const pin = (row[0] || '').trim();
+                values = [
+                    pin,
+                    normalizeName(row[1] || '', lookup, pin),
+                    (row[2] || '').trim(),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    (row[5] || '').trim(),
+                    formatXmlNumber(taxableAmount, 4),
+                    formatXmlNumber(vatAmount, 4),
+                    '',
+                    '',
+                    section === 'B' ? 'GNRL' : 'OTHR',
+                ];
+                break;
+            }
+            case 'D1':
+            case 'D2': {
+                // Zero-rated sales (10-col source, amount at index 9 for D1)
+                // Output: same 11-col format but VAT = 0, rate ZERO
+                const pin = (row[1] || '').trim();
+                values = [
+                    pin,
+                    normalizeName(row[2] || '', lookup, pin),
+                    (row[3] || '').trim(),
+                    (row[4] || '').trim(),
+                    normalizeInvoiceNumber(row[5] || ''),
+                    (row[6] || '').trim(),
+                    formatXmlNumber(taxableAmount, 4),
+                    '0',
+                    '',
+                    '',
+                    'ZERO',
+                ];
+                break;
+            }
+            case 'E': {
+                // Exempt sales (10-col source)
+                // Output: 11 cols, VAT = 0, rate EXEMPT
+                const pin = (row[0] || '').trim();
+                values = [
+                    pin,
+                    normalizeName(row[1] || '', lookup, pin),
+                    (row[2] || '').trim(),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    (row[5] || '').trim(),
+                    formatXmlNumber(taxableAmount, 4),
+                    '0',
+                    '',
+                    '',
+                    'EXEMPT',
+                ];
+                break;
+            }
+            case 'F':
+            case 'G': {
+                // Purchases with VAT (11-col source)
+                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, empty, empty, Local, Rate]
+                vatAmount = round(taxableAmount * (section === 'F' ? 0.16 : 0.08), 4);
+                const supplierPin = (row[1] || '').trim();
+                values = [
+                    (row[0] || '').trim(),
+                    supplierPin,
+                    normalizeName(row[2] || '', lookup, supplierPin),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    (row[5] || '').trim(),
+                    '',
+                    formatXmlNumber(taxableAmount, 4),
+                    formatXmlNumber(vatAmount, 4),
+                    '',
+                    '',
+                    (row[0] || '').trim(),
+                    section === 'F' ? 'GNRL' : 'OTHR',
+                ];
+                break;
+            }
+            case 'H': {
+                // Zero-rated purchases (9-col source)
+                // Output: 11 cols [Local, PIN, Name, Date, Invoice, empty, Desc, empty, Amount, Local, ZERO]
+                const supplierPin = (row[1] || '').trim();
+                values = [
+                    (row[0] || '').trim(),
+                    supplierPin,
+                    normalizeName(row[2] || '', lookup, supplierPin),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    '',
+                    (row[6] || '').trim(),
+                    '',
+                    formatXmlNumber(taxableAmount, 4),
+                    (row[0] || '').trim(),
+                    'ZERO',
+                ];
+                break;
+            }
+            case 'I': {
+                // Exempt purchases (8-col source)
+                // Output: 10 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, Local, EXEMPT]
+                const supplierPin = (row[1] || '').trim();
+                values = [
+                    (row[0] || '').trim(),
+                    supplierPin,
+                    normalizeName(row[2] || '', lookup, supplierPin),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    (row[5] || '').trim(),
+                    '',
+                    formatXmlNumber(taxableAmount, 4),
+                    (row[0] || '').trim(),
+                    'EXEMPT',
+                ];
+                break;
+            }
+            case 'J': {
+                // Imported services (assume same 11-col source as F)
+                vatAmount = round(taxableAmount * 0.16, 4);
+                const supplierPin = (row[1] || '').trim();
+                values = [
+                    (row[0] || '').trim(),
+                    supplierPin,
+                    normalizeName(row[2] || '', lookup, supplierPin),
+                    (row[3] || '').trim(),
+                    normalizeInvoiceNumber(row[4] || ''),
+                    (row[5] || '').trim(),
+                    '',
+                    formatXmlNumber(taxableAmount, 4),
+                    formatXmlNumber(vatAmount, 4),
+                    '',
+                    '',
+                    (row[0] || '').trim(),
+                    'IMPT',
+                ];
+                break;
+            }
+        }
 
         lines.push({ values, taxableAmount, vatAmount });
-        purchaseBase += taxableAmount;
-        purchaseVat += vatAmount;
+        totalBase += taxableAmount;
+        totalVat += vatAmount;
     }
 
-    return { lines, purchaseBase, purchaseVat };
+    return { lines, totalBase, totalVat };
 }
 
 function toCsvLine(values: string[]): string {
@@ -358,14 +475,33 @@ function buildNamedValues(params: {
     periodFrom: string;
     periodTo: string;
     previousCredit: number;
-    salesLines: SalesPreparation;
-    generalPurchases: PurchasePreparation;
-    otherPurchases: PurchasePreparation;
+    bWithPin: { totalBase: number; totalVat: number };
+    bWithoutPin: { totalBase: number; totalVat: number };
+    cWithPin: { totalBase: number; totalVat: number };
+    cWithoutPin: { totalBase: number; totalVat: number };
+    dWithPin: { totalBase: number; totalVat: number };
+    dWithoutPin: { totalBase: number; totalVat: number };
+    eWithPin: { totalBase: number; totalVat: number };
+    eWithoutPin: { totalBase: number; totalVat: number };
+    fPurchases: { totalBase: number; totalVat: number };
+    gPurchases: { totalBase: number; totalVat: number };
+    hPurchases: { totalBase: number; totalVat: number };
+    iPurchases: { totalBase: number; totalVat: number };
+    jPurchases: { totalBase: number; totalVat: number };
 }): Record<string, string> {
-    const totalSales = params.salesLines.withPinBase + params.salesLines.withoutPinBase;
-    const totalSalesVat = params.salesLines.withPinVat + params.salesLines.withoutPinVat;
-    const totalPurchases = params.generalPurchases.purchaseBase + params.otherPurchases.purchaseBase;
-    const totalInputVatExact = params.generalPurchases.purchaseVat + params.otherPurchases.purchaseVat;
+    const generalSalesTotal = params.bWithPin.totalBase + params.bWithoutPin.totalBase;
+    const generalSalesVat = params.bWithPin.totalVat + params.bWithoutPin.totalVat;
+    const otherSalesTotal = params.cWithPin.totalBase + params.cWithoutPin.totalBase;
+    const otherSalesVat = params.cWithPin.totalVat + params.cWithoutPin.totalVat;
+    const zeroRatedSalesTotal = params.dWithPin.totalBase + params.dWithoutPin.totalBase;
+    const zeroRatedSalesVat = params.dWithPin.totalVat + params.dWithoutPin.totalVat;
+    const exemptSalesTotal = params.eWithPin.totalBase + params.eWithoutPin.totalBase;
+    const exemptSalesVat = params.eWithPin.totalVat + params.eWithoutPin.totalVat;
+
+    const totalSales = generalSalesTotal + otherSalesTotal + zeroRatedSalesTotal + exemptSalesTotal;
+    const totalSalesVat = generalSalesVat + otherSalesVat + zeroRatedSalesVat + exemptSalesVat;
+    const totalPurchases = params.fPurchases.totalBase + params.gPurchases.totalBase + params.hPurchases.totalBase + params.iPurchases.totalBase + params.jPurchases.totalBase;
+    const totalInputVatExact = params.fPurchases.totalVat + params.gPurchases.totalVat + params.hPurchases.totalVat + params.iPurchases.totalVat + params.jPurchases.totalVat;
     const totalInputVatRounded = round(totalInputVatExact, 2);
     const finalTaxPayable = round(totalSalesVat - totalInputVatRounded, 2);
     const netVatBalance = round(finalTaxPayable - params.previousCredit, 2);
@@ -376,64 +512,64 @@ function buildNamedValues(params: {
     return {
         'deductibleCI': '0',
         'prorationRate': '100',
-        'Purchase.InputTaxPurchDtlsExemptTO': '0',
-        'Purchase.InputTaxPurchDtlsGRTO': formatXmlNumber(params.generalPurchases.purchaseBase, 4),
-        'Purchase.InputTaxPurchDtlsORTO': formatXmlNumber(params.otherPurchases.purchaseBase, 4),
-        'Purchase.InputTaxPurchDtlsZRTO': '0',
+        'Purchase.InputTaxPurchDtlsExemptTO': formatXmlNumber(params.iPurchases.totalBase, 4),
+        'Purchase.InputTaxPurchDtlsGRTO': formatXmlNumber(params.fPurchases.totalBase, 4),
+        'Purchase.InputTaxPurchDtlsORTO': formatXmlNumber(params.gPurchases.totalBase, 4),
+        'Purchase.InputTaxPurchDtlsZRTO': formatXmlNumber(params.hPurchases.totalBase, 4),
         'RetInf.DepositStartDate': '01/04/2025',
-        'RetInf.DepositStartDatePID': '01/10/2025',
+        'RetInf.DepositStartDatePID': '10/01/2025',
         'RetInf.PIN': '',
-        'Sales.ExemptSalesDtlsTO': '0',
-        'Sales.GeneralRateSalesDtlsTO': formatXmlNumber(totalSales, 4),
-        'Sales.OtherRateSalesDtlsTO': '0',
-        'Sales.ZeroRateSalesSecASecBTO': '0',
-        'Sch1.GeneralRateSalesDtlsTO': formatXmlNumber(totalSales, 4),
-        'Sch1.GeneralRateSalesVATTO': formatXmlNumber(totalSalesVat, 4),
-        'Sch1.SalesAmtWithoutPINTO': formatXmlNumber(params.salesLines.withoutPinBase, 4),
-        'Sch1.SalesAmtWithPINTO': formatXmlNumber(params.salesLines.withPinBase, 4),
-        'Sch1.VATAmtWithoutPINTO': formatXmlNumber(params.salesLines.withoutPinVat, 4),
-        'Sch1.VATAmtWithPINTO': formatXmlNumber(params.salesLines.withPinVat, 4),
+        'Sales.ExemptSalesDtlsTO': formatXmlNumber(exemptSalesTotal, 4),
+        'Sales.GeneralRateSalesDtlsTO': formatXmlNumber(generalSalesTotal, 4),
+        'Sales.OtherRateSalesDtlsTO': formatXmlNumber(otherSalesTotal, 4),
+        'Sales.ZeroRateSalesSecASecBTO': formatXmlNumber(zeroRatedSalesTotal, 4),
+        'Sch1.GeneralRateSalesDtlsTO': formatXmlNumber(generalSalesTotal, 4),
+        'Sch1.GeneralRateSalesVATTO': formatXmlNumber(generalSalesVat, 4),
+        'Sch1.SalesAmtWithoutPINTO': formatXmlNumber(params.bWithoutPin.totalBase, 4),
+        'Sch1.SalesAmtWithPINTO': formatXmlNumber(params.bWithPin.totalBase, 4),
+        'Sch1.VATAmtWithoutPINTO': formatXmlNumber(params.bWithoutPin.totalVat, 4),
+        'Sch1.VATAmtWithPINTO': formatXmlNumber(params.bWithPin.totalVat, 4),
         'Sch10.AmountVatClaimableListTO': '0',
         'Sch10.VATAdvcSelfAssPaidDtlsTO': '0',
         'Sch10.VATCrAdjVoucherDtlsTO': '0',
         'Sch10.VATPaidDtlsTO': '0',
         'Sch10.VATSelfAssPaidDtlsTO': '0',
-        'Sch2.OtherRateSalesDtlsTO': '0',
-        'Sch2.OtherRateSalesVATTO': '0',
-        'Sch2.SalesAmtWithoutPINTO': '0',
-        'Sch2.SalesAmtWithPINTO': '0',
-        'Sch2.VATAmtWithoutPINTO': '0',
-        'Sch2.VATAmtWithPINTO': '0',
-        'Sch3.SalesAmtWithoutPINExpTO': '0',
-        'Sch3.SalesAmtWithoutPINTO': '',
-        'Sch3.SalesAmtWithPINExpTO': '0',
-        'Sch3.SalesAmtWithPINTO': '0',
-        'Sch3.ZeroRateSalesDtlsTO': '0',
-        'Sch3.ZeroRateSalesExpTO': '0',
-        'Sch3.ZeroRateSalesSecASecBTO': '0',
+        'Sch2.OtherRateSalesDtlsTO': formatXmlNumber(otherSalesTotal, 4),
+        'Sch2.OtherRateSalesVATTO': formatXmlNumber(otherSalesVat, 4),
+        'Sch2.SalesAmtWithoutPINTO': formatXmlNumber(params.cWithoutPin.totalBase, 4),
+        'Sch2.SalesAmtWithPINTO': formatXmlNumber(params.cWithPin.totalBase, 4),
+        'Sch2.VATAmtWithoutPINTO': formatXmlNumber(params.cWithoutPin.totalVat, 4),
+        'Sch2.VATAmtWithPINTO': formatXmlNumber(params.cWithPin.totalVat, 4),
+        'Sch3.SalesAmtWithoutPINExpTO': formatXmlNumber(params.dWithoutPin.totalBase, 4),
+        'Sch3.SalesAmtWithoutPINTO': formatXmlNumber(params.dWithoutPin.totalBase, 4),
+        'Sch3.SalesAmtWithPINExpTO': formatXmlNumber(params.dWithPin.totalBase, 4),
+        'Sch3.SalesAmtWithPINTO': formatXmlNumber(params.dWithPin.totalBase, 4),
+        'Sch3.ZeroRateSalesDtlsTO': formatXmlNumber(zeroRatedSalesTotal, 4),
+        'Sch3.ZeroRateSalesExpTO': formatXmlNumber(zeroRatedSalesTotal, 4),
+        'Sch3.ZeroRateSalesSecASecBTO': formatXmlNumber(zeroRatedSalesTotal, 4),
         'Sch4.ExemptSalesData': '',
-        'Sch4.ExemptSalesDtlsTO': '0',
-        'Sch4.SalesAmtWithoutPINTO': '0',
-        'Sch4.SalesAmtWithPINTO': '0',
+        'Sch4.ExemptSalesDtlsTO': formatXmlNumber(exemptSalesTotal, 4),
+        'Sch4.SalesAmtWithoutPINTO': formatXmlNumber(params.eWithoutPin.totalBase, 4),
+        'Sch4.SalesAmtWithPINTO': formatXmlNumber(params.eWithPin.totalBase, 4),
         'Sch5.AmtBfrVATWithoutPINTO': '0',
-        'Sch5.AmtBfrVATWithPINTO': formatXmlNumber(params.generalPurchases.purchaseBase, 4),
+        'Sch5.AmtBfrVATWithPINTO': formatXmlNumber(params.fPurchases.totalBase, 4),
         'Sch5.AmtVATWithoutPINTO': '0',
-        'Sch5.AmtVATWithPINTO': formatXmlNumber(params.generalPurchases.purchaseVat, 4),
-        'Sch5.InputTaxPurchDtlsGRTO': formatXmlNumber(params.generalPurchases.purchaseBase, 4),
-        'Sch5.InputTaxPurchDtlsGRVATTO': formatXmlNumber(params.generalPurchases.purchaseVat, 4),
+        'Sch5.AmtVATWithPINTO': formatXmlNumber(params.fPurchases.totalVat, 4),
+        'Sch5.InputTaxPurchDtlsGRTO': formatXmlNumber(params.fPurchases.totalBase, 4),
+        'Sch5.InputTaxPurchDtlsGRVATTO': formatXmlNumber(params.fPurchases.totalVat, 4),
         'Sch6.AmtBfrVATWithoutPINTO': '0',
-        'Sch6.AmtBfrVATWithPINTO': formatXmlNumber(params.otherPurchases.purchaseBase, 4),
+        'Sch6.AmtBfrVATWithPINTO': formatXmlNumber(params.gPurchases.totalBase, 4),
         'Sch6.AmtVATWithoutPINTO': '0',
-        'Sch6.AmtVATWithPINTO': formatXmlNumber(params.otherPurchases.purchaseVat, 4),
-        'Sch6.InputTaxPurchDtlsORTO': formatXmlNumber(params.otherPurchases.purchaseBase, 4),
-        'Sch6.InputTaxPurchDtlsORVATTO': formatXmlNumber(params.otherPurchases.purchaseVat, 4),
+        'Sch6.AmtVATWithPINTO': formatXmlNumber(params.gPurchases.totalVat, 4),
+        'Sch6.InputTaxPurchDtlsORTO': formatXmlNumber(params.gPurchases.totalBase, 4),
+        'Sch6.InputTaxPurchDtlsORVATTO': formatXmlNumber(params.gPurchases.totalVat, 4),
         'Sch7.AmtBfrVATWithoutPINTO': '0',
-        'Sch7.AmtBfrVATWithPINTO': '0',
-        'Sch7.InputTaxPurchDtlsZRTO': '0',
-        'Sch8.AmtBfrVATWithoutPINAddTO': '',
+        'Sch7.AmtBfrVATWithPINTO': formatXmlNumber(params.hPurchases.totalBase, 4),
+        'Sch7.InputTaxPurchDtlsZRTO': formatXmlNumber(params.hPurchases.totalBase, 4),
+        'Sch8.AmtBfrVATWithoutPINAddTO': '0',
         'Sch8.AmtBfrVATWithoutPINTO': '0',
-        'Sch8.InputTaxPurchDtlsExemptTO': '0',
-        'Sch8.PurchaseAmtWithPINTO': '0',
+        'Sch8.InputTaxPurchDtlsExemptTO': formatXmlNumber(params.iPurchases.totalBase, 4),
+        'Sch8.PurchaseAmtWithPINTO': formatXmlNumber(params.iPurchases.totalBase, 4),
         'Sch8.WithHoldingVATDtlsTO': '0',
         'searchOffset': '',
         'searchoffset_Section_C': '',
@@ -450,16 +586,16 @@ function buildNamedValues(params: {
         'SecA.RtnYear': returnYear,
         'SecA.TaxPayerPIN': params.taxpayerPin.toUpperCase(),
         'SecA.VatNonResident': 'No',
-        'SecB.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
+        'SecB.OutputTaxCharged': formatXmlNumber(round(totalSalesVat, 2), 4),
         'SecB.TotalSales': formatXmlNumber(totalSales, 4),
-        'SecB.VATChargedOnGR': formatXmlNumber(totalSalesVat, 4),
-        'SecB.VATChargedOnOR': '0',
-        'SecB.VATChargedOnZR': '0',
+        'SecB.VATChargedOnGR': formatXmlNumber(generalSalesVat, 4),
+        'SecB.VATChargedOnOR': formatXmlNumber(otherSalesVat, 4),
+        'SecB.VATChargedOnZR': formatXmlNumber(zeroRatedSalesVat, 4),
         'SecC.TotalPurchases': formatXmlNumber(totalPurchases, 4),
         'SecC.TotalVatPurCharged': formatXmlNumber(totalInputVatExact, 4),
-        'SecC.VATChargedOnGR': formatXmlNumber(params.generalPurchases.purchaseVat, 4),
-        'SecC.VATChargedOnOR': formatXmlNumber(params.otherPurchases.purchaseVat, 4),
-        'SecC.VATChargedOnZR': '0',
+        'SecC.VATChargedOnGR': formatXmlNumber(params.fPurchases.totalVat, 4),
+        'SecC.VATChargedOnOR': formatXmlNumber(params.gPurchases.totalVat, 4),
+        'SecC.VATChargedOnZR': formatXmlNumber(params.hPurchases.totalVat, 4),
         'SecD.AddRefundClaimPaid': '0',
         'SecD.CrdtBroughtFrwd': formatXmlNumber(params.previousCredit, 4),
         'SecD.DeductableIPTax': formatXmlNumber(totalInputVatRounded, 2),
@@ -473,7 +609,7 @@ function buildNamedValues(params: {
         'TaxDue.AmountVatClaimableListTO': '0',
         'TaxDue.CrAdjVoucherDtlsTO': '0',
         'TaxDue.DbAdjVoucherDtlsTO': '0',
-        'TaxDue.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
+        'TaxDue.OutputTaxCharged': formatXmlNumber(round(totalSalesVat, 2), 4),
         'TaxDue.TotalVatPurCharged': formatXmlNumber(totalInputVatRounded, 2),
         'TaxDue.VATPaidDtlsTO': '0',
         'TaxDue.VATWhtTO': '0',
@@ -482,7 +618,7 @@ function buildNamedValues(params: {
         'templateInfo.obligId': '9',
         'templateInfo.ofcVrsn': 'EXCEL 1997-2003',
         'templateInfo.tempType': 'XLS',
-        'templateInfo.tempVrsn': '15.0.10',
+        'templateInfo.tempVrsn': '15.0.11',
         'WithHolding.ListTO': '0',
     };
 }
@@ -552,101 +688,164 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const nestedCsvDir = await extractVatPackage(params.sourceZipPath, extractedDir);
     const discoveredSections = await discoverVatSections(nestedCsvDir);
 
-    // Process Section B (Sales) - read all B* files
-    const salesWithPinRows = discoveredSections['B']?.length > 0 
-        ? await readCsvRows(discoveredSections['B'].find((f) => f.includes('WITH_VAT_PIN')) || discoveredSections['B'][0])
-        : [];
-    const salesWithoutPinRows = discoveredSections['B']?.length > 1
-        ? await readCsvRows(discoveredSections['B'].find((f) => f.includes('WITHOUT_PIN')) || discoveredSections['B'][1])
-        : [];
+    // ── Helper: read all files for a section key, returning per-subsection rows ─
+    async function readSectionFiles(sectionKey: string): Promise<{ withPin: CsvRow[]; withoutPin: CsvRow[] }> {
+        const files = discoveredSections[sectionKey] || [];
+        const withPinFile = files.find((f) => f.includes('WITH_VAT_PIN')) || files[0];
+        const withoutPinFile = files.find((f) => f.includes('WITHOUT_PIN')) || files[1];
+        return {
+            withPin: withPinFile ? await readCsvRows(withPinFile) : [],
+            withoutPin: withoutPinFile ? await readCsvRows(withoutPinFile) : [],
+        };
+    }
 
-    // Process Section F (General Rated Purchases)
-    const generalPurchaseRows = discoveredSections['F']?.length > 0
-        ? await readCsvRows(discoveredSections['F'][0])
-        : [];
+    // ── Read source sections ────────────────────────────────────────────────
+    const bSource = await readSectionFiles('B');
+    const cSource = await readSectionFiles('C');
+    // D section may be named D1, D2 in source files
+    const dSource = discoveredSections['D']?.length > 0
+        ? await readSectionFiles('D')
+        : discoveredSections['D1']?.length > 0
+            ? await readSectionFiles('D1')
+            : { withPin: [], withoutPin: [] };
+    const eSource = await readSectionFiles('E');
+    const fSource = discoveredSections['F']?.length > 0 ? await readCsvRows(discoveredSections['F'][0]) : [];
+    const gSource = discoveredSections['G']?.length > 0 ? await readCsvRows(discoveredSections['G'][0]) : [];
+    const hSource = discoveredSections['H']?.length > 0 ? await readCsvRows(discoveredSections['H'][0]) : [];
+    const iSource = discoveredSections['I']?.length > 0 ? await readCsvRows(discoveredSections['I'][0]) : [];
+    const jSource = discoveredSections['J']?.length > 0 ? await readCsvRows(discoveredSections['J'][0]) : [];
 
-    // Process Section G (Other Rated Purchases)
-    const otherPurchaseRows = discoveredSections['G']?.length > 0
-        ? await readCsvRows(discoveredSections['G'][0])
-        : [];
+    // ── Process WITH-PIN sales for detail CSVs ──────────────────────────────
+    const bWithPin = mapSectionRows({ rows: bSource.withPin, section: 'B' });
+    const cWithPin = mapSectionRows({ rows: cSource.withPin, section: 'C' });
+    const dWithPin = mapSectionRows({ rows: dSource.withPin, section: 'D2' });
+    const eWithPin = mapSectionRows({ rows: eSource.withPin, section: 'E' });
 
-    // Process Section H (Zero Rated Purchases) - if present
-    const zeroRatedRows = discoveredSections['H']?.length > 0
-        ? await readCsvRows(discoveredSections['H'][0])
-        : [];
+    // ── Process WITHOUT-PIN sales for XML totals only ───────────────────────
+    const bWithoutPin = mapSectionRows({ rows: bSource.withoutPin, section: 'B' });
+    const cWithoutPin = mapSectionRows({ rows: cSource.withoutPin, section: 'C' });
+    const dWithoutPin = mapSectionRows({ rows: dSource.withoutPin, section: 'D1' });
+    const eWithoutPin = mapSectionRows({ rows: eSource.withoutPin, section: 'E' });
 
-    // Process Section I (Exempted Purchases) - if present
-    const exemptedRows = discoveredSections['I']?.length > 0
-        ? await readCsvRows(discoveredSections['I'][0])
-        : [];
+    // ── Process purchases ───────────────────────────────────────────────────
+    const fPurchases = mapSectionRows({ rows: fSource, section: 'F' });
+    const gPurchases = mapSectionRows({ rows: gSource, section: 'G' });
+    const hPurchases = mapSectionRows({ rows: hSource, section: 'H' });
+    const iPurchases = mapSectionRows({ rows: iSource, section: 'I' });
+    const jPurchases = mapSectionRows({ rows: jSource, section: 'J' });
 
-    // Process Section J (VAT Claimable on Imported Services) - if present
-    const importedServicesRows = discoveredSections['J']?.length > 0
-        ? await readCsvRows(discoveredSections['J'][0])
-        : [];
+    // ── Build XML named values ──────────────────────────────────────────────
+    const generalSalesTotal = bWithPin.totalBase + bWithoutPin.totalBase;
+    const generalSalesVat = bWithPin.totalVat + bWithoutPin.totalVat;
+    const otherSalesTotal = cWithPin.totalBase + cWithoutPin.totalBase;
+    const otherSalesVat = cWithPin.totalVat + cWithoutPin.totalVat;
+    const zeroRatedSalesTotal = dWithPin.totalBase + dWithoutPin.totalBase;
+    const zeroRatedSalesVat = dWithPin.totalVat + dWithoutPin.totalVat;
+    const exemptSalesTotal = eWithPin.totalBase + eWithoutPin.totalBase;
+    const exemptSalesVat = eWithPin.totalVat + eWithoutPin.totalVat;
 
-    const salesLines = mapGeneralSalesRows(salesWithPinRows, salesWithoutPinRows);
-    const generalPurchases = mapPurchaseRows(generalPurchaseRows, 'GNRL');
-    const otherPurchases = mapPurchaseRows(otherPurchaseRows, 'OTHR');
-    const zeroRatedPurchases = mapPurchaseRows(zeroRatedRows, 'ZERO');
-    const exemptedPurchases = mapPurchaseRows(exemptedRows, 'EXEM');
-    const importedServicesPurchases = mapPurchaseRows(importedServicesRows, 'IMPT');
+    const totalSales = generalSalesTotal + otherSalesTotal + zeroRatedSalesTotal + exemptSalesTotal;
+    const totalSalesVat = generalSalesVat + otherSalesVat + zeroRatedSalesVat + exemptSalesVat;
+    const totalPurchases = fPurchases.totalBase + gPurchases.totalBase + hPurchases.totalBase + iPurchases.totalBase + jPurchases.totalBase;
+    const totalInputVatExact = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
+    const totalInputVatRounded = round(totalInputVatExact, 2);
+    const finalTaxPayable = round(totalSalesVat - totalInputVatRounded, 2);
+    const netVatBalance = round(finalTaxPayable - params.previousCredit, 2);
 
     const namedValues = buildNamedValues({
         taxpayerPin: params.taxpayerPin,
         periodFrom: params.periodFrom,
         periodTo: params.periodTo,
         previousCredit: params.previousCredit,
-        salesLines,
-        generalPurchases,
-        otherPurchases,
+        bWithPin,
+        bWithoutPin,
+        cWithPin,
+        cWithoutPin,
+        dWithPin,
+        dWithoutPin,
+        eWithPin,
+        eWithoutPin,
+        fPurchases,
+        gPurchases,
+        hPurchases,
+        iPurchases,
+        jPurchases,
     });
 
     const generatedFiles: string[] = [];
     const zipEntries: Array<{ path: string; name: string }> = [];
 
-    const salesCsvPath = path.join(generatedDir, 'B_General_Rated_Sales_Dtls.csv');
-    if (await writeCsvArtifact(salesCsvPath, salesLines.lines)) {
-        generatedFiles.push(salesCsvPath);
-        zipEntries.push({ path: salesCsvPath, name: 'B_General_Rated_Sales_Dtls.csv' });
-    }
-
-    const generalPurchasesCsvPath = path.join(generatedDir, 'F_General_Rated_Purchases_Dtls.csv');
-    if (await writeCsvArtifact(generalPurchasesCsvPath, generalPurchases.lines)) {
-        generatedFiles.push(generalPurchasesCsvPath);
-        zipEntries.push({ path: generalPurchasesCsvPath, name: 'F_General_Rated_Purchases_Dtls.csv' });
-    }
-
-    const otherPurchasesCsvPath = path.join(generatedDir, 'G_Other_Rated_Purchases_Dtls.csv');
-    if (await writeCsvArtifact(otherPurchasesCsvPath, otherPurchases.lines)) {
-        generatedFiles.push(otherPurchasesCsvPath);
-        zipEntries.push({ path: otherPurchasesCsvPath, name: 'G_Other_Rated_Purchases_Dtls.csv' });
-    }
-
-    // Add Section H (Zero Rated Purchases) if it exists
-    if (zeroRatedPurchases.lines.length > 0) {
-        const zeroRatedCsvPath = path.join(generatedDir, 'H_Zero_Rated_Purchases_Dtls.csv');
-        if (await writeCsvArtifact(zeroRatedCsvPath, zeroRatedPurchases.lines)) {
-            generatedFiles.push(zeroRatedCsvPath);
-            zipEntries.push({ path: zeroRatedCsvPath, name: 'H_Zero_Rated_Purchases_Dtls.csv' });
+    // ── Sales detail CSVs (WITH_PIN only) ───────────────────────────────────
+    if (bWithPin.lines.length > 0) {
+        const bPath = path.join(generatedDir, 'B_General_Rated_Sales_Dtls.csv');
+        if (await writeCsvArtifact(bPath, bWithPin.lines)) {
+            generatedFiles.push(bPath);
+            zipEntries.push({ path: bPath, name: 'B_General_Rated_Sales_Dtls.csv' });
         }
     }
 
-    // Add Section I (Exempted Purchases) if it exists
-    if (exemptedPurchases.lines.length > 0) {
-        const exemptedCsvPath = path.join(generatedDir, 'I_Exempted_Purchases_Dtls.csv');
-        if (await writeCsvArtifact(exemptedCsvPath, exemptedPurchases.lines)) {
-            generatedFiles.push(exemptedCsvPath);
-            zipEntries.push({ path: exemptedCsvPath, name: 'I_Exempted_Purchases_Dtls.csv' });
+    if (cWithPin.lines.length > 0) {
+        const cPath = path.join(generatedDir, 'C_Other_Rated_Sales_Dtls.csv');
+        if (await writeCsvArtifact(cPath, cWithPin.lines)) {
+            generatedFiles.push(cPath);
+            zipEntries.push({ path: cPath, name: 'C_Other_Rated_Sales_Dtls.csv' });
         }
     }
 
-    // Add Section J (VAT Claimable on Imported Services) if it exists
-    if (importedServicesPurchases.lines.length > 0) {
-        const importedServicesCsvPath = path.join(generatedDir, 'J_VAT_Imported_Services_Dtls.csv');
-        if (await writeCsvArtifact(importedServicesCsvPath, importedServicesPurchases.lines)) {
-            generatedFiles.push(importedServicesCsvPath);
-            zipEntries.push({ path: importedServicesCsvPath, name: 'J_VAT_Imported_Services_Dtls.csv' });
+    if (dWithPin.lines.length > 0) {
+        const dPath = path.join(generatedDir, 'D_Zero_Rated_Sales_Dtls.csv');
+        if (await writeCsvArtifact(dPath, dWithPin.lines)) {
+            generatedFiles.push(dPath);
+            zipEntries.push({ path: dPath, name: 'D_Zero_Rated_Sales_Dtls.csv' });
+        }
+    }
+
+    if (eWithPin.lines.length > 0) {
+        const ePath = path.join(generatedDir, 'E_Exempted_Sales_Dtls.csv');
+        if (await writeCsvArtifact(ePath, eWithPin.lines)) {
+            generatedFiles.push(ePath);
+            zipEntries.push({ path: ePath, name: 'E_Exempted_Sales_Dtls.csv' });
+        }
+    }
+
+    // ── Purchase detail CSVs ────────────────────────────────────────────────
+    if (fPurchases.lines.length > 0) {
+        const fPath = path.join(generatedDir, 'F_General_Rated_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(fPath, fPurchases.lines)) {
+            generatedFiles.push(fPath);
+            zipEntries.push({ path: fPath, name: 'F_General_Rated_Purchases_Dtls.csv' });
+        }
+    }
+
+    if (gPurchases.lines.length > 0) {
+        const gPath = path.join(generatedDir, 'G_Other_Rated_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(gPath, gPurchases.lines)) {
+            generatedFiles.push(gPath);
+            zipEntries.push({ path: gPath, name: 'G_Other_Rated_Purchases_Dtls.csv' });
+        }
+    }
+
+    if (hPurchases.lines.length > 0) {
+        const hPath = path.join(generatedDir, 'H_Zero_Rated_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(hPath, hPurchases.lines)) {
+            generatedFiles.push(hPath);
+            zipEntries.push({ path: hPath, name: 'H_Zero_Rated_Purchases_Dtls.csv' });
+        }
+    }
+
+    if (iPurchases.lines.length > 0) {
+        const iPath = path.join(generatedDir, 'I_Exempted_Purchases_Dtls.csv');
+        if (await writeCsvArtifact(iPath, iPurchases.lines)) {
+            generatedFiles.push(iPath);
+            zipEntries.push({ path: iPath, name: 'I_Exempted_Purchases_Dtls.csv' });
+        }
+    }
+
+    if (jPurchases.lines.length > 0) {
+        const jPath = path.join(generatedDir, 'J_VAT_Imported_Services_Dtls.csv');
+        if (await writeCsvArtifact(jPath, jPurchases.lines)) {
+            generatedFiles.push(jPath);
+            zipEntries.push({ path: jPath, name: 'J_VAT_Imported_Services_Dtls.csv' });
         }
     }
 
@@ -663,12 +862,39 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const sourcePackageArtifact = await copyArtifactToClientWorkspace(params.sourceZipPath, params.clientName);
     const generatedZipArtifact = await copyArtifactToClientWorkspace(finalZipPath, params.clientName, finalZipFileName);
 
-    const resultSummary = {
-        inputVat: round(parseAmount(namedValues['TaxDue.TotalVatPurCharged']), 2),
-        outputVat: round(parseAmount(namedValues['TaxDue.OutputTaxCharged']), 2),
+    const rGeneralSalesTotal = bWithPin.totalBase + bWithoutPin.totalBase;
+    const rGeneralSalesVat = bWithPin.totalVat + bWithoutPin.totalVat;
+    const rOtherSalesTotal = cWithPin.totalBase + cWithoutPin.totalBase;
+    const rOtherSalesVat = cWithPin.totalVat + cWithoutPin.totalVat;
+    const rZeroRatedSalesTotal = dWithPin.totalBase + dWithoutPin.totalBase;
+    const rZeroRatedSalesVat = dWithPin.totalVat + dWithoutPin.totalVat;
+    const rExemptSalesTotal = eWithPin.totalBase + eWithoutPin.totalBase;
+    const rExemptSalesVat = eWithPin.totalVat + eWithoutPin.totalVat;
+    const rTotalSalesVat = rGeneralSalesVat + rOtherSalesVat + rZeroRatedSalesVat + rExemptSalesVat;
+    const rTotalInputVat = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
+    const rTotalInputRounded = round(rTotalInputVat, 2);
+    const rFinalTaxPayable = round(rTotalSalesVat - rTotalInputRounded, 2);
+    const rNetVatBalance = round(rFinalTaxPayable - params.previousCredit, 2);
+
+    const resultSummary: PreparedVatReturnSummary = {
+        inputVat: rTotalInputRounded,
+        outputVat: round(rTotalSalesVat, 2),
         previousCredit: round(params.previousCredit, 2),
-        payableVat: round(parseAmount(namedValues['SecD.FinalTaxPayable']), 2),
-        netVatBalance: round(parseAmount(namedValues['SecD.NetTaxPayableClaimable']), 2),
+        payableVat: rFinalTaxPayable,
+        netVatBalance: rNetVatBalance,
+        sales: [
+            { label: 'Taxable Sales (General Rate)', base: round(rGeneralSalesTotal, 2), vat: round(rGeneralSalesVat, 2), rate: 0.16 },
+            { label: 'Taxable Sales (Other Rate)', base: round(rOtherSalesTotal, 2), vat: round(rOtherSalesVat, 2), rate: 0.08 },
+            { label: 'Sales (Zero Rated)', base: round(rZeroRatedSalesTotal, 2), vat: round(rZeroRatedSalesVat, 2), rate: 0.00 },
+            { label: 'Sales (Exempt)', base: round(rExemptSalesTotal, 2), vat: round(rExemptSalesVat, 2), rate: 0.00 },
+        ].filter((item) => item.base > 0 || item.vat > 0),
+        purchases: [
+            { label: 'Taxable Purchases (General Rate)', base: round(fPurchases.totalBase, 2), vat: round(fPurchases.totalVat, 2), rate: 0.16 },
+            { label: 'Taxable Purchases (Other Rate)', base: round(gPurchases.totalBase, 2), vat: round(gPurchases.totalVat, 2), rate: 0.08 },
+            { label: 'Purchases (Zero Rated)', base: round(hPurchases.totalBase, 2), vat: round(hPurchases.totalVat, 2), rate: 0.00 },
+            { label: 'Exempt Purchases', base: round(iPurchases.totalBase, 2), vat: round(iPurchases.totalVat, 2), rate: 0.00 },
+            { label: 'Imported Services', base: round(jPurchases.totalBase, 2), vat: round(jPurchases.totalVat, 2), rate: 0.16 },
+        ].filter((item) => item.base > 0 || item.vat > 0),
     };
 
     return {

@@ -1834,54 +1834,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
             return { receiptPath: '', receiptNumber: null, credentialUpdate, prnPath: prnResult.prnPath };
         }
 
-        // Try to find and click the Returns menu — KRA uses various selectors
-        // Try: text match, href match, id match
-        const returnsLink = await page.$('#returns') ??
-            await page.$('a:has-text("Returns")') ??
-            await page.$('td:has-text("Returns") a') ??
-            await page.$('li:has-text("Returns") a') ??
-            await page.$('a[href*="return"]');
-
-        if (returnsLink) {
-            console.log(`[Worker][${jobId}] Found Returns menu element, hovering…`);
-            await returnsLink.hover();
-        } else {
-            console.warn(`[Worker][${jobId}] Returns menu element not found by common selectors — trying page text click`);
-            await page.getByText('Returns', { exact: true }).first().hover();
-        }
-
         const isNilReturnExplicit = (payload as any).isNil === true;
-        
-        const filingLinkSelector = (!isNilReturnExplicit && (isMriReturn || isPayeUpload || isTotReturn || isVatPrepareOnly || isVatUpload))
-        ? 'a[href*="showEReturns"], a.mainMenu[href*="showEReturns"], a:has-text("File Return")'
-        : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nil-return"], a:has-text("File Nil Return"), a:has-text("Nil Return")';
-        
-        try {
-            const filingLink = await page.waitForSelector(filingLinkSelector, { timeout: 10_000 });
-            await filingLink.click({ force: true });
-        } catch (error) {
-            console.log(`[Worker][${jobId}] Falling back to evaluate script for File Return click.`);
-            if (!isNilReturnExplicit && (isMriReturn || isPayeUpload || isTotReturn || isVatPrepareOnly || isVatUpload)) {
-                await page.evaluate(() => {
-                    const el = document.querySelector('a[href*="showEReturns"], a.mainMenu[href*="showEReturns"]') as HTMLElement;
-                    if (el) el.click();
-                    else (window as any).showEReturns();
-                });
-            } else {
-                await page.evaluate(() => {
-                    const el = document.querySelector('a[href*="nilReturn"], a[href*="NilReturn"]') as HTMLElement;
-                    if (el) {
-                        el.click();
-                    } else {
-                        // find by text natively
-                        const links = Array.from(document.querySelectorAll('a'));
-                        const textLink = links.find(a => a.textContent?.includes('File Nil Return') || a.textContent?.includes('Nil Return'));
-                        if (textLink) textLink.click();
-                        else if (typeof (window as any).showNilReturn === 'function') (window as any).showNilReturn();
-                    }
-                });
-            }
-        }
         const returnsReadyLabel = isTotReturn
             ? 'ToT return obligation page ready'
             : isMriReturn
@@ -1892,10 +1845,92 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
                         ? 'VAT return obligation page ready'
                     : 'Nil return obligation page ready';
 
+        // ── Robust Returns menu navigation ──────────────────────────────────────
+        // KRA sometimes redirects to "My Ledger" after login instead of dashboard.
+        // If so, navigate to dashboard first, then click Returns menu.
+        const currentUrl = page.url();
+        if (currentUrl.includes('My%20Ledger') || currentUrl.includes('My Ledger')) {
+            await appendJobLog(job, 'KRA redirected to My Ledger, navigating to dashboard first...', { progress: 47 });
+            await page.goto('https://itax.kra.go.ke/KRA-Portal/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+            await navigationDelay();
+        }
+
+        // Try multiple strategies to reach the eReturns page
+        let navigationAttempts = 0;
+        const maxNavigationAttempts = 3;
+
+        while (navigationAttempts < maxNavigationAttempts) {
+            navigationAttempts++;
+            await appendJobLog(job, `Navigation attempt ${navigationAttempts}/${maxNavigationAttempts}...`, { progress: 47 });
+
+            // Strategy 1: Hover Returns menu → click File Return
+            try {
+                const returnsMenu = page.locator('#returns, a:has-text("Returns"), td:has-text("Returns") a, li:has-text("Returns") a').first();
+                if (await returnsMenu.count() > 0) {
+                    await returnsMenu.hover();
+                    await page.waitForTimeout(1_500);
+
+                    const filingLinkSelector = (!isNilReturnExplicit && (isMriReturn || isPayeUpload || isTotReturn || isVatPrepareOnly || isVatUpload))
+                        ? 'a[href*="showEReturns"], a.mainMenu[href*="showEReturns"], a:has-text("File Return")'
+                        : 'a[href*="nilReturn"], a[href*="NilReturn"], a[href*="nilreturn"], a:has-text("File Nil Return"), a:has-text("Nil Return")';
+
+                    const filingLink = page.locator(filingLinkSelector).filter({ visible: true }).first();
+                    if (await filingLink.count() > 0) {
+                        await filingLink.click();
+                        await appendJobLog(job, 'Clicked File Return via menu hover', { progress: 48 });
+                        break; // Success
+                    }
+                }
+            } catch { /* try next strategy */ }
+
+            // Strategy 2: Direct JS evaluation
+            try {
+                if (isNilReturnExplicit) {
+                    await page.evaluate(() => {
+                        if (typeof (window as any).nilReturn === 'function') {
+                            (window as any).nilReturn();
+                        } else if (typeof (window as any).showNilReturns === 'function') {
+                            (window as any).showNilReturns();
+                        } else {
+                            const el = document.querySelector('a[href*="nilReturn" i]') as HTMLElement;
+                            if (el) el.click();
+                        }
+                    });
+                    await appendJobLog(job, 'Triggered Nil Return via JS', { progress: 48 });
+                } else {
+                    await page.evaluate(() => {
+                        if (typeof (window as any).showEReturns === 'function') {
+                            (window as any).showEReturns();
+                        } else {
+                            const el = document.querySelector('a[href*="showEReturns"]') as HTMLElement;
+                            if (el) el.click();
+                        }
+                    });
+                    await appendJobLog(job, 'Triggered File Return via JS', { progress: 48 });
+                }
+                break; // Success
+            } catch { /* try next strategy */ }
+
+            // Strategy 3: Navigate via dashboard reload
+            if (navigationAttempts < maxNavigationAttempts) {
+                await page.goto('https://itax.kra.go.ke/KRA-Portal/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+                await navigationDelay();
+            }
+        }
+
+        // Wait for the eReturns page to load
+        await appendJobLog(job, 'Waiting for eReturns page...', { progress: 49 });
+        try {
+            await page.waitForURL(/eReturns\.htm/, { timeout: 15_000 });
+            await appendJobLog(job, `On eReturns page: ${page.url()}`, { progress: 49 });
+        } catch {
+            await appendJobLog(job, 'URL did not change to eReturns, continuing anyway...', { progress: 49 });
+        }
+
         await measureJobPhase(job, returnsReadyLabel, 50, async () => {
             await waitForPortalReadyWithReload(page, job, {
-                description: isTotReturn ? 'ToT return obligation page' : isMriReturn ? 'MRI return obligation page' : isPayeUpload ? 'PAYE return obligation page' : (isVatPrepareOnly || isVatUpload) ? 'VAT return obligation page' : 'Nil return obligation page',
-                selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select'],
+                description: returnsReadyLabel,
+                selectors: ['select#regType', 'select[name="obligationId"]', 'tr:has-text("Type") select', '#dwnlod_btn_tims'],
                 timeout: 15_000,
                 reloadAttempts: 1,
             });

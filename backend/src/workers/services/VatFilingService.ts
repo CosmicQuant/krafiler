@@ -29,19 +29,28 @@ export class VatFilingService {
 
     async prepareFromPortal(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number }): Promise<VatPrepareResult> {
         const sourceZipPath = await downloadVatAutoPopulatedReturn(this.page, this.job, options.kraPin);
-        const artifacts = await import('../../scripts/vat-return-generator').then((mod) =>
-            mod.prepareVatReturnArtifacts({
-                sourceZipPath,
-                clientName: options.clientName,
-                taxpayerPin: options.kraPin,
-                periodFrom: options.periodFrom,
-                periodTo: options.periodTo,
-                previousCredit: options.previousCredit,
-            })
-        );
 
-        await appendJobLog(this.job, `Prepared VAT upload ZIP ${artifacts.generatedZipLabel}`, { progress: 78 });
-        return artifacts;
+        try {
+            const artifacts = await import('../../scripts/vat-return-generator').then((mod) =>
+                mod.prepareVatReturnArtifacts({
+                    sourceZipPath,
+                    clientName: options.clientName,
+                    taxpayerPin: options.kraPin,
+                    periodFrom: options.periodFrom,
+                    periodTo: options.periodTo,
+                    previousCredit: options.previousCredit,
+                })
+            );
+
+            await appendJobLog(this.job, `Prepared VAT upload ZIP ${artifacts.generatedZipLabel}`, { progress: 78 });
+            return artifacts;
+        } catch (error: any) {
+            await appendJobLog(this.job, `VAT artifact preparation failed: ${error.message}`, {
+                progress: 75,
+                level: 'error',
+            });
+            throw error;
+        }
     }
 
     async upload(vatZipUrl: string): Promise<void> {

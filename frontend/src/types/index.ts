@@ -9,12 +9,21 @@ export type PracticePlan = {
 
 export type TaxStatus = 'done' | 'due' | 'na' | 'generated' | 'filed' | 'paid';
 
+export type VatBreakdownItem = {
+    label: string;
+    base: number;
+    vat: number;
+    rate: number;
+};
+
 export type VatPreparationSummary = {
     inputVat: number;
     outputVat: number;
     previousCredit: number;
     payableVat: number;
     netVatBalance: number;
+    sales?: VatBreakdownItem[];
+    purchases?: VatBreakdownItem[];
 };
 
 export type ClientObligation = {

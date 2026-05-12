@@ -125,6 +125,15 @@ function formatXmlNumber(value: number, decimals = 4): string {
 }
 
 function formatKraDate(isoDate: string): string {
+    // Parse YYYY-MM-DD directly to avoid timezone shifts.
+    // new Date('2026-04-01') is parsed as UTC midnight; in timezones west of UTC
+    // getDate() can return the previous day (e.g. 31/03 instead of 01/04).
+    const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+        const [, yyyy, mm, dd] = match;
+        return `${dd}/${mm}/${yyyy}`;
+    }
+    // Fallback for non-ISO strings
     const date = new Date(isoDate);
     const dd = String(date.getDate()).padStart(2, '0');
     const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -776,35 +785,13 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const zipEntries: Array<{ path: string; name: string }> = [];
 
     // ── Sales detail CSVs (WITH_PIN only) ───────────────────────────────────
+    // KRA Excel template only generates B (General Rate) sales detail CSV.
+    // C/D/E sales amounts are included in XML totals only, not as detail CSVs.
     if (bWithPin.lines.length > 0) {
         const bPath = path.join(generatedDir, 'B_General_Rated_Sales_Dtls.csv');
         if (await writeCsvArtifact(bPath, bWithPin.lines)) {
             generatedFiles.push(bPath);
             zipEntries.push({ path: bPath, name: 'B_General_Rated_Sales_Dtls.csv' });
-        }
-    }
-
-    if (cWithPin.lines.length > 0) {
-        const cPath = path.join(generatedDir, 'C_Other_Rated_Sales_Dtls.csv');
-        if (await writeCsvArtifact(cPath, cWithPin.lines)) {
-            generatedFiles.push(cPath);
-            zipEntries.push({ path: cPath, name: 'C_Other_Rated_Sales_Dtls.csv' });
-        }
-    }
-
-    if (dWithPin.lines.length > 0) {
-        const dPath = path.join(generatedDir, 'D_Zero_Rated_Sales_Dtls.csv');
-        if (await writeCsvArtifact(dPath, dWithPin.lines)) {
-            generatedFiles.push(dPath);
-            zipEntries.push({ path: dPath, name: 'D_Zero_Rated_Sales_Dtls.csv' });
-        }
-    }
-
-    if (eWithPin.lines.length > 0) {
-        const ePath = path.join(generatedDir, 'E_Exempted_Sales_Dtls.csv');
-        if (await writeCsvArtifact(ePath, eWithPin.lines)) {
-            generatedFiles.push(ePath);
-            zipEntries.push({ path: ePath, name: 'E_Exempted_Sales_Dtls.csv' });
         }
     }
 

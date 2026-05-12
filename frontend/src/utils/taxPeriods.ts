@@ -3,14 +3,21 @@
  * All periods follow the Kenyan tax calendar.
  */
 
+function formatLocalIsoDate(date: Date): string {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
 export function getPreviousMonthIsoRange(referenceDate = new Date()) {
     const year = referenceDate.getFullYear();
     const month = referenceDate.getMonth();
     const previousMonthStart = new Date(year, month - 1, 1);
     const previousMonthEnd = new Date(year, month, 0);
     return {
-        periodFrom: previousMonthStart.toISOString().slice(0, 10),
-        periodTo: previousMonthEnd.toISOString().slice(0, 10),
+        periodFrom: formatLocalIsoDate(previousMonthStart),
+        periodTo: formatLocalIsoDate(previousMonthEnd),
     };
 }
 

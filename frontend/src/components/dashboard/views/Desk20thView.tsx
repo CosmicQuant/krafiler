@@ -118,6 +118,8 @@ export function Desk20thView({
                   previousCredit: ob.client.vatPreviousCredit ?? jobArtifacts?.vatSummary?.previousCredit ?? 0,
                   payableVat: ob.client.vatPayableVat ?? jobArtifacts?.vatSummary?.payableVat ?? 0,
                   netVatBalance: ob.client.vatNetVatBalance ?? jobArtifacts?.vatSummary?.netVatBalance ?? 0,
+                  sales: jobArtifacts?.vatSummary?.sales,
+                  purchases: jobArtifacts?.vatSummary?.purchases,
                 };
                 const vatInputValue =
                   vatPreviousCreditVals[ob.client.id] ??

@@ -1,4 +1,5 @@
-import { ClientObligation } from '../../../types';
+import { Download } from 'lucide-react';
+import { ClientObligation, ActiveDashboardJob } from '../../../types';
 import { isTerminalFilingJob } from '../../../utils/dashboardUtils';
 import { getPreviousYearIsoRange } from '../../../utils/taxPeriods';
 
@@ -14,7 +15,7 @@ const TAX_OBLIGATION_OPTIONS = [
 
 interface DeskNilViewProps {
   clients: ClientObligation[];
-  activeJobs: Record<string, { state: string }>;
+  activeJobs: Record<string, ActiveDashboardJob>;
   nilSelections: Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>;
   setNilSelections: React.Dispatch<
     React.SetStateAction<
@@ -56,7 +57,9 @@ export function DeskNilView({
                   periodTo: getPreviousYearIsoRange().periodTo,
                 };
                 const job = activeJobs[client.id];
-                const isProcessing = job && !isTerminalFilingJob(job as any);
+                const isProcessing = job && !isTerminalFilingJob(job);
+                const isCompleted = job?.state === 'completed';
+                const isFailed = job?.state === 'failed';
 
                 return (
                   <tr key={client.id} className="group transition hover:bg-slate-800/30">
@@ -135,17 +138,36 @@ export function DeskNilView({
                       </div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => void onFileNil(client)}
-                        disabled={isProcessing}
-                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition ${
-                          isProcessing
-                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                            : 'bg-amber-500 hover:bg-amber-400 text-amber-950 shadow-lg'
-                        }`}
-                      >
-                        {isProcessing ? 'Processing' : 'File Nil'}
-                      </button>
+                      <div className="flex flex-col items-end gap-2">
+                        <button
+                          onClick={() => void onFileNil(client)}
+                          disabled={isProcessing}
+                          className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold transition ${
+                            isProcessing
+                              ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                              : 'bg-amber-500 hover:bg-amber-400 text-amber-950 shadow-lg'
+                          }`}
+                        >
+                          {isProcessing ? `Processing (${job.progress}%)` : isCompleted ? 'File Again' : 'File Nil'}
+                        </button>
+
+                        {isCompleted && job.receiptUrl && (
+                          <a
+                            href={job.receiptUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20 transition"
+                          >
+                            <Download className="h-3 w-3" /> Download Receipt
+                          </a>
+                        )}
+
+                        {isFailed && job.failedReason && (
+                          <span className="text-[11px] text-rose-400 max-w-[200px]">
+                            {job.failedReason}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

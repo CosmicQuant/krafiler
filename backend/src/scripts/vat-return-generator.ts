@@ -700,8 +700,8 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     // ── Helper: read all files for a section key, returning per-subsection rows ─
     async function readSectionFiles(sectionKey: string): Promise<{ withPin: CsvRow[]; withoutPin: CsvRow[] }> {
         const files = discoveredSections[sectionKey] || [];
-        const withPinFile = files.find((f) => f.includes('WITH_VAT_PIN')) || files[0];
-        const withoutPinFile = files.find((f) => f.includes('WITHOUT_PIN')) || files[1];
+        const withPinFile = files.find((f) => f.includes('WITH_VAT_PIN'));
+        const withoutPinFile = files.find((f) => f.includes('WITHOUT_PIN'));
         return {
             withPin: withPinFile ? await readCsvRows(withPinFile) : [],
             withoutPin: withoutPinFile ? await readCsvRows(withoutPinFile) : [],

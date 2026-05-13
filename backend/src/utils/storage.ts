@@ -7,7 +7,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-const RECEIPTS_DIR = path.resolve(__dirname, '..', '..', '..', 'receipts');
+const RECEIPTS_DIR = process.env.RECEIPTS_DIR
+    ? path.resolve(process.env.RECEIPTS_DIR)
+    : path.resolve(__dirname, '..', '..', '..', 'receipts');
 
 export interface StoredReceiptResult {
     /** Absolute path to the persisted PDF receipt inside the workspace. */

@@ -1,61 +1,61 @@
 import { useState } from 'react';
-import { CheckCircle } from 'lucide-react';
+import { CheckCircle, FileSpreadsheet, Upload } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-type Category = 'individuals' | 'accountants';
+type Category = 'accountants' | 'individuals';
 type Billing = 'monthly' | 'annual';
 
 const pricingData = {
-    individuals: [
-        {
-            name: 'Basic',
-            description: 'For individuals and small setups filing a single PIN.',
-            monthlyPrice: 0,
-            annualPrice: 0,
-            features: ['1 KRA PIN Supported', 'Basic Nil & VAT Filing', 'Standard Email Support']
-        },
-        {
-            name: 'Pro',
-            description: 'Perfect for growing businesses needing payroll & tax.',
-            monthlyPrice: 15,
-            annualPrice: 12,
-            features: ['1 KRA PIN Supported', 'Payroll, NSSF, SHA Generation', 'Priority Support', 'Tax Compliance Alerts']
-        },
-        {
-            name: 'Premium',
-            description: 'Advanced features for maximum compliance security.',
-            monthlyPrice: 35,
-            annualPrice: 28,
-            features: ['1 KRA PIN Supported', 'Automated Reminders', 'Audit Defense Consultation', 'Dedicated Account Manager']
-        }
-    ],
     accountants: [
         {
             name: 'Starter',
             description: 'For independent accountants starting their practice.',
-            monthlyPrice: 40,
-            annualPrice: 32,
-            features: ['Up to 10 Client PINs', 'Bulk Nil Returns', 'Client Dashboard', 'Email Support']
+            monthlyPrice: 5000,
+            annualPrice: 4000,
+            features: ['Up to 10 Client PINs', 'Bulk Nil Returns', 'Client Dashboard', 'Email Support', 'Pack Generation Only']
         },
         {
             name: 'Growth',
             description: 'For mid-sized firms managing multiple clients.',
-            monthlyPrice: 90,
-            annualPrice: 72,
-            features: ['Up to 50 Client PINs', 'Advanced Bulk Processing', 'Role-based Access', 'Priority Support']
+            monthlyPrice: 10000,
+            annualPrice: 8000,
+            features: ['Up to 50 Client PINs', 'Advanced Bulk Processing', 'Role-based Access', 'Priority Support', 'Pack Generation Only', 'VAT Filing Support']
         },
         {
             name: 'Scale',
             description: 'Designed for large auditing and accounting firms.',
-            monthlyPrice: 200,
-            annualPrice: 160,
-            features: ['Unlimited Client PINs', 'White-labeled Reports', 'API Access', 'Dedicated Success Manager']
+            monthlyPrice: 16000,
+            annualPrice: 12800,
+            features: ['Unlimited Client PINs', 'White-labeled Reports', 'API Access', 'Dedicated Success Manager', 'Automated Filing Enabled', 'VAT + All Returns']
+        }
+    ],
+    individuals: [
+        {
+            name: 'Basic',
+            description: 'For individuals and small setups filing a single PIN.',
+            monthlyPrice: 1500,
+            annualPrice: 1200,
+            features: ['1 KRA PIN Supported', 'Nil Returns', 'Payroll (PAYE, NSSF, SHA, HELB)', 'ToT & MRI Filing', 'Pack Generation Only', 'Standard Email Support']
+        },
+        {
+            name: 'Pro',
+            description: 'Perfect for growing businesses needing payroll & tax.',
+            monthlyPrice: 3500,
+            annualPrice: 2800,
+            features: ['1 KRA PIN Supported', 'Everything in Basic', 'VAT Filing Support', 'Priority Support', 'Tax Compliance Alerts', 'Pack Generation Only']
+        },
+        {
+            name: 'Premium',
+            description: 'Advanced features for maximum compliance security.',
+            monthlyPrice: 5000,
+            annualPrice: 4000,
+            features: ['1 KRA PIN Supported', 'Everything in Pro', 'Automated Filing Enabled', 'Audit Defense Consultation', 'Dedicated Account Manager', 'eTIMS Reconciliation']
         }
     ]
 };
 
 export default function PricingSection() {
-    const [category, setCategory] = useState<Category>('individuals');
+    const [category, setCategory] = useState<Category>('accountants');
     const [billing, setBilling] = useState<Billing>('monthly');
 
     const currentPlans = pricingData[category];
@@ -75,16 +75,16 @@ export default function PricingSection() {
                     {/* Category Toggle */}
                     <div className="inline-flex rounded-full bg-slate-200 p-1">
                         <button
-                            onClick={() => setCategory('individuals')}
-                            className={`rounded-full px-6 py-2.5 text-sm font-bold transition-all ${category === 'individuals' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-                        >
-                            Individuals & Companies
-                        </button>
-                        <button
                             onClick={() => setCategory('accountants')}
                             className={`rounded-full px-6 py-2.5 text-sm font-bold transition-all ${category === 'accountants' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                             Accountants & Auditors
+                        </button>
+                        <button
+                            onClick={() => setCategory('individuals')}
+                            className={`rounded-full px-6 py-2.5 text-sm font-bold transition-all ${category === 'individuals' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                            Individuals & Companies
                         </button>
                     </div>
 
@@ -120,6 +120,11 @@ export default function PricingSection() {
                         transition={{ delay: idx * 0.1, duration: 0.4 }}
                         className="relative flex flex-col rounded-[2rem] border border-slate-200 bg-white p-8 shadow-[0_8px_30px_rgba(15,23,42,0.04)]"
                     >
+                        {plan.name === 'Growth' || plan.name === 'Pro' ? (
+                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-[#ff0613] px-4 py-1 text-xs font-bold text-white">
+                                Most Popular
+                            </div>
+                        ) : null}
                         <div className="mb-6">
                             <h3 className="text-xl font-black tracking-tight text-slate-950">{plan.name}</h3>
                             <p className="mt-2 text-sm text-slate-500 min-h-[40px]">{plan.description}</p>
@@ -127,14 +132,14 @@ export default function PricingSection() {
                         
                         <div className="mb-6 flex items-baseline gap-2">
                             <span className="text-4xl font-black tracking-tight text-slate-950">
-                                ${billing === 'monthly' ? plan.monthlyPrice : plan.annualPrice}
+                                KES {billing === 'monthly' ? plan.monthlyPrice.toLocaleString() : plan.annualPrice.toLocaleString()}
                             </span>
                             <span className="text-sm font-semibold text-slate-500">/mo</span>
                         </div>
                         
                         {billing === 'annual' && plan.monthlyPrice > 0 && (
                             <p className="mb-6 text-sm font-semibold text-green-600">
-                                Billed ${plan.annualPrice * 12} yearly
+                                Billed KES {(plan.annualPrice * 12).toLocaleString()} yearly
                             </p>
                         )}
                         {plan.monthlyPrice === 0 && (
@@ -147,18 +152,19 @@ export default function PricingSection() {
                         <ul className="mb-8 flex-1 space-y-4">
                             {plan.features.map(feature => (
                                 <li key={feature} className="flex items-start gap-3 text-sm font-medium text-slate-700">
-                                    <CheckCircle className="h-5 w-5 shrink-0 text-slate-900" />
+                                    <CheckCircle className="h-5 w-5 shrink-0 text-[#ff0613]" />
                                     <span>{feature}</span>
                                 </li>
                             ))}
                         </ul>
 
-                        <button className="w-full rounded-2xl bg-slate-950 py-3.5 text-sm font-bold text-white transition-colors hover:bg-slate-800">
+                        <button className="w-full rounded-2xl bg-[#ff0613] py-3.5 text-sm font-bold text-white transition-colors hover:bg-[#d80000]">
                             Get started
                         </button>
                     </motion.div>
                 ))}
             </div>
+
         </section>
     );
 }

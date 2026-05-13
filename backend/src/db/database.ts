@@ -7,7 +7,9 @@ import { logger } from '../logger';
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 
-const dbPath = path.resolve(__dirname, 'krafiler.sqlite');
+const dbPath = process.env.DB_PATH
+    ? path.resolve(process.env.DB_PATH)
+    : path.resolve(__dirname, 'krafiler.sqlite');
 
 // Keep openDb for backward compatibility until all routes are migrated
 export async function openDb(): Promise<Database> {

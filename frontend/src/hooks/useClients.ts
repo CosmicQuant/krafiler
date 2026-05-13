@@ -42,3 +42,23 @@ export const useSaveClient = () => {
         },
     });
 };
+
+export const useDeleteClient = () => {
+    const queryClient = useQueryClient();
+    
+    return useMutation({
+        mutationFn: async (id: string) => {
+            const res = await fetch(`/api/clients/${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const errorPayload = await res.json().catch(async () => ({
+                    error: await res.text().catch(() => 'Failed to delete client.'),
+                }));
+                throw new Error(errorPayload.message || errorPayload.error || 'Failed to delete client.');
+            }
+            return res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+        },
+    });
+};

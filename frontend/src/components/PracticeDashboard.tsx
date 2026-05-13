@@ -21,14 +21,8 @@ import {
   Search,
 } from 'lucide-react';
 
-import { PlanKey, PracticePlan, ClientObligation, ActiveDashboardJob, FilingJobState, VatPreparationSummary } from '../types';
+import { ClientObligation, ActiveDashboardJob, FilingJobState, VatPreparationSummary } from '../types';
 import { normalizeClientObligation, buildStoredArtifactUrl, isTerminalFilingJob } from '../utils/dashboardUtils';
-
-const plans: Record<PlanKey, PracticePlan> = {
-  starter: { label: 'Practice Starter', capacity: 10, used: 8 },
-  growth: { label: 'Growing Firm', capacity: 50, used: 42 },
-  enterprise: { label: 'Enterprise Desk', capacity: 'Unlimited', used: 142 },
-};
 
 export default function PracticeDashboard() {
   const queryClient = useQueryClient();
@@ -41,7 +35,6 @@ export default function PracticeDashboard() {
     setMonthlyReturnFilter,
     isSidebarOpen,
     setIsSidebarOpen,
-    selectedPlan,
     showNewClientModal,
     setShowNewClientModal,
   } = useUIStore();
@@ -344,10 +337,6 @@ export default function PracticeDashboard() {
     return () => clearInterval(interval);
   }, [activeJobs]);
 
-  const plan = plans[selectedPlan];
-  const capacityValue = plan.capacity === 'Unlimited' ? '∞' : plan.capacity;
-  const capacityPercentage = plan.capacity === 'Unlimited' ? 25 : Math.round((plan.used / (plan.capacity as number)) * 100);
-
   const payrollClients = useMemo(() => clients.filter((c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na'), [clients]);
   const payrollPendingCount = useMemo(
     () => payrollClients.filter((client) => client.paye === 'due' || client.nssf === 'due' || client.sha === 'due').length,
@@ -359,11 +348,11 @@ export default function PracticeDashboard() {
   );
 
   return (
-    <div className="flex h-screen bg-slate-950 font-sans antialiased selection:bg-emerald-500/30">
+    <div className="flex h-screen bg-slate-50 font-sans antialiased selection:bg-red-100">
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-sm lg:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
@@ -372,25 +361,22 @@ export default function PracticeDashboard() {
         <Sidebar
           payrollPendingCount={payrollPendingCount}
           taxPendingCount={taxPendingCount}
-          plan={plan}
-          capacityValue={capacityValue}
-          capacityPercentage={capacityPercentage}
         />
 
         {/* Main Content */}
-        <main className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative bg-slate-950">
+        <main className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto relative bg-white">
           {/* Mobile Header Line */}
-          <div className="lg:hidden flex items-center justify-between sticky top-0 z-30 bg-slate-950/90 backdrop-blur border-b border-slate-800 p-4">
+          <div className="lg:hidden flex items-center justify-between sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200 p-4">
             <div className="flex items-center gap-3">
-              <button onClick={() => setIsSidebarOpen(true)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setIsSidebarOpen(true)} className="text-slate-400 hover:text-slate-900">
                 <Menu className="h-6 w-6" />
               </button>
               <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-500 text-slate-950">
+                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-[#ff0613] text-white">
                   <Building2 className="h-4 w-4" />
                 </div>
-                <span className="text-lg font-bold tracking-tight text-white">
-                  Kwanta<span className="text-emerald-500">.</span>
+                <span className="text-lg font-bold tracking-tight text-slate-900">
+                  Kwanta<span className="text-[#ff0613]">.ai</span>
                 </span>
               </div>
             </div>
@@ -399,28 +385,28 @@ export default function PracticeDashboard() {
           <div className="flex-1 px-4 py-6 md:px-8 md:py-8 lg:px-12">
             <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                {view === 'overview' && <h1 className="text-3xl font-black text-white">Practice Overview</h1>}
-                {view === 'desk-9th' && <h1 className="text-3xl font-black text-emerald-400">Payroll Pipeline</h1>}
-                {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-400">Monthly Returns Pipeline</h1>}
-                {view === 'desk-elevy' && <h1 className="text-3xl font-black text-fuchsia-400">Tourism Fund E-Levy Pipeline</h1>}
-                {view === 'clients' && <h1 className="text-3xl font-black text-white">Client Portfolio</h1>}
-                <p className="mt-2 text-sm text-slate-400">
+                {view === 'overview' && <h1 className="text-3xl font-black text-slate-900">Practice Overview</h1>}
+                {view === 'desk-9th' && <h1 className="text-3xl font-black text-[#ff0613]">Payroll Pipeline</h1>}
+                {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-600">Monthly Returns Pipeline</h1>}
+                {view === 'desk-elevy' && <h1 className="text-3xl font-black text-fuchsia-600">Tourism Fund E-Levy Pipeline</h1>}
+                {view === 'clients' && <h1 className="text-3xl font-black text-slate-900">Client Portfolio</h1>}
+                <p className="mt-2 text-sm text-slate-500">
                   Manage bulk payroll processing for {payrollClients.length} active client{payrollClients.length === 1 ? '' : 's'}.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
-                <div className="flex items-center rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 w-full sm:w-auto">
-                  <Search className="h-4 w-4 text-slate-500 shrink-0" />
+                <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 w-full sm:w-auto">
+                  <Search className="h-4 w-4 text-slate-400 shrink-0" />
                   <input
                     type="text"
                     placeholder="Search client or PIN..."
-                    className="ml-2 bg-transparent text-sm text-white placeholder-slate-500 outline-none w-full"
+                    className="ml-2 bg-transparent text-sm text-slate-900 placeholder-slate-400 outline-none w-full"
                   />
                 </div>
                 {view === 'clients' && (
                   <button
                     onClick={() => openNewClientModal()}
-                    className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-emerald-400"
+                    className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-[#ff0613] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#d80000]"
                   >
                     <Plus className="h-4 w-4" /> New Client
                   </button>
@@ -432,10 +418,10 @@ export default function PracticeDashboard() {
               <div
                 className={`mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${
                   dashboardNotice.tone === 'success'
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : dashboardNotice.tone === 'error'
-                      ? 'border-red-500/30 bg-red-500/10 text-red-200'
-                      : 'border-slate-700 bg-slate-900/70 text-slate-200'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-700'
                 }`}
               >
                 {dashboardNotice.message}
@@ -490,21 +476,21 @@ export default function PracticeDashboard() {
             {!selectedClient && view === 'desk-20th' && (
               <div className="mt-10">
                 <div className="grid gap-6 sm:grid-cols-4">
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
-                    <p className="text-sm font-medium text-slate-400">VAT Returns Due</p>
-                    <p className="mt-2 text-3xl font-bold text-white">2</p>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-sm font-medium text-slate-500">VAT Returns Due</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">2</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
-                    <p className="text-sm font-medium text-slate-400">TOT Returns Due</p>
-                    <p className="mt-2 text-3xl font-bold text-white">1</p>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-sm font-medium text-slate-500">TOT Returns Due</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">1</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
-                    <p className="text-sm font-medium text-slate-400">MRI Returns</p>
-                    <p className="mt-2 text-3xl font-bold text-white">1</p>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-sm font-medium text-slate-500">MRI Returns</p>
+                    <p className="mt-2 text-3xl font-bold text-slate-900">1</p>
                   </div>
-                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
-                    <p className="text-sm font-medium text-blue-400">Status Check</p>
-                    <button className="mt-4 w-full rounded-lg bg-blue-500 py-2 text-xs font-bold text-white hover:bg-blue-400">
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
+                    <p className="text-sm font-medium text-blue-600">Status Check</p>
+                    <button className="mt-4 w-full rounded-lg bg-blue-500 py-2 text-xs font-bold text-white hover:bg-blue-600">
                       Verify KRA API
                     </button>
                   </div>

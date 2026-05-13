@@ -68,31 +68,31 @@ export function Desk9thView({
   return (
     <div className="mt-10">
       {/* Global Payroll Upload */}
-      <div className="my-4 overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-800/80 to-slate-900/40 shadow-sm backdrop-blur relative">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent"></div>
+      <div className="my-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm relative">
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#ff0613]/30 to-transparent"></div>
 
         <div className="px-5 py-5 sm:px-6">
           <div className="max-w-3xl">
-            <h2 className="text-xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent mb-1">
+            <h2 className="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent mb-1">
               Automate Your Payroll Processing
             </h2>
-            <p className="text-sm text-slate-400 mb-4 leading-relaxed">
+            <p className="text-sm text-slate-500 mb-4 leading-relaxed">
               Say goodbye to manual client entry. Upload any client&apos;s Master CSV here. We&apos;ll automatically extract the company details, create the client profile if they don&apos;t exist, and instantly generate the final PAYE, NSSF, and SHA files ready for portals.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-stretch">
               <label className="relative group cursor-pointer w-full sm:w-auto">
-                <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-400 opacity-20 blur transition group-hover:opacity-40"></div>
-                <div className="relative flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-5 py-3 shadow-md backdrop-blur transition-all group-hover:bg-emerald-500/20">
+                <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-br from-[#ff0613] to-[#d80000] opacity-20 blur transition group-hover:opacity-40"></div>
+                <div className="relative flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-50 px-5 py-3 shadow-md transition-all group-hover:bg-emerald-100">
                   {isGlobalUploading ? (
                     <>
-                      <RefreshCw className="h-4 w-4 text-emerald-400 animate-spin" />
-                      <span className="text-sm font-bold text-emerald-100/90 tracking-wide">Processing...</span>
+                      <RefreshCw className="h-4 w-4 text-emerald-600 animate-spin" />
+                      <span className="text-sm font-bold text-[#ff0613]/90 tracking-wide">Processing...</span>
                     </>
                   ) : (
                     <>
-                      <UploadCloud className="h-4 w-4 text-emerald-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-sm font-bold text-emerald-100/90 tracking-wide">Upload Master CSV & Auto-Generate</span>
+                      <UploadCloud className="h-4 w-4 text-emerald-600 group-hover:scale-110 transition-transform" />
+                      <span className="text-sm font-bold text-[#ff0613]/90 tracking-wide">Upload Master CSV & Auto-Generate</span>
                     </>
                   )}
                 </div>
@@ -112,13 +112,13 @@ export function Desk9thView({
             </div>
 
             <div className="mt-4 flex items-center gap-2">
-              <div className="h-4 w-1 rounded-full bg-slate-700"></div>
+              <div className="h-4 w-1 rounded-full bg-slate-200"></div>
               <p className="text-xs text-slate-500 font-medium tracking-wide">
                 Need the required format?{' '}
                 <a
                   href="/Axon_Unified_Payroll_Template_v4.xlsx"
                   download
-                  className="text-emerald-400 hover:text-emerald-300 hover:underline transition-colors focus:outline-none ml-1"
+                  className="text-emerald-600 hover:text-emerald-500 hover:underline transition-colors focus:outline-none ml-1"
                 >
                   Download our complete Unified Template
                 </a>{' '}
@@ -143,14 +143,14 @@ export function Desk9thView({
       </div>
 
       {/* 9th Desk Grid */}
-      <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-800 rounded-t-2xl bg-slate-900/80 px-4 py-4 gap-3 sm:gap-0">
-          <h3 className="font-bold text-white">Payroll Clients</h3>
+      <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 shadow-xl">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 rounded-t-2xl bg-slate-50/80 px-4 py-4 gap-3 sm:gap-0">
+          <h3 className="font-bold text-slate-900">Payroll Clients</h3>
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => void onGenerateAllZips()}
               disabled={isGeneratingZips}
-              className={`inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-white transition hover:bg-slate-700 ${
+              className={`inline-flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-100 px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-slate-900 transition hover:bg-slate-200 ${
                 isGeneratingZips ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
@@ -164,7 +164,7 @@ export function Desk9thView({
               </span>
               <span className="sm:hidden">{isGeneratingZips ? '...' : 'Gen All'}</span>
             </button>
-            <button className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-slate-950 transition hover:bg-emerald-400">
+            <button className="inline-flex items-center gap-2 rounded-xl bg-[#ff0613] px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-slate-950 transition hover:bg-[#d80000]">
               <Rocket className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline">Auto-File All</span>
               <span className="sm:hidden">Auto-File</span>
@@ -176,11 +176,11 @@ export function Desk9thView({
             {payrollClients.map((client) => (
               <div
                 key={client.id}
-                className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 shadow-lg backdrop-blur flex flex-col gap-4 overflow-visible"
+                className="rounded-xl border border-slate-100 bg-slate-100/50 p-4 shadow-lg flex flex-col gap-4 overflow-visible"
               >
-                <div className="flex flex-col border-b border-slate-700/50 pb-3">
+                <div className="flex flex-col border-b border-slate-200/50 pb-3">
                   <h4
-                    className="text-sm font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                    className="text-sm font-bold text-emerald-600 hover:text-emerald-500 cursor-pointer"
                     onClick={() => onOpenNewClientModal(client)}
                     title="Edit client details"
                   >
@@ -190,11 +190,11 @@ export function Desk9thView({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-xs overflow-visible">
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible">
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2 overflow-visible">
                     <div className="flex flex-col">
-                      <span className="text-slate-400 font-semibold">PAYE</span>
+                      <span className="text-slate-500 font-semibold">PAYE</span>
                       {client.payeAmount !== undefined && client.payeAmount !== null ? (
-                        <span className="text-[10px] text-slate-400">KES {client.payeAmount.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-500">KES {client.payeAmount.toLocaleString()}</span>
                       ) : (
                         <span className="text-[10px] text-slate-500">KES 0</span>
                       )}
@@ -207,33 +207,33 @@ export function Desk9thView({
                       onUpdateStatus={(s) => onUpdateStatus(client.id, 'paye', s)}
                     />
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible">
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2 overflow-visible">
                     <div className="flex flex-col">
-                      <span className="text-slate-400 font-semibold">NITA</span>
+                      <span className="text-slate-500 font-semibold">NITA</span>
                       {client.nitaAmount !== undefined && client.nitaAmount !== null ? (
-                        <span className="text-[10px] text-slate-400">KES {client.nitaAmount.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-500">KES {client.nitaAmount.toLocaleString()}</span>
                       ) : (
                         <span className="text-[10px] text-slate-500">KES 0</span>
                       )}
                     </div>
                     <StatusBadge status="due" />
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible">
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2 overflow-visible">
                     <div className="flex flex-col">
-                      <span className="text-slate-400 font-semibold">H. Levy</span>
+                      <span className="text-slate-500 font-semibold">H. Levy</span>
                       {client.housingLevyAmount !== undefined && client.housingLevyAmount !== null ? (
-                        <span className="text-[10px] text-slate-400">KES {client.housingLevyAmount.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-500">KES {client.housingLevyAmount.toLocaleString()}</span>
                       ) : (
                         <span className="text-[10px] text-slate-500">KES 0</span>
                       )}
                     </div>
                     <StatusBadge status="due" />
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible">
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2 overflow-visible">
                     <div className="flex flex-col">
-                      <span className="text-slate-400 font-semibold">NSSF</span>
+                      <span className="text-slate-500 font-semibold">NSSF</span>
                       {client.nssfAmount !== undefined && client.nssfAmount !== null ? (
-                        <span className="text-[10px] text-slate-400">KES {client.nssfAmount.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-500">KES {client.nssfAmount.toLocaleString()}</span>
                       ) : (
                         <span className="text-[10px] text-slate-500">KES 0</span>
                       )}
@@ -246,11 +246,11 @@ export function Desk9thView({
                       onUpdateStatus={(s) => onUpdateStatus(client.id, 'nssf', s)}
                     />
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2 overflow-visible">
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2 overflow-visible">
                     <div className="flex flex-col">
-                      <span className="text-slate-400 font-semibold">SHA</span>
+                      <span className="text-slate-500 font-semibold">SHA</span>
                       {client.shaAmount !== undefined && client.shaAmount !== null ? (
-                        <span className="text-[10px] text-slate-400">KES {client.shaAmount.toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-500">KES {client.shaAmount.toLocaleString()}</span>
                       ) : (
                         <span className="text-[10px] text-slate-500">KES 0</span>
                       )}
@@ -263,29 +263,29 @@ export function Desk9thView({
                       onUpdateStatus={(s) => onUpdateStatus(client.id, 'sha', s)}
                     />
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-slate-900/50 p-2">
-                    <span className="text-slate-400 font-semibold">eLevy</span>
+                  <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2">
+                    <span className="text-slate-500 font-semibold">eLevy</span>
                     <StatusBadge status={client.eLevy} />
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-2 pt-2 border-t border-slate-700/50">
+                <div className="flex flex-col gap-2 pt-2 border-t border-slate-200/50">
                   {client.masterFileUrl ? (
                     <div className="flex items-center gap-2 w-full">
                       <a
                         href={client.masterFileUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex-1 flex items-center justify-center rounded-lg border border-slate-600 bg-slate-700/50 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-600 hover:text-white transition"
+                        className="flex-1 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-200/50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300 hover:text-slate-900 transition"
                       >
-                        <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0 text-slate-400" />
+                        <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0 text-slate-500" />
                         <span className="truncate">{client.masterFileLabel || 'View Master CSV'}</span>
                       </a>
                       <label
-                        className="flex shrink-0 items-center justify-center cursor-pointer rounded-lg border border-slate-600 bg-slate-700/30 p-2 hover:bg-slate-600 transition"
+                        className="flex shrink-0 items-center justify-center cursor-pointer rounded-lg border border-slate-300 bg-slate-200/30 p-2 hover:bg-slate-300 transition"
                         title="Replace CSV"
                       >
-                        <RefreshCw className="h-4 w-4 text-slate-400 hover:text-white" />
+                        <RefreshCw className="h-4 w-4 text-slate-500 hover:text-slate-900" />
                         <input
                           type="file"
                           className="hidden"
@@ -301,14 +301,14 @@ export function Desk9thView({
                       </label>
                       <button
                         onClick={() => void onRemoveMasterCsv(client.id)}
-                        className="flex shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 p-2 hover:bg-red-500/20 transition"
+                        className="flex shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-50 p-2 hover:bg-red-100 transition"
                         title="Remove Master CSV"
                       >
-                        <X className="h-4 w-4 text-red-400" />
+                        <X className="h-4 w-4 text-red-600" />
                       </button>
                     </div>
                   ) : (
-                    <label className="inline-flex cursor-pointer items-center justify-center w-full rounded-lg border border-dashed border-slate-600 bg-slate-900/80 px-3 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition">
+                    <label className="inline-flex cursor-pointer items-center justify-center w-full rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition">
                       {uploadingClientIds[client.id] ? (
                         <>
                           <RefreshCw className="h-3 w-3 mr-2 animate-spin" /> Uploading...
@@ -335,7 +335,7 @@ export function Desk9thView({
                         href={client.payeZipUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition"
+                        className="flex items-center justify-center w-full rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500 transition"
                       >
                         <ZipIcon className="h-4 w-4 mr-2 shrink-0" />
                         <span className="truncate">{client.payeZipLabel || 'Download PAYE ZIP'}</span>
@@ -346,7 +346,7 @@ export function Desk9thView({
                         href={client.nssfFileUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition"
+                        className="flex items-center justify-center w-full rounded-lg bg-blue-50 border border-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition"
                       >
                         <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
                         <span className="truncate">{client.nssfFileLabel || 'Download NSSF CSV'}</span>
@@ -357,7 +357,7 @@ export function Desk9thView({
                         href={client.shaFileUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-violet-500/10 border border-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition"
+                        className="flex items-center justify-center w-full rounded-lg bg-violet-50 border border-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100 hover:text-violet-500 transition"
                       >
                         <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
                         <span className="truncate">{client.shaFileLabel || 'Download SHA CSV'}</span>
@@ -366,24 +366,24 @@ export function Desk9thView({
                   </div>
 
                   {activeJobs[client.id] && (
-                    <div className="w-full mt-3 mb-3 bg-slate-900 border border-slate-700 rounded-lg p-2">
+                    <div className="w-full mt-3 mb-3 bg-white border border-slate-100 rounded-lg p-2">
                       <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
+                        <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
                           {getFilingStatusLabel(activeJobs[client.id])}
                         </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
+                        <span className="text-[10px] text-slate-500 font-mono">
                           {activeJobs[client.id].progress}%
                         </span>
                       </div>
-                      <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
                         <div
                           className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
                           style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
                         ></div>
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                      <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
                         {activeJobs[client.id].state === 'failed' ? (
-                          <span className="text-red-400">
+                          <span className="text-red-600">
                             {activeJobs[client.id].failedReason || 'An error occurred during filing.'}
                           </span>
                         ) : (
@@ -397,7 +397,7 @@ export function Desk9thView({
                             Boolean(cancellingClientIds[client.id]) ||
                             activeJobs[client.id].state === 'cancelling'
                           }
-                          className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                          className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         >
                           {Boolean(cancellingClientIds[client.id]) ||
                           activeJobs[client.id].state === 'cancelling' ? (
@@ -422,7 +422,7 @@ export function Desk9thView({
                         Boolean(generatingClientIds[client.id]) ||
                         isGeneratingZips
                       }
-                      className="flex items-center justify-center w-full gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-2.5 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                      className="flex items-center justify-center w-full gap-2 rounded-lg border border-emerald-500/30 bg-emerald-50 px-2 py-2.5 text-xs font-bold text-emerald-600 transition hover:bg-[#ff0613] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                     >
                       {generatingClientIds[client.id] ? (
                         <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
@@ -446,7 +446,7 @@ export function Desk9thView({
                             !client.payeZipUrl) ||
                           isPendingFilingJob(activeJobs[client.id])
                         }
-                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-[10px] font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File PAYE"
                       >
                         <Rocket className="h-4 w-4 shrink-0" />
@@ -455,7 +455,7 @@ export function Desk9thView({
                       <button
                         onClick={() => void onAutoFileNssf(client)}
                         disabled={!client.nssfFileUrl || !client.masterFileUrl}
-                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-2.5 text-[10px] font-bold text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File NSSF"
                       >
                         <Cloud className="h-4 w-4 shrink-0" />
@@ -470,8 +470,8 @@ export function Desk9thView({
 
           {/* Desktop table */}
           <div className="overflow-x-auto">
-            <table className="hidden lg:table w-full table-fixed text-left text-sm text-slate-300">
-              <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
+            <table className="hidden lg:table w-full table-fixed text-left text-sm text-slate-600">
+              <thead className="border-b border-slate-200 bg-white text-xs uppercase text-slate-500">
                 <tr>
                   <th className="w-[16%] px-2 py-3 sm:px-4 sm:py-4 font-semibold uppercase tracking-wider">
                     Client Portfolio
@@ -502,12 +502,12 @@ export function Desk9thView({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/50">
+              <tbody className="divide-y divide-slate-200/50">
                 {payrollClients.map((client) => (
-                  <tr key={client.id} className="transition hover:bg-slate-800/50">
+                  <tr key={client.id} className="transition hover:bg-slate-100/50">
                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
                       <div
-                        className="font-semibold break-words text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                        className="font-semibold break-words text-emerald-600 hover:text-emerald-500 cursor-pointer"
                         onClick={() => onOpenNewClientModal(client)}
                         title="Edit client details"
                       >
@@ -522,17 +522,17 @@ export function Desk9thView({
                             href={client.masterFileUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex w-full items-center gap-2 truncate rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                            className="flex w-full items-center gap-2 truncate rounded-lg border border-slate-100 bg-slate-100/50 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition"
                           >
                             <FileSpreadsheet className="h-3 w-3 shrink-0 text-slate-500" />
                             <span className="truncate">{client.masterFileLabel || 'Open file'}</span>
                           </a>
                           <div className="flex items-center justify-end gap-1.5">
                             <label
-                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-700/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300 hover:bg-slate-600 transition"
+                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-200/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-300 transition"
                               title="Replace CSV/XLSX"
                             >
-                              <RefreshCw className="h-3 w-3 text-slate-400" />
+                              <RefreshCw className="h-3 w-3 text-slate-500" />
                               <span>Replace</span>
                               <input
                                 type="file"
@@ -549,16 +549,16 @@ export function Desk9thView({
                             </label>
                             <button
                               onClick={() => void onRemoveMasterCsv(client.id)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-300 hover:bg-red-500/20 transition"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700 hover:bg-red-100 transition"
                               title="Remove Master CSV"
                             >
-                              <X className="h-3 w-3 text-red-400" />
+                              <X className="h-3 w-3 text-red-600" />
                               <span>Remove</span>
                             </button>
                           </div>
                         </div>
                       ) : (
-                        <label className="inline-flex w-full max-w-[180px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-800 hover:text-white transition xl:max-w-[220px]">
+                        <label className="inline-flex w-full max-w-[180px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition xl:max-w-[220px]">
                           {uploadingClientIds[client.id] ? (
                             <>
                               <RefreshCw className="h-3 w-3 mr-2 animate-spin" /> Uploading...
@@ -582,7 +582,7 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">
                         {client.payeAmount !== undefined && client.payeAmount !== null ? (
-                          <span className="text-[10px] font-bold text-slate-300">
+                          <span className="text-[10px] font-bold text-slate-600">
                             KES {client.payeAmount.toLocaleString()}
                           </span>
                         ) : (
@@ -600,7 +600,7 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">
                         {client.nitaAmount !== undefined && client.nitaAmount !== null ? (
-                          <span className="text-[10px] font-bold text-slate-300">
+                          <span className="text-[10px] font-bold text-slate-600">
                             KES {client.nitaAmount.toLocaleString()}
                           </span>
                         ) : (
@@ -612,7 +612,7 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">
                         {client.housingLevyAmount !== undefined && client.housingLevyAmount !== null ? (
-                          <span className="text-[10px] font-bold text-slate-300">
+                          <span className="text-[10px] font-bold text-slate-600">
                             KES {client.housingLevyAmount.toLocaleString()}
                           </span>
                         ) : (
@@ -624,7 +624,7 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">
                         {client.nssfAmount !== undefined && client.nssfAmount !== null ? (
-                          <span className="text-[10px] font-bold text-slate-300">
+                          <span className="text-[10px] font-bold text-slate-600">
                             KES {client.nssfAmount.toLocaleString()}
                           </span>
                         ) : (
@@ -642,7 +642,7 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">
                         {client.shaAmount !== undefined && client.shaAmount !== null ? (
-                          <span className="text-[10px] font-bold text-slate-300">
+                          <span className="text-[10px] font-bold text-slate-600">
                             KES {client.shaAmount.toLocaleString()}
                           </span>
                         ) : (
@@ -664,7 +664,7 @@ export function Desk9thView({
                             href={client.payeZipUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 hover:underline"
+                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-emerald-600 hover:text-emerald-500 hover:underline"
                             title={client.payeZipLabel}
                           >
                             <ZipIcon className="h-3 w-3 shrink-0" />
@@ -678,7 +678,7 @@ export function Desk9thView({
                             href={client.nssfFileUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 hover:underline"
+                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-500 hover:underline"
                             title={client.nssfFileLabel}
                           >
                             <ExcelIcon className="h-3 w-3 shrink-0" />
@@ -690,7 +690,7 @@ export function Desk9thView({
                             href={client.shaFileUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-violet-400 hover:text-violet-300 hover:underline"
+                            className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-500 hover:underline"
                             title={client.shaFileLabel}
                           >
                             <ExcelIcon className="h-3 w-3 shrink-0" />
@@ -714,7 +714,7 @@ export function Desk9thView({
                               Boolean(generatingClientIds[client.id]) ||
                               isGeneratingZips
                             }
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold leading-tight text-emerald-400 transition hover:bg-emerald-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-50 px-3 py-2 text-xs font-bold leading-tight text-emerald-600 transition hover:bg-[#ff0613] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                           >
                             {generatingClientIds[client.id] ? (
                               <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
@@ -731,8 +731,8 @@ export function Desk9thView({
                           }
                           className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-tight transition ${
                             !client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])
-                              ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed'
-                              : 'border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-slate-950'
+                              ? 'border-slate-100 bg-slate-100 text-slate-500 cursor-not-allowed'
+                              : 'border-blue-500/30 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-slate-950'
                           }`}
                           title="Auto File PAYE"
                         >
@@ -742,7 +742,7 @@ export function Desk9thView({
                         <button
                           onClick={() => void onGeneratePrn(client, 'PAYE')}
                           disabled={isPendingFilingJob(activeJobs[client.id])}
-                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold leading-tight text-amber-400 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold leading-tight text-[#ff0613] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-100 disabled:text-slate-500"
                           title="Print PAYE PRN"
                         >
                           <Download className="h-3 w-3 shrink-0" />
@@ -751,7 +751,7 @@ export function Desk9thView({
                         <button
                           onClick={() => void onAutoFileNssf(client)}
                           disabled={!client.nssfFileUrl || !client.masterFileUrl}
-                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-400 transition hover:bg-blue-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                           title="Auto File NSSF"
                         >
                           <Cloud className="h-3 w-3 shrink-0" />
@@ -759,24 +759,24 @@ export function Desk9thView({
                         </button>
                       </div>
                       {activeJobs[client.id] && (
-                        <div className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-left">
+                        <div className="w-full bg-white border border-slate-100 rounded-lg p-2 text-left">
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[10px] text-slate-300 font-medium font-mono uppercase tracking-wider truncate">
+                            <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
                               {getFilingStatusLabel(activeJobs[client.id])}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-mono">
+                            <span className="text-[10px] text-slate-500 font-mono">
                               {activeJobs[client.id].progress}%
                             </span>
                           </div>
-                          <div className="w-full bg-slate-800 rounded-full h-1.5 mb-1 overflow-hidden">
+                          <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
                             <div
                               className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
                               style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
                             ></div>
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                          <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
                             {activeJobs[client.id].state === 'failed' ? (
-                              <span className="text-red-400">
+                              <span className="text-red-600">
                                 {activeJobs[client.id].failedReason || 'An error occurred during filing.'}
                               </span>
                             ) : (
@@ -790,7 +790,7 @@ export function Desk9thView({
                                 Boolean(cancellingClientIds[client.id]) ||
                                 activeJobs[client.id].state === 'cancelling'
                               }
-                              className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-500"
+                              className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                             >
                               {Boolean(cancellingClientIds[client.id]) ||
                               activeJobs[client.id].state === 'cancelling' ? (
@@ -812,7 +812,7 @@ export function Desk9thView({
                                       href={activeJobs[client.id].receiptUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[10px] font-bold text-blue-300 transition hover:bg-blue-500 hover:text-slate-950"
+                                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-500 transition hover:bg-blue-600 hover:text-slate-950"
                                     >
                                       <Download className="h-3 w-3" /> Download Receipt
                                     </a>
@@ -822,7 +822,7 @@ export function Desk9thView({
                                     href={activeJobs[client.id].prnUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-300 transition hover:bg-amber-500 hover:text-slate-950"
+                                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950"
                                   >
                                     <Download className="h-3 w-3" /> Download PRN
                                   </a>

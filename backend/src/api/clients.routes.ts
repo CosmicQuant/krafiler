@@ -333,6 +333,23 @@ router.put('/:id', async (req, res) => {
     }
 });
 
+// Delete client
+router.delete('/:id', async (req, res) => {
+    try {
+        const clientId = req.params.id;
+        const db = await openDb();
+        const client = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        if (!client) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+        await db.run('DELETE FROM clients WHERE id = ?', [clientId]);
+        res.json({ success: true, message: 'Client deleted' });
+    } catch (err) {
+        console.error('Error deleting client:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 // Update payroll source URL 
 router.post('/:id/payroll-source', async (req, res) => {
     try {

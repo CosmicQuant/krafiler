@@ -82,8 +82,8 @@ export function Desk20thView({
             onClick={() => setMonthlyReturnFilter(t)}
             className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               monthlyReturnFilter === t
-                ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20'
-                : 'border border-slate-700 bg-slate-800/50 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                ? 'bg-blue-500 text-slate-900 shadow-md'
+                : 'border border-slate-100 bg-slate-100/50 text-slate-500 hover:bg-slate-200 hover:text-slate-700'
             }`}
           >
             {t === 'ALL' ? 'All Returns' : `${t} Returns`}
@@ -92,10 +92,10 @@ export function Desk20thView({
       </div>
 
       {/* 2. The Matrix Table Wrapper */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/50 shadow-xl backdrop-blur">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 shadow-xl">
         <div className="pb-16 sm:pb-32 overflow-x-auto lg:overflow-visible">
-          <table className="w-full text-left text-sm text-slate-300">
-            <thead className="border-b border-slate-800 bg-slate-900 rounded-t-2xl text-xs uppercase text-slate-400">
+          <table className="w-full text-left text-sm text-slate-600">
+            <thead className="border-b border-slate-200 bg-white rounded-t-2xl text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-4 font-semibold uppercase tracking-wider">Client Info</th>
                 <th className="px-4 py-4 font-semibold uppercase tracking-wider">Return Data / Source</th>
@@ -104,7 +104,7 @@ export function Desk20thView({
                 <th className="px-4 py-4 font-semibold text-right uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/50">
+            <tbody className="divide-y divide-slate-200/50">
               {obligations.map((ob, idx) => {
                 const jobArtifacts = activeJobs[ob.client.id];
                 const latestReceiptUrl = jobArtifacts?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
@@ -135,12 +135,12 @@ export function Desk20thView({
                 const vatBalanceValue = Math.abs(vatSummary.netVatBalance);
 
                 return (
-                  <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-800/50 group">
+                  <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-100/50 group">
                     <td className="px-4 py-4">
-                      <div className="font-semibold text-white">{ob.client.name}</div>
+                      <div className="font-semibold text-slate-900">{ob.client.name}</div>
                       <div className="mt-1 flex items-center gap-2">
                         <span className="text-xs text-slate-500">PIN: {ob.client.pin}</span>
-                        <span className="inline-flex rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-300">
+                        <span className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
                           {ob.type}
                         </span>
                       </div>
@@ -156,7 +156,7 @@ export function Desk20thView({
                                     href={vatGeneratedZipUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition"
+                                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-100 transition"
                                     title={ob.client.vatZipLabel}
                                   >
                                     <Download className="h-3 w-3" /> Generated VAT ZIP (KRA Upload)
@@ -174,7 +174,7 @@ export function Desk20thView({
                                   href={vatSourcePackageUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-800/70 border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-700/80 transition"
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-100/70 border border-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/80 transition"
                                   title={ob.client.vatSourcePackageLabel}
                                 >
                                   <Download className="h-3 w-3" /> Download VAT Source Package
@@ -185,7 +185,7 @@ export function Desk20thView({
                         </div>
                       )}
                       {ob.type === 'DST' && (
-                        <button className="text-xs flex items-center justify-center gap-1.5 rounded-xl mt-1 bg-fuchsia-500/10 px-4 py-2.5 font-bold text-fuchsia-400 hover:bg-fuchsia-500/20 transition w-full max-w-[200px] border border-fuchsia-500/20">
+                        <button className="text-xs flex items-center justify-center gap-1.5 rounded-xl mt-1 bg-fuchsia-50 px-4 py-2.5 font-bold text-fuchsia-600 hover:bg-fuchsia-100 transition w-full max-w-[200px] border border-fuchsia-500/20">
                           <Upload className="h-4 w-4" /> Upload Sales CSV
                         </button>
                       )}
@@ -203,7 +203,7 @@ export function Desk20thView({
                               onChange={(e) =>
                                 setMriInputVals((prev) => ({ ...prev, [ob.client.id]: e.target.value }))
                               }
-                              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white placeholder-slate-500 outline-none focus:border-rose-500 transition shadow-inner"
+                              className="w-full rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder-slate-400 outline-none focus:border-[#ff0613] transition shadow-inner"
                             />
                           </div>
                         </div>
@@ -211,7 +211,7 @@ export function Desk20thView({
                     </td>
                     <td className="px-4 py-4 min-w-[280px]">
                       {ob.type === 'VAT' && (
-                        <div className="flex flex-col gap-3 rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-slate-600 transition">
+                        <div className="flex flex-col gap-3 rounded-xl bg-slate-50 border border-slate-200/50 p-4 shadow-sm group-hover:border-slate-300 transition">
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               Previous Month VAT Credit
@@ -230,38 +230,38 @@ export function Desk20thView({
                                     [ob.client.id]: e.target.value,
                                   }))
                                 }
-                                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white placeholder-slate-500 outline-none focus:border-blue-500 transition shadow-inner"
+                                className="w-full rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 transition shadow-inner"
                               />
                             </div>
                           </div>
                           <div className="flex justify-between items-center text-xs">
-                            <span className="text-slate-400 font-medium">
+                            <span className="text-slate-500 font-medium">
                               Input VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Purchases)</span>
                             </span>
-                            <span className="text-slate-200 font-bold border-b border-transparent">
+                            <span className="text-slate-700 font-bold border-b border-transparent">
                               KES {formatTaxAmount(vatSummary.inputVat)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center text-xs">
-                            <span className="text-slate-400 font-medium">
+                            <span className="text-slate-500 font-medium">
                               Output VAT <span className="font-normal text-[10px] ml-1 text-slate-500">(Sales)</span>
                             </span>
-                            <span className="text-slate-200 font-bold border-b border-transparent">
+                            <span className="text-slate-700 font-bold border-b border-transparent">
                               KES {formatTaxAmount(vatSummary.outputVat)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center text-xs">
-                            <span className="text-slate-400 font-medium">
+                            <span className="text-slate-500 font-medium">
                               Previous Credit <span className="font-normal text-[10px] ml-1 text-slate-500">(Applied)</span>
                             </span>
-                            <span className="text-slate-200 font-bold border-b border-transparent">
+                            <span className="text-slate-700 font-bold border-b border-transparent">
                               KES {formatTaxAmount(vatSummary.previousCredit)}
                             </span>
                           </div>
-                          <div className="border-t border-slate-700/80 my-1 pt-2.5 flex justify-between items-center text-xs">
+                          <div className="border-t border-slate-200/80 my-1 pt-2.5 flex justify-between items-center text-xs">
                             <span
                               className={`font-bold ${
-                                vatSummary.netVatBalance >= 0 ? 'text-blue-400' : 'text-emerald-400'
+                                vatSummary.netVatBalance >= 0 ? 'text-blue-600' : 'text-emerald-600'
                               }`}
                             >
                               {vatBalanceLabel}{' '}
@@ -269,17 +269,17 @@ export function Desk20thView({
                             </span>
                             <span
                               className={`font-black text-[13px] drop-shadow-sm ${
-                                vatSummary.netVatBalance >= 0 ? 'text-blue-400' : 'text-emerald-400'
+                                vatSummary.netVatBalance >= 0 ? 'text-blue-600' : 'text-emerald-600'
                               }`}
                             >
                               KES {formatTaxAmount(vatBalanceValue)}
                             </span>
                           </div>
                           {vatHasPreparedArtifacts ? (
-                            <div className="flex flex-col gap-2 rounded-lg border border-slate-700/70 bg-slate-950/40 p-3 text-[11px] text-slate-300">
+                            <div className="flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-100 p-3 text-[11px] text-slate-600">
                               <span
                                 className={`font-semibold ${
-                                  vatCreditMatchesPrepared ? 'text-emerald-400' : 'text-amber-400'
+                                  vatCreditMatchesPrepared ? 'text-emerald-600' : 'text-[#ff0613]'
                                 }`}
                               >
                                 {vatCreditMatchesPrepared
@@ -292,7 +292,7 @@ export function Desk20thView({
                                     href={vatSourcePackageUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 font-semibold text-slate-300 hover:bg-slate-800/80 transition"
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-100 px-2.5 py-1.5 font-semibold text-slate-600 hover:bg-slate-100/80 transition"
                                     title={ob.client.vatSourcePackageLabel}
                                   >
                                     <Download className="h-3 w-3" /> Source Package
@@ -303,7 +303,7 @@ export function Desk20thView({
                                     href={vatGeneratedZipUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 font-semibold text-emerald-400 hover:bg-emerald-500/20 transition"
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-600 hover:bg-emerald-100 transition"
                                     title={ob.client.vatZipLabel}
                                   >
                                     <Download className="h-3 w-3" /> Generated VAT ZIP
@@ -331,7 +331,7 @@ export function Desk20thView({
                         </div>
                       )}
                       {ob.type === 'TOT' && (
-                        <div className="flex flex-col gap-3 rounded-xl bg-blue-900/5 border border-blue-500/20 p-4 shadow-sm group-hover:border-blue-500/30 transition">
+                        <div className="flex flex-col gap-3 rounded-xl bg-blue-50/50 border border-blue-500/20 p-4 shadow-sm group-hover:border-blue-500/30 transition">
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               Gross Sales / Turnover
@@ -348,13 +348,13 @@ export function Desk20thView({
                                     [ob.client.id]: e.target.value,
                                   }))
                                 }
-                                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-white placeholder-slate-500 outline-none focus:border-blue-500 transition shadow-inner"
+                                className="w-full rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 transition shadow-inner"
                               />
                             </div>
                           </div>
-                          <div className="border-t border-slate-700/80 pt-2 flex justify-between items-center text-xs">
-                            <span className="font-bold text-blue-400">1.5% Computed TOT</span>
-                            <span className="font-black text-[13px] text-blue-400 drop-shadow-sm">
+                          <div className="border-t border-slate-200/80 pt-2 flex justify-between items-center text-xs">
+                            <span className="font-bold text-blue-600">1.5% Computed TOT</span>
+                            <span className="font-black text-[13px] text-blue-600 drop-shadow-sm">
                               KES{' '}
                               {totInputVals[ob.client.id] &&
                               !isNaN(parseFloat(totInputVals[ob.client.id]))
@@ -364,14 +364,14 @@ export function Desk20thView({
                                 : '0.00'}
                             </span>
                           </div>
-                          <div className="flex flex-col gap-2 mt-2 border-t border-slate-700/80 pt-3">
+                          <div className="flex flex-col gap-2 mt-2 border-t border-slate-200/80 pt-3">
                             {ob.client.totZipUrl && (
                               <div className="flex flex-col gap-1">
                                 <a
                                   href={ob.client.totZipUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition"
+                                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-100 transition"
                                 >
                                   <Download className="h-3 w-3" /> Download Generated ZIP
                                 </a>
@@ -382,7 +382,7 @@ export function Desk20thView({
                             )}
                             <button
                               onClick={() => void onGenerateTotZip(ob.client)}
-                              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 text-[11px] font-bold text-blue-400 hover:bg-blue-500/20 transition hover:scale-[1.02]"
+                              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-50 border border-blue-500/20 px-3 py-1.5 text-[11px] font-bold text-blue-600 hover:bg-blue-100 transition hover:scale-[1.02]"
                             >
                               <RefreshCw className="h-3 w-3" />{' '}
                               {ob.client.totZipUrl ? 'Regenerate TOT ZIP' : 'Generate TOT ZIP'}
@@ -391,10 +391,10 @@ export function Desk20thView({
                         </div>
                       )}
                       {ob.type === 'MRI' && (
-                        <div className="flex flex-col rounded-xl bg-slate-900/50 border border-slate-700/50 p-4 shadow-sm group-hover:border-rose-900/30 transition">
+                        <div className="flex flex-col rounded-xl bg-slate-50 border border-slate-200/50 p-4 shadow-sm group-hover:border-rose-200/30 transition">
                           <div className="flex justify-between items-center text-xs">
-                            <span className="font-bold text-rose-400">7.5% Computed Tax</span>
-                            <span className="font-black text-[13px] text-rose-400 drop-shadow-sm">
+                            <span className="font-bold text-rose-600">7.5% Computed Tax</span>
+                            <span className="font-black text-[13px] text-rose-600 drop-shadow-sm">
                               KES{' '}
                               {mriInputVals[ob.client.id] &&
                               !isNaN(parseFloat(mriInputVals[ob.client.id]))
@@ -422,8 +422,8 @@ export function Desk20thView({
                               disabled={isPendingFilingJob(activeJobs[ob.client.id] as any)}
                               className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${
                                 isPendingFilingJob(activeJobs[ob.client.id] as any)
-                                  ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
-                                  : 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300'
+                                  ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
+                                  : 'bg-blue-50 border-blue-500/20 text-blue-600 hover:bg-blue-100 hover:text-blue-500'
                               }`}
                             >
                               {vatGenerateActionLabel}
@@ -439,8 +439,8 @@ export function Desk20thView({
                                 isPendingFilingJob(activeJobs[ob.client.id] as any) ||
                                 !vatHasPreparedArtifacts ||
                                 !vatCreditMatchesPrepared
-                                  ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
-                                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'
+                                  ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
+                                  : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
                               }`}
                             >
                               File VAT (Auto File)
@@ -461,8 +461,8 @@ export function Desk20thView({
                             className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${
                               isPendingFilingJob(activeJobs[ob.client.id] as any) ||
                               (ob.type === 'TOT' && !ob.client.totZipUrl)
-                                ? 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
-                                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300'
+                                ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
+                                : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
                             }`}
                           >
                             Process Return
@@ -472,7 +472,7 @@ export function Desk20thView({
                         <button
                           onClick={() => void onGeneratePrn(ob.client, ob.type)}
                           disabled={isPendingFilingJob(activeJobs[ob.client.id] as any)}
-                          className="flex w-full justify-center items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs font-bold text-amber-400 hover:bg-amber-500/20 hover:text-amber-300 transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Generate Payment Slip directly without filing"
                         >
                           Print PRN
@@ -485,7 +485,7 @@ export function Desk20thView({
                                   href={latestReceiptUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-500/10 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition shadow-sm"
+                                  className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-50 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition shadow-sm"
                                 >
                                   Download Receipt
                                 </a>
@@ -495,7 +495,7 @@ export function Desk20thView({
                                   href={unifiedPrnUrl ?? latestPrnUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="flex w-full justify-center items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2 text-xs font-bold text-amber-400 hover:bg-amber-500/20 hover:text-amber-300 transition shadow-sm"
+                                  className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm"
                                 >
                                   Download PRN
                                 </a>

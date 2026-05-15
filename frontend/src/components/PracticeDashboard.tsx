@@ -9,7 +9,6 @@ import { NewClientModal } from './dashboard/NewClientModal';
 import { OverviewView } from './dashboard/views/OverviewView';
 import { Desk9thView } from './dashboard/views/Desk9thView';
 import { Desk20thView } from './dashboard/views/Desk20thView';
-import { DeskElevyView } from './dashboard/views/DeskElevyView';
 import { DeskNilView } from './dashboard/views/DeskNilView';
 import { ClientsView } from './dashboard/views/ClientsView';
 import { apiFetch } from '../services/api';
@@ -386,12 +385,23 @@ export default function PracticeDashboard() {
             <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 {view === 'overview' && <h1 className="text-3xl font-black text-slate-900">Practice Overview</h1>}
-                {view === 'desk-9th' && <h1 className="text-3xl font-black text-[#ff0613]">Payroll Pipeline</h1>}
-                {view === 'desk-20th' && <h1 className="text-3xl font-black text-blue-600">Monthly Returns Pipeline</h1>}
-                {view === 'desk-elevy' && <h1 className="text-3xl font-black text-fuchsia-600">Tourism Fund E-Levy Pipeline</h1>}
+                {view === 'payroll' && <h1 className="text-3xl font-black text-[#ff0613]">Payroll Pipeline</h1>}
+                {view === 'vat' && <h1 className="text-3xl font-black text-blue-600">VAT Returns</h1>}
+                {view === 'tot' && <h1 className="text-3xl font-black text-emerald-600">ToT Returns</h1>}
+                {view === 'mri' && <h1 className="text-3xl font-black text-rose-600">MRI Returns</h1>}
+                {view === 'dst' && <h1 className="text-3xl font-black text-fuchsia-600">DST Returns</h1>}
+                {view === 'nil-filing' && <h1 className="text-3xl font-black text-slate-900">Nil Filing</h1>}
+                {view === 'income-tax-individual' && <h1 className="text-3xl font-black text-blue-600">Income Tax Individual</h1>}
+                {view === 'income-tax-company' && <h1 className="text-3xl font-black text-blue-600">Income Tax Company</h1>}
                 {view === 'clients' && <h1 className="text-3xl font-black text-slate-900">Client Portfolio</h1>}
                 <p className="mt-2 text-sm text-slate-500">
-                  Manage bulk payroll processing for {payrollClients.length} active client{payrollClients.length === 1 ? '' : 's'}.
+                  {view === 'payroll' ? (
+                    <>Manage bulk payroll processing for {payrollClients.length} active client{payrollClients.length === 1 ? '' : 's'}.</>
+                  ) : view === 'clients' ? (
+                    <>Manage your client portfolio.</>
+                  ) : (
+                    <>Manage returns for your clients.</>
+                  )}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
@@ -450,7 +460,7 @@ export default function PracticeDashboard() {
               />
             )}
 
-            {!selectedClient && view === 'desk-9th' && (
+            {!selectedClient && view === 'payroll' && (
               <Desk9thView
                 clients={clients}
                 activeJobs={activeJobs}
@@ -473,28 +483,8 @@ export default function PracticeDashboard() {
               />
             )}
 
-            {!selectedClient && view === 'desk-20th' && (
+            {!selectedClient && (view === 'vat' || view === 'tot' || view === 'mri' || view === 'dst') && (
               <div className="mt-10">
-                <div className="grid gap-6 sm:grid-cols-4">
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <p className="text-sm font-medium text-slate-500">VAT Returns Due</p>
-                    <p className="mt-2 text-3xl font-bold text-slate-900">2</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <p className="text-sm font-medium text-slate-500">TOT Returns Due</p>
-                    <p className="mt-2 text-3xl font-bold text-slate-900">1</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <p className="text-sm font-medium text-slate-500">MRI Returns</p>
-                    <p className="mt-2 text-3xl font-bold text-slate-900">1</p>
-                  </div>
-                  <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
-                    <p className="text-sm font-medium text-blue-600">Status Check</p>
-                    <button className="mt-4 w-full rounded-lg bg-blue-500 py-2 text-xs font-bold text-white hover:bg-blue-600">
-                      Verify KRA API
-                    </button>
-                  </div>
-                </div>
                 <Desk20thView
                   clients={clients}
                   activeJobs={activeJobs}
@@ -514,22 +504,9 @@ export default function PracticeDashboard() {
                   onAutoFile={filingActions.autoFile}
                   onAutoFileNssf={filingActions.fileNssf}
                   onGenerateTotZip={filingActions.generateTotZip}
+                  fixedType={view === 'vat' ? 'vat' : view === 'tot' ? 'tot' : view === 'mri' ? 'mri' : 'dst'}
                 />
               </div>
-            )}
-
-            {!selectedClient && view === 'desk-elevy' && (
-              <DeskElevyView clients={clients} onOpenNewClientModal={openNewClientModal} />
-            )}
-
-            {!selectedClient && view === 'desk-nil' && (
-              <DeskNilView
-                clients={clients}
-                activeJobs={activeJobs}
-                nilSelections={nilSelections}
-                setNilSelections={setNilSelections}
-                onFileNil={filingActions.fileNil}
-              />
             )}
 
             {view === 'clients' && !selectedClient && (
@@ -537,6 +514,17 @@ export default function PracticeDashboard() {
                 clients={clients}
                 onSelectClient={setSelectedClient}
                 onEditClient={openNewClientModal}
+              />
+            )}
+
+            {!selectedClient && (view === 'nil-filing' || view === 'income-tax-individual' || view === 'income-tax-company') && (
+              <DeskNilView
+                clients={clients}
+                activeJobs={activeJobs}
+                nilSelections={nilSelections}
+                setNilSelections={setNilSelections}
+                onFileNil={filingActions.fileNil}
+                filterType={view === 'income-tax-individual' ? 'income-tax-individual' : view === 'income-tax-company' ? 'income-tax-company' : null}
               />
             )}
           </div>

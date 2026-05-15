@@ -291,7 +291,7 @@ export function OverviewView({
           {/* Pending Work */}
           <div className="grid gap-4 sm:grid-cols-2">
             <button
-              onClick={() => onNavigateToView('desk-9th')}
+              onClick={() => onNavigateToView('payroll')}
               className="text-left rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-slate-200"
             >
               <div className="flex items-center justify-between">
@@ -310,7 +310,7 @@ export function OverviewView({
             </button>
 
             <button
-              onClick={() => onNavigateToView('desk-20th')}
+              onClick={() => onNavigateToView('vat')}
               className="text-left rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-slate-200"
             >
               <div className="flex items-center justify-between">
@@ -416,7 +416,7 @@ export function OverviewView({
             <input type="file" id="bulkCsvUpload" accept=".csv,.xlsx,.xls" className="hidden" onChange={onBulkCsvUpload} />
 
             <button
-              onClick={() => onNavigateToView('desk-9th')}
+              onClick={() => onNavigateToView('payroll')}
               className="group flex items-center justify-between rounded-2xl border-2 border-[#ff0613]/20 bg-red-50 p-5 text-left transition-all hover:border-[#ff0613]/40 hover:bg-red-100/50"
             >
               <div>
@@ -429,7 +429,7 @@ export function OverviewView({
             </button>
 
             <button
-              onClick={() => onNavigateToView('desk-nil')}
+              onClick={() => onNavigateToView('nil-filing')}
               className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
             >
               <div>
@@ -462,7 +462,7 @@ export function OverviewView({
               {deadlines.map((d) => (
                 <button
                   key={d.title}
-                  onClick={() => onNavigateToView(d.title.includes('Payroll') ? 'desk-9th' : 'desk-20th')}
+                  onClick={() => onNavigateToView(d.title.includes('Payroll') ? 'payroll' : 'vat')}
                   className={`w-full text-left rounded-xl border p-4 transition-all hover:shadow-sm ${
                     d.urgent
                       ? 'border-[#ff0613]/20 bg-red-50/50'

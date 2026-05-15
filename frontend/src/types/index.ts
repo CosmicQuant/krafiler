@@ -1,4 +1,4 @@
-export type DashboardView = 'overview' | 'desk-9th' | 'desk-20th' | 'desk-elevy' | 'desk-nil' | 'clients' | 'settings';
+export type DashboardView = 'overview' | 'payroll' | 'vat' | 'tot' | 'mri' | 'dst' | 'nil-filing' | 'income-tax-individual' | 'income-tax-company' | 'clients' | 'settings';
 export type PlanKey = 'starter' | 'growth' | 'enterprise';
 
 export type PracticePlan = {

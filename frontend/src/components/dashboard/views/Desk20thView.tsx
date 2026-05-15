@@ -39,6 +39,7 @@ interface Desk20thViewProps {
   onAutoFile: (client: ClientObligation) => Promise<void>;
   onAutoFileNssf: (client: ClientObligation) => void;
   onGenerateTotZip: (client: ClientObligation) => Promise<void>;
+  fixedType?: 'vat' | 'tot' | 'mri' | 'dst';
 }
 
 export function Desk20thView({
@@ -60,38 +61,62 @@ export function Desk20thView({
   onAutoFile,
   onAutoFileNssf,
   onGenerateTotZip,
+  fixedType,
 }: Desk20thViewProps) {
 
   let obligations: { client: ClientObligation; type: string; status: TaxStatus }[] = [];
-  clients.forEach((c) => {
-    if (c.vat !== 'na') obligations.push({ client: c, type: 'VAT', status: c.vat });
-    if (c.tot !== 'na') obligations.push({ client: c, type: 'TOT', status: c.tot });
-    if (c.dst !== 'na') obligations.push({ client: c, type: 'DST', status: c.dst });
-    if (c.mri !== 'na') obligations.push({ client: c, type: 'MRI', status: c.mri });
-  });
 
-  if (monthlyReturnFilter !== 'ALL') {
+  if (fixedType) {
+    const statusMap: Record<string, keyof ClientObligation> = {
+      vat: 'vat',
+      tot: 'tot',
+      mri: 'mri',
+      dst: 'dst',
+    };
+    const typeLabelMap: Record<string, string> = {
+      vat: 'VAT',
+      tot: 'TOT',
+      mri: 'MRI',
+      dst: 'DST',
+    };
+    const field = statusMap[fixedType];
+    const typeLabel = typeLabelMap[fixedType];
+    obligations = clients
+      .filter((c) => c[field] !== 'na')
+      .map((c) => ({ client: c, type: typeLabel, status: c[field] as TaxStatus }));
+  } else {
+    clients.forEach((c) => {
+      if (c.vat !== 'na') obligations.push({ client: c, type: 'VAT', status: c.vat });
+      if (c.tot !== 'na') obligations.push({ client: c, type: 'TOT', status: c.tot });
+      if (c.dst !== 'na') obligations.push({ client: c, type: 'DST', status: c.dst });
+      if (c.mri !== 'na') obligations.push({ client: c, type: 'MRI', status: c.mri });
+    });
+  }
+
+  if (!fixedType && monthlyReturnFilter !== 'ALL') {
     obligations = obligations.filter((ob) => ob.type === monthlyReturnFilter);
   }
 
   return (
     <div className="mt-8">
       {/* 1. The Toggle UI */}
-      <div className="mb-6 flex flex-wrap gap-3 items-center">
-        {(['VAT', 'TOT', 'MRI', 'DST', 'ALL'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setMonthlyReturnFilter(t)}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              monthlyReturnFilter === t
-                ? 'bg-blue-500 text-slate-900 shadow-md'
-                : 'border border-slate-100 bg-slate-100/50 text-slate-500 hover:bg-slate-200 hover:text-slate-700'
-            }`}
-          >
-            {t === 'ALL' ? 'All Returns' : `${t} Returns`}
-          </button>
-        ))}
-      </div>
+      {!fixedType && (
+        <div className="mb-6 flex flex-wrap gap-3 items-center">
+          {(['VAT', 'TOT', 'MRI', 'DST', 'ALL'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setMonthlyReturnFilter(t)}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                monthlyReturnFilter === t
+                  ? 'bg-blue-500 text-slate-900 shadow-md'
+                  : 'border border-slate-100 bg-slate-100/50 text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+              }`}
+            >
+              {t === 'ALL' ? 'All Returns' : `${t} Returns`}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 2. The Matrix Table Wrapper */}
       <div className="rounded-2xl border border-slate-200 bg-slate-50 shadow-xl">

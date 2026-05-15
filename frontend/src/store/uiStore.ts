@@ -19,7 +19,7 @@ type UIState = {
 
 export const useUIStore = create<UIState>((set) => ({
     view: 'overview',
-    monthlyReturnFilter: 'VAT',
+    monthlyReturnFilter: 'ALL',
     isSidebarOpen: false,
     isSidebarCollapsed: true,
     selectedPlan: 'growth',

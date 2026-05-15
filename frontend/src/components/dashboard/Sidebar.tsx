@@ -1,12 +1,15 @@
 import { Link } from 'react-router-dom';
 import {
-    Activity,
-    Building2,
     LayoutDashboard,
     LogOut,
-    TerminalSquare,
     Users,
+    Percent,
+    Receipt,
+    Home,
+    Store,
     FileArchive,
+    User,
+    Building2,
     X,
     ChevronLeft,
     ChevronRight,
@@ -17,34 +20,38 @@ const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
 ];
 
-const deskItems = [
-    { id: 'desk-9th', label: 'Payroll Processing', icon: Users, countKey: 'payroll' as const },
-    { id: 'desk-20th', label: 'VAT & Monthly', icon: TerminalSquare, countKey: 'tax' as const },
-    { id: 'desk-elevy', label: 'Tourism Fund Desk', icon: Activity, countKey: null },
-    { id: 'desk-nil', label: 'Nil & ITR Desk', icon: FileArchive, countKey: null },
+const filingItems = [
+    { id: 'payroll', label: 'Payroll Processing', icon: Users, countKey: 'payroll' as const },
+    { id: 'vat', label: 'VAT', icon: Percent, countKey: 'vat' as const },
+    { id: 'tot', label: 'ToT', icon: Receipt, countKey: 'tot' as const },
+    { id: 'mri', label: 'MRI', icon: Home, countKey: 'mri' as const },
+    { id: 'dst', label: 'DST', icon: Store, countKey: 'dst' as const },
+    { id: 'nil-filing', label: 'Nil Filing', icon: FileArchive, countKey: null },
+    { id: 'income-tax-individual', label: 'Income Tax Individual', icon: User, countKey: null },
+    { id: 'income-tax-company', label: 'Income Tax Company', icon: Building2, countKey: null },
 ];
 
 const practiceItems = [
     { id: 'clients', label: 'Client Database', icon: Building2 },
 ];
 
-export function Sidebar({ 
-    payrollPendingCount, 
-    taxPendingCount, 
-}: { 
-    payrollPendingCount: number; 
-    taxPendingCount: number; 
+export function Sidebar({
+    payrollPendingCount,
+    taxPendingCount,
+}: {
+    payrollPendingCount: number;
+    taxPendingCount: number;
 }) {
-    const { 
-        view, 
-        setView, 
-        isSidebarOpen, 
+    const {
+        view,
+        setView,
+        isSidebarOpen,
         setIsSidebarOpen,
         isSidebarCollapsed,
         toggleSidebarCollapsed,
     } = useUIStore();
 
-    const getCount = (key: string | null) => {
+    const getCount = (key: string) => {
         if (key === 'payroll') return payrollPendingCount;
         if (key === 'tax') return taxPendingCount;
         return 0;
@@ -82,8 +89,8 @@ export function Sidebar({
                         )}
                     </div>
                     {!collapsed && (
-                        <button 
-                            onClick={() => setIsSidebarOpen(false)} 
+                        <button
+                            onClick={() => setIsSidebarOpen(false)}
                             className="lg:hidden text-slate-400 hover:text-slate-900 transition"
                         >
                             <X className="h-5 w-5" />
@@ -114,15 +121,15 @@ export function Sidebar({
                         />
                     ))}
 
-                    {/* Tax Filing Desks */}
+                    {/* Filing Desks */}
                     {!collapsed && (
                         <div className="pt-5 pb-1.5 px-2">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Tax Filing Desks</p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Filing Desks</p>
                         </div>
                     )}
                     {collapsed && <div className="h-4" />}
-                    {deskItems.map((item) => {
-                        const count = getCount(item.countKey);
+                    {filingItems.map((item) => {
+                        const count = getCount((item as any).countKey || '');
                         return (
                             <SidebarButton
                                 key={item.id}
@@ -135,10 +142,10 @@ export function Sidebar({
                         );
                     })}
 
-                    {/* Tax Practice */}
+                    {/* Practice */}
                     {!collapsed && (
                         <div className="pt-5 pb-1.5 px-2">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Tax Practice</p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Practice</p>
                         </div>
                     )}
                     {collapsed && <div className="h-4" />}
@@ -155,8 +162,8 @@ export function Sidebar({
 
                 {/* Footer */}
                 <div className="mt-auto border-t border-slate-100 px-2 py-3">
-                    <Link 
-                        to="/" 
+                    <Link
+                        to="/"
                         className={`flex items-center gap-2 rounded-lg py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 ${collapsed ? 'justify-center px-0' : 'px-3'}`}
                         title="Sign Out"
                     >
@@ -169,28 +176,28 @@ export function Sidebar({
     );
 }
 
-function SidebarButton({ 
-    item, 
-    isActive, 
-    onClick, 
-    collapsed, 
-    count 
-}: { 
-    item: { id: string; label: string; icon: React.ElementType }; 
-    isActive: boolean; 
+function SidebarButton({
+    item,
+    isActive,
+    onClick,
+    collapsed,
+    count
+}: {
+    item: { id: string; label: string; icon: React.ElementType };
+    isActive: boolean;
     onClick: () => void;
     collapsed: boolean;
     count?: number;
 }) {
     const Icon = item.icon;
-    
+
     if (collapsed) {
         return (
             <button
                 onClick={onClick}
                 className={`group relative flex w-full items-center justify-center rounded-xl px-2 py-2.5 transition ${
-                    isActive 
-                        ? 'bg-[#ff0613]/10 text-[#ff0613]' 
+                    isActive
+                        ? 'bg-[#ff0613]/10 text-[#ff0613]'
                         : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
                 }`}
                 title={item.label}
@@ -214,8 +221,8 @@ function SidebarButton({
         <button
             onClick={onClick}
             className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-                isActive 
-                    ? 'bg-[#ff0613]/10 text-[#ff0613] border border-[#ff0613]/10' 
+                isActive
+                    ? 'bg-[#ff0613]/10 text-[#ff0613] border border-[#ff0613]/10'
                     : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 border border-transparent'
             }`}
         >

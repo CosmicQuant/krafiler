@@ -23,6 +23,7 @@ interface DeskNilViewProps {
     >
   >;
   onFileNil: (client: ClientObligation) => Promise<void>;
+  filterType?: 'income-tax-individual' | 'income-tax-company' | null;
 }
 
 export function DeskNilView({
@@ -31,12 +32,36 @@ export function DeskNilView({
   nilSelections,
   setNilSelections,
   onFileNil,
+  filterType,
 }: DeskNilViewProps) {
+  let availableOptions = TAX_OBLIGATION_OPTIONS.filter((o) => o.filingMode === 'nil');
+
+  if (filterType === 'income-tax-individual') {
+    availableOptions = availableOptions.filter(
+      (o) =>
+        o.value === 'income_tax_resident_individual' ||
+        o.value === 'income_tax_non_resident_individual'
+    );
+  } else if (filterType === 'income-tax-company') {
+    availableOptions = availableOptions.filter((o) => o.value === 'income_tax_company');
+  }
+
+  const title = filterType === 'income-tax-individual'
+    ? 'Income Tax Individual'
+    : filterType === 'income-tax-company'
+    ? 'Income Tax Company'
+    : 'Nil & ITR Filing Desk';
+  const description = filterType === 'income-tax-individual'
+    ? 'File Income Tax returns for individual clients.'
+    : filterType === 'income-tax-company'
+    ? 'File Income Tax returns for company clients.'
+    : 'File Nil returns and Annual Income Tax Returns for your clients.';
+
   return (
     <div className="mt-10">
       <div className="mb-6 flex flex-col gap-2 border-b border-slate-200 pb-5">
-        <h2 className="text-xl font-bold text-slate-900">Nil & ITR Filing Desk</h2>
-        <p className="text-sm text-slate-500">File Nil returns and Annual Income Tax Returns for your clients.</p>
+        <h2 className="text-xl font-bold text-slate-900">{title}</h2>
+        <p className="text-sm text-slate-500">{description}</p>
       </div>
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto pb-16">
@@ -69,25 +94,31 @@ export function DeskNilView({
                       <div className="text-xs text-slate-500 font-mono mt-0.5">{client.pin}</div>
                     </td>
                     <td className="px-6 py-4">
-                      <select
-                        className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#ff0613]"
-                        value={sel.type}
-                        onChange={(e) =>
-                          setNilSelections((prev) => ({
-                            ...prev,
-                            [client.id]: { ...sel, type: e.target.value },
-                          }))
-                        }
-                      >
-                        <option value="" disabled>
-                          Choose Obligation
-                        </option>
-                        {TAX_OBLIGATION_OPTIONS.filter((o) => o.filingMode === 'nil').map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
+                      {filterType ? (
+                        <span className="text-sm text-slate-700">
+                          {availableOptions.find((o) => o.value === sel.type)?.label || availableOptions[0]?.label}
+                        </span>
+                      ) : (
+                        <select
+                          className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#ff0613]"
+                          value={sel.type}
+                          onChange={(e) =>
+                            setNilSelections((prev) => ({
+                              ...prev,
+                              [client.id]: { ...sel, type: e.target.value },
+                            }))
+                          }
+                        >
+                          <option value="" disabled>
+                            Choose Obligation
                           </option>
-                        ))}
-                      </select>
+                          {availableOptions.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-2">

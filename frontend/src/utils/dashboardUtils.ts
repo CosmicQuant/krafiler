@@ -146,7 +146,7 @@ export function isPayrollDeskClient(client: ClientObligation) {
 }
 
 export function markPayrollStatusesGenerated(client: ClientObligation): ClientObligation {
-    const timestamp = new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const timestamp = new Date().toISOString();
     return {
         ...client,
         paye: client.paye === 'na' ? 'na' : 'generated',
@@ -154,4 +154,19 @@ export function markPayrollStatusesGenerated(client: ClientObligation): ClientOb
         sha: client.sha === 'na' ? 'na' : 'generated',
         lastGeneratedAt: timestamp,
     };
+}
+
+export function formatGeneratedDate(dateValue?: string | null): string {
+    if (!dateValue || dateValue === 'null' || dateValue === 'undefined') {
+        return '';
+    }
+    try {
+        const date = new Date(dateValue);
+        if (isNaN(date.getTime())) {
+            return '';
+        }
+        return date.toLocaleString();
+    } catch {
+        return '';
+    }
 }

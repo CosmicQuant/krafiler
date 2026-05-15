@@ -18,6 +18,7 @@ import {
   Menu,
   Plus,
   Search,
+  X,
 } from 'lucide-react';
 
 import { ClientObligation, ActiveDashboardJob, FilingJobState, VatPreparationSummary } from '../types';
@@ -425,16 +426,25 @@ export default function PracticeDashboard() {
             </header>
 
             {dashboardNotice && (
-              <div
-                className={`mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${
-                  dashboardNotice.tone === 'success'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : dashboardNotice.tone === 'error'
-                      ? 'border-red-200 bg-red-50 text-red-700'
-                      : 'border-slate-200 bg-slate-50 text-slate-700'
-                }`}
-              >
-                {dashboardNotice.message}
+              <div className="relative">
+                <div
+                  className={`mt-6 rounded-2xl border px-4 py-3 pr-10 text-sm font-medium ${
+                    dashboardNotice.tone === 'success'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : dashboardNotice.tone === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-slate-200 bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  {dashboardNotice.message}
+                </div>
+                <button
+                  onClick={() => setDashboardNotice(null)}
+                  className="absolute top-7 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-white/80 text-slate-400 hover:text-slate-700 transition"
+                  title="Dismiss"
+                >
+                  <X className="h-3 w-3" />
+                </button>
               </div>
             )}
 

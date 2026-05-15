@@ -67,83 +67,8 @@ export function Desk9thView({
 
   return (
     <div className="mt-10">
-      {/* Global Payroll Upload */}
-      <div className="my-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm relative">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#ff0613]/30 to-transparent"></div>
-
-        <div className="px-5 py-5 sm:px-6">
-          <div className="max-w-3xl">
-            <h2 className="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent mb-1">
-              Automate Your Payroll Processing
-            </h2>
-            <p className="text-sm text-slate-500 mb-4 leading-relaxed">
-              Say goodbye to manual client entry. Upload any client&apos;s Master CSV here. We&apos;ll automatically extract the company details, create the client profile if they don&apos;t exist, and instantly generate the final PAYE, NSSF, and SHA files ready for portals.
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-stretch">
-              <label className="relative group cursor-pointer w-full sm:w-auto">
-                <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-br from-[#ff0613] to-[#d80000] opacity-20 blur transition group-hover:opacity-40"></div>
-                <div className="relative flex flex-1 items-center justify-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-50 px-5 py-3 shadow-md transition-all group-hover:bg-emerald-100">
-                  {isGlobalUploading ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 text-emerald-600 animate-spin" />
-                      <span className="text-sm font-bold text-[#ff0613]/90 tracking-wide">Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <UploadCloud className="h-4 w-4 text-emerald-600 group-hover:scale-110 transition-transform" />
-                      <span className="text-sm font-bold text-[#ff0613]/90 tracking-wide">Upload Master CSV & Auto-Generate</span>
-                    </>
-                  )}
-                </div>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".csv,.xlsx"
-                  disabled={isGlobalUploading}
-                  onChange={(e) => {
-                    if (e.target.files?.[0]) {
-                      void onGlobalMasterCsvUpload(e.target.files[0]);
-                      e.target.value = '';
-                    }
-                  }}
-                />
-              </label>
-            </div>
-
-            <div className="mt-4 flex items-center gap-2">
-              <div className="h-4 w-1 rounded-full bg-slate-200"></div>
-              <p className="text-xs text-slate-500 font-medium tracking-wide">
-                Need the required format?{' '}
-                <a
-                  href="/Axon_Unified_Payroll_Template_v4.xlsx"
-                  download
-                  className="text-emerald-600 hover:text-emerald-500 hover:underline transition-colors focus:outline-none ml-1"
-                >
-                  Download our complete Unified Template
-                </a>{' '}
-                (Ensure Employer Details are in Rows 1-3).
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Visual flair graphic right side */}
-        <div className="absolute right-0 bottom-0 pointer-events-none hidden lg:block opacity-10">
-          <svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="100" cy="100" r="80" stroke="url(#paint0_linear)" strokeWidth="2" strokeDasharray="4 4" />
-            <defs>
-              <linearGradient id="paint0_linear" x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
-                <stop stopColor="#10B981" />
-                <stop offset="1" stopColor="#10B981" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-          </svg>
-        </div>
-      </div>
-
       {/* 9th Desk Grid */}
-      <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 shadow-xl">
+      <div className="mt-0 rounded-2xl border border-slate-200 bg-slate-50 shadow-xl">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 rounded-t-2xl bg-slate-50/80 px-4 py-4 gap-3 sm:gap-0">
           <h3 className="font-bold text-slate-900">Payroll Clients</h3>
           <div className="flex flex-wrap items-center gap-2">

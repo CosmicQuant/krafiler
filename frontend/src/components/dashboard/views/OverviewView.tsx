@@ -14,6 +14,7 @@ import {
   Plus,
   UploadCloud,
   Upload,
+  Download,
   Building2,
   ArrowRight,
   TrendingUp,
@@ -25,6 +26,11 @@ import {
   Briefcase,
   Trash2,
   X,
+  Percent,
+  Receipt,
+  Home,
+  Store,
+  User,
 } from 'lucide-react';
 import { useDeleteClient } from '../../../hooks/useClients';
 
@@ -102,7 +108,7 @@ export function OverviewView({
         urgent: daysUntil9th() <= 3,
       },
       {
-        title: 'VAT & Monthly Returns',
+        title: 'Monthly Tax Returns',
         date: '20th of every month',
         days: daysUntil20th(),
         urgent: daysUntil20th() <= 3,
@@ -288,47 +294,6 @@ export function OverviewView({
             )}
           </div>
 
-          {/* Pending Work */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <button
-              onClick={() => onNavigateToView('payroll')}
-              className="text-left rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-slate-200"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-slate-500">Payroll Processing</p>
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                </div>
-              </div>
-              <p className="mt-3 text-3xl font-black text-slate-900">
-                {payrollPendingCount} <span className="text-lg font-normal text-slate-400">packs</span>
-              </p>
-              <p className="mt-1 text-xs text-slate-400">Due before 9th</p>
-              <div className="mt-3 flex items-center gap-1 text-xs font-bold text-[#ff0613]">
-                Go to desk <ArrowRight className="h-3 w-3" />
-              </div>
-            </button>
-
-            <button
-              onClick={() => onNavigateToView('vat')}
-              className="text-left rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-all hover:shadow-md hover:border-slate-200"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-slate-500">Monthly Returns</p>
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50">
-                  <CalendarClock className="h-4 w-4 text-blue-600" />
-                </div>
-              </div>
-              <p className="mt-3 text-3xl font-black text-slate-900">
-                {taxPendingCount} <span className="text-lg font-normal text-slate-400">remittances</span>
-              </p>
-              <p className="mt-1 text-xs text-slate-400">Due before 20th</p>
-              <div className="mt-3 flex items-center gap-1 text-xs font-bold text-blue-600">
-                Go to desk <ArrowRight className="h-3 w-3" />
-              </div>
-            </button>
-          </div>
-
           {/* Recent Activity */}
           <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-900">Recent Activity</h3>
@@ -368,89 +333,174 @@ export function OverviewView({
         <div className="space-y-6">
           {/* Quick Actions */}
           <h3 className="text-lg font-bold text-slate-900">Quick Actions</h3>
-          <div className="grid gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <button
               onClick={onOpenNewClientModal}
-              className="group flex items-center justify-between rounded-2xl bg-[#ff0613] p-5 text-left shadow-sm transition-all hover:shadow-md hover:bg-[#d80000]"
+              className="group flex items-center justify-between rounded-2xl bg-[#ff0613] p-4 text-left shadow-sm transition-all hover:shadow-md hover:bg-[#d80000]"
             >
               <div>
-                <p className="text-lg font-black text-white">Onboard Client</p>
-                <p className="mt-1 text-xs font-semibold text-red-100">Add client & set obligations</p>
+                <p className="text-sm font-black text-white">Onboard Client</p>
+                <p className="mt-0.5 text-[10px] font-semibold text-red-100">Add client & set obligations</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20">
-                <Plus className="h-5 w-5 text-white" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+                <Plus className="h-4 w-4 text-white" />
               </div>
             </button>
 
-            <div className="space-y-2">
-              <button
-                onClick={() => document.getElementById('bulkCsvUpload')?.click()}
-                className="group flex w-full items-center justify-between rounded-2xl bg-slate-900 p-5 text-left shadow-sm transition-all hover:shadow-md hover:bg-slate-800"
-              >
-                <div>
-                  <p className="text-lg font-black text-white">Bulk Import</p>
-                  <p className="mt-1 text-xs font-semibold text-slate-400">Upload CSV template</p>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10">
-                  <Upload className="h-5 w-5 text-white" />
-                </div>
-              </button>
-              <button
-                onClick={() => {
-                  const csvContent =
-                    'Company Name,PIN,Password,Obligations,Email,Phone,NSSF Login,NSSF Password,SHA Login,SHA Password\nExample Company Ltd,P051234567M,UserPass123!,"paye, nssf, mri",test@example.com,0700000000,NSSF001,NssfPass123,SHA001,ShaPass123';
-                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = url;
-                  link.download = 'Clients_Bulk_Upload_Template.csv';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                className="w-full text-center text-xs text-slate-500 hover:text-slate-700 transition-colors underline"
-              >
-                Download CSV Template
-              </button>
-            </div>
+            <button
+              onClick={() => document.getElementById('bulkCsvUpload')?.click()}
+              className="group flex items-center justify-between rounded-2xl bg-slate-900 p-4 text-left shadow-sm transition-all hover:shadow-md hover:bg-slate-800"
+            >
+              <div>
+                <p className="text-sm font-black text-white">Bulk Import</p>
+                <p className="mt-0.5 text-[10px] font-semibold text-slate-400">Upload CSV template</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10">
+                <Upload className="h-4 w-4 text-white" />
+              </div>
+            </button>
             <input type="file" id="bulkCsvUpload" accept=".csv,.xlsx,.xls" className="hidden" onChange={onBulkCsvUpload} />
+
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                const csvContent = 
+                  'Company Name,PIN,Password,Obligations,Email,Phone,NSSF Login,NSSF Password,SHA Login,SHA Password\nExample Company Ltd,P051234567M,UserPass123!,"paye, nssf, mri",test@example.com,0700000000,NSSF001,NssfPass123,SHA001,ShaPass123';
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'Clients_Bulk_Upload_Template.csv';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+              }}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-slate-900">Download Template</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">CSV upload format</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <Download className="h-4 w-4 text-slate-600" />
+              </div>
+            </a>
 
             <button
               onClick={() => onNavigateToView('payroll')}
-              className="group flex items-center justify-between rounded-2xl border-2 border-[#ff0613]/20 bg-red-50 p-5 text-left transition-all hover:border-[#ff0613]/40 hover:bg-red-100/50"
+              className="group flex items-center justify-between rounded-2xl border-2 border-[#ff0613]/20 bg-red-50 p-4 text-left transition-all hover:border-[#ff0613]/40 hover:bg-red-100/50"
             >
               <div>
-                <p className="text-lg font-black text-[#ff0613]">Process Payroll</p>
-                <p className="mt-1 text-xs font-medium text-red-400">Unified PAYE, NSSF, SHA</p>
+                <p className="text-sm font-black text-[#ff0613]">Process Payroll</p>
+                <p className="mt-0.5 text-[10px] font-medium text-red-400">Unified PAYE, NSSF, SHA</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff0613]/10">
-                <UploadCloud className="h-5 w-5 text-[#ff0613]" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ff0613]/10">
+                <UploadCloud className="h-4 w-4 text-[#ff0613]" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('vat')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-blue-600">VAT Returns</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Prepare &amp; file VAT</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50">
+                <Percent className="h-4 w-4 text-blue-600" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('tot')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-emerald-600">ToT Returns</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Turnover tax filing</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                <Receipt className="h-4 w-4 text-emerald-600" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('mri')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-rose-600">MRI Returns</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Rental income tax</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50">
+                <Home className="h-4 w-4 text-rose-600" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('dst')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-fuchsia-600">DST Returns</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Digital services tax</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-fuchsia-50">
+                <Store className="h-4 w-4 text-fuchsia-600" />
               </div>
             </button>
 
             <button
               onClick={() => onNavigateToView('nil-filing')}
-              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
             >
               <div>
-                <p className="text-lg font-black text-slate-900">Nil Filing Run</p>
-                <p className="mt-1 text-xs font-semibold text-slate-400">Auto-file empty returns</p>
+                <p className="text-sm font-black text-slate-900">Nil Filing Run</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Auto-file empty returns</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-                <Activity className="h-5 w-5 text-slate-600" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <Activity className="h-4 w-4 text-slate-600" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('income-tax-individual')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-slate-900">IT Individual</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Income tax individual</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <User className="h-4 w-4 text-slate-600" />
+              </div>
+            </button>
+
+            <button
+              onClick={() => onNavigateToView('income-tax-company')}
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+            >
+              <div>
+                <p className="text-sm font-black text-slate-900">IT Company</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">Income tax company</p>
+              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <Building2 className="h-4 w-4 text-slate-600" />
               </div>
             </button>
 
             <button
               onClick={() => onNavigateToView('clients')}
-              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
+              className="group flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md hover:border-slate-300"
             >
               <div>
-                <p className="text-lg font-black text-slate-900">Client Registry</p>
-                <p className="mt-1 text-xs font-medium text-slate-400">View portfolios matrix</p>
+                <p className="text-sm font-black text-slate-900">Client Registry</p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">View portfolios matrix</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-                <Briefcase className="h-5 w-5 text-slate-600" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                <Briefcase className="h-4 w-4 text-slate-600" />
               </div>
             </button>
           </div>

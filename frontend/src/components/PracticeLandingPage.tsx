@@ -41,7 +41,7 @@ const stats = [
 const features = [
     {
         icon: Zap,
-        title: 'One Upload, All Authorities',
+        title: 'One Master Payroll, All Authorities',
         desc: 'Upload a single payroll file. Kwanta.ai auto-generates KRA PAYE, NSSF, SHA & HELB packs — formatted and ready to file. It can also automatically file for you.',
         color: 'red',
     },
@@ -185,6 +185,7 @@ function DemoTotForm() {
     const [amount, setAmount] = useState('');
     const [status, setStatus] = useState<'idle' | 'generating' | 'done'>('idle');
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+    const [downloadLabel, setDownloadLabel] = useState<string | null>(null);
 
     const months = [
         'January', 'February', 'March', 'April', 'May', 'June',
@@ -195,13 +196,34 @@ function DemoTotForm() {
         if (!pin || !month || !amount) return;
         setStatus('generating');
         
-        await new Promise(r => setTimeout(r, 2500));
-        
-        const mockContent = `TOT_RETURN\nPIN:${pin}\nPeriod:${month} ${year}\nTurnover:${amount}\nTax:${Math.round(Number(amount) * 0.015)}`;
-        const blob = new Blob([mockContent], { type: 'application/zip' });
-        const url = URL.createObjectURL(blob);
-        setDownloadUrl(url);
-        setStatus('done');
+        try {
+            const monthIndex = months.indexOf(month) + 1;
+            const response = await fetch('/api/tax/generate-tot-zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    kraPin: pin,
+                    year: parseInt(year),
+                    month: monthIndex,
+                    turnover: parseFloat(amount),
+                    clientName: 'Demo'
+                })
+            });
+            
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to generate TOT ZIP');
+            }
+            
+            const data = await response.json();
+            setDownloadUrl(data.totInfo?.url || null);
+            setDownloadLabel(data.totInfo?.label || null);
+            setStatus('done');
+        } catch (err) {
+            console.error('TOT generation error:', err);
+            setStatus('idle');
+            alert(err instanceof Error ? err.message : 'Failed to generate TOT ZIP');
+        }
     };
 
     const tax = amount ? Math.round(Number(amount) * 0.015) : 0;
@@ -308,7 +330,7 @@ function DemoTotForm() {
                         </div>
                         <a
                             href={downloadUrl}
-                            download={`TOT_${pin}_${month.toUpperCase().substring(0,3)}_${year}.zip`}
+                            download={downloadLabel || undefined}
                             className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-600 transition"
                         >
                             Download
@@ -471,7 +493,12 @@ export default function PracticeLandingPage() {
     const [payrollFile, setPayrollFile] = useState<File | null>(null);
     const [payrollStatus, setPayrollStatus] = useState<null | 'processing' | 'done'>(null);
     const [payrollOptions, setPayrollOptions] = useState<PayrollOptions>({ paye: true, nssf: true, sha: true });
-    const [payrollResponse, setPayrollResponse] = useState<string | null>(null);
+    const [payrollResponse, setPayrollResponse] = useState<{
+        masterZipUrl: string;
+        paye?: { url: string; label: string };
+        nssf?: { url: string; label: string };
+        sha?: { url: string; label: string };
+    } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -497,10 +524,6 @@ export default function PracticeLandingPage() {
         return () => observerRef.current?.disconnect();
     }, []);
 
-    useEffect(() => {
-        return () => { if (payrollResponse) window.URL.revokeObjectURL(payrollResponse); };
-    }, [payrollResponse]);
-
     const selectedOutputCount = Object.values(payrollOptions).filter(Boolean).length;
 
     const fadeClass = (id: string) =>
@@ -519,24 +542,38 @@ export default function PracticeLandingPage() {
             formData.append('generatePaye', String(payrollOptions.paye));
             formData.append('generateNssf', String(payrollOptions.nssf));
             formData.append('generateSha', String(payrollOptions.sha));
+            formData.append('clientName', 'Demo');
 
             const res = await fetch('/api/payroll/generate-unified', { method: 'POST', body: formData });
-            if (!res.ok) { setPayrollStatus('done'); return; }
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || err.message || 'Server error');
+            }
 
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            if (payrollResponse) window.URL.revokeObjectURL(payrollResponse);
-            setPayrollResponse(url);
+            const data = await res.json();
+            if (!data.masterZipUrl) {
+                throw new Error('No payroll pack was generated');
+            }
 
+            setPayrollResponse({
+                masterZipUrl: data.masterZipUrl,
+                paye: data.paye || undefined,
+                nssf: data.nssf || undefined,
+                sha: data.sha || undefined,
+            });
+            setPayrollStatus('done');
+
+            const filename = data.masterZipUrl.split('/').pop() || 'Kwanta.ai_Payroll_Pack.zip';
             const a = document.createElement('a');
-            a.href = url;
-            a.download = 'Kwanta.ai_Payroll_Pack.zip';
+            a.href = data.masterZipUrl;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            setPayrollStatus('done');
-        } catch {
-            setPayrollStatus('done');
+        } catch (err) {
+            console.error('Payroll generation error:', err);
+            alert(err instanceof Error ? err.message : 'Failed to generate payroll pack');
+            setPayrollStatus(null);
         }
     };
 
@@ -815,36 +852,71 @@ export default function PracticeLandingPage() {
                             </button>
 
                             {payrollStatus === 'done' && payrollResponse && (
-                                <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-[#ff0613]/20 bg-[#ff0613]/5 p-4">
-                                    <div className="flex items-center gap-2 text-sm font-bold text-[#ff0613]">
-                                        <CheckCircle2 className="h-4 w-4" /> Pack ready
+                                <div className="mt-4 rounded-xl border border-[#ff0613]/20 bg-[#ff0613]/5 p-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2 text-sm font-bold text-[#ff0613]">
+                                            <CheckCircle2 className="h-4 w-4" /> Pack ready
+                                        </div>
+                                        <a
+                                            href={payrollResponse.masterZipUrl}
+                                            download={payrollResponse.masterZipUrl.split('/').pop() || 'Kwanta.ai_Payroll_Pack.zip'}
+                                            className="rounded-lg bg-[#ff0613] px-4 py-2 text-xs font-bold text-white hover:bg-[#d80000]"
+                                        >
+                                            Download All ZIP
+                                        </a>
                                     </div>
-                                    <a
-                                        href={payrollResponse}
-                                        download="Kwanta.ai_Payroll_Pack.zip"
-                                        className="rounded-lg bg-[#ff0613] px-4 py-2 text-xs font-bold text-white hover:bg-[#d80000]"
-                                    >
-                                        Download ZIP
-                                    </a>
+                                    <div className="flex flex-wrap gap-2">
+                                        {payrollResponse.paye && (
+                                            <a
+                                                href={payrollResponse.paye.url}
+                                                download={payrollResponse.paye.label}
+                                                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 transition"
+                                            >
+                                                <FileArchive className="h-4 w-4 shrink-0 text-[#ff0613]" />
+                                                <span className="truncate max-w-[120px]">{payrollResponse.paye.label}</span>
+                                            </a>
+                                        )}
+                                        {payrollResponse.nssf && (
+                                            <a
+                                                href={payrollResponse.nssf.url}
+                                                download={payrollResponse.nssf.label}
+                                                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 transition"
+                                            >
+                                                <FileSpreadsheet className="h-4 w-4 shrink-0 text-blue-500" />
+                                                <span className="truncate max-w-[120px]">{payrollResponse.nssf.label}</span>
+                                            </a>
+                                        )}
+                                        {payrollResponse.sha && (
+                                            <a
+                                                href={payrollResponse.sha.url}
+                                                download={payrollResponse.sha.label}
+                                                className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 hover:bg-slate-50 transition"
+                                            >
+                                                <FileType className="h-4 w-4 shrink-0 text-sky-500" />
+                                                <span className="truncate max-w-[120px]">{payrollResponse.sha.label}</span>
+                                            </a>
+                                        )}
+                                        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-400 cursor-not-allowed">
+                                            <FileSpreadsheet className="h-4 w-4 shrink-0 text-purple-300" />
+                                            HELB (soon)
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 
-                            <div className="mt-5 space-y-3">
+                            <div className="mt-5 flex flex-wrap gap-3">
                                 {[
-                                    { label: 'PAYE CSV + ZIP', status: 'KRA-ready upload pack', color: 'text-[#ff0613]' },
-                                    { label: 'NSSF Workbook', status: 'Contribution schedule', color: 'text-blue-500' },
-                                    { label: 'SHA Schedule', status: 'Health authority format', color: 'text-sky-500' },
-                                    { label: 'HELB Remittance', status: 'Loan deduction schedule', color: 'text-purple-500' },
-                                ].map((item) => (
-                                    <div
-                                        key={item.label}
-                                        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3"
-                                    >
+                                    { icon: FileArchive, label: 'PAYE CSV+ZIP', desc: 'KRA-ready upload', color: 'text-[#ff0613]' },
+                                    { icon: FileSpreadsheet, label: 'NSSF Workbook', desc: 'Contribution schedule', color: 'text-blue-500' },
+                                    { icon: FileType, label: 'SHA Schedule', desc: 'Health authority format', color: 'text-sky-500' },
+                                    { icon: FileSpreadsheet, label: 'HELB Remittance', desc: 'Coming soon', color: 'text-purple-400' },
+                                ].map(item => (
+                                    <div key={item.label} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                                        <item.icon className={`h-4 w-4 shrink-0 ${item.color}`} />
                                         <div>
                                             <div className="text-xs font-bold text-slate-900">{item.label}</div>
-                                            <div className="text-[11px] text-slate-400">{item.status}</div>
+                                            <div className="text-[10px] text-slate-400">{item.desc}</div>
                                         </div>
-                                        <CheckCircle2 className={`h-4 w-4 ${item.color}`} />
                                     </div>
                                 ))}
                             </div>

@@ -209,7 +209,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             }
 
             d.setDashboardNotice({ tone: 'success', message: `Auto-filing job queued successfully for ${client.name}.` });
-            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: (dataResp.jobState || 'waiting') as FilingJobState, progress: 0, message: 'Queueing job...', failedReason: '' } }));
+            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: (dataResp.jobState || 'waiting') as FilingJobState, progress: 0, message: 'Queueing job...', failedReason: '', obligationType: 'paye' } }));
         } catch (e: any) {
             d.setDashboardNotice({ tone: 'error', message: e.message });
         }
@@ -345,7 +345,8 @@ export function useFilingActions(deps: FilingActionsDeps) {
             });
             if (!res.ok) { const data = await res.json(); throw new Error(data.message || `Failed to queue ${type} PRN generation.`); }
             const rData = await res.json();
-            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...', receiptUrl: undefined, prnUrl: undefined } }));
+            const obligationType = taxObligationMap[type] || type.toLowerCase();
+            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...', receiptUrl: undefined, prnUrl: undefined, obligationType } }));
             d.setDashboardNotice({ tone: 'success', message: `${type} PRN generation queued for ${client.name}.` });
         } catch (e: any) {
             d.setDashboardNotice({ tone: 'error', message: e.message });
@@ -370,7 +371,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 if (res.status === 409 && dataResp.jobId) { handleDuplicateJob(client, dataResp); return; }
                 throw new Error(dataResp.message || dataResp.error || 'Failed to file NSSF.');
             }
-            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'Job queued...', failedReason: '' } }));
+            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'Job queued...', failedReason: '', obligationType: 'nssf' } }));
             d.setDashboardNotice({ tone: 'success', message: `NSSF auto-filing queued successfully for ${client.name}.` });
         } catch (e: any) {
             d.setDashboardNotice({ tone: 'error', message: e.message });
@@ -407,13 +408,13 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const dataResp = await res.json().catch(() => ({}));
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
-                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.' } }));
+                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: sel.type, isNil: true } }));
                     d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing Nil job.' });
                 } else {
                     throw new Error(dataResp.message || 'Auto-file request failed');
                 }
             } else if (dataResp.jobId) {
-                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Starting...' } }));
+                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Starting...', obligationType: sel.type, isNil: true } }));
                 d.setDashboardNotice({ tone: 'success', message: 'Nil Auto-file queued successfully.' });
             }
         } catch (err: any) {
@@ -450,11 +451,11 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const dataResp = await res.json().catch(() => ({}));
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
-                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.' } }));
+                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: 'monthly_rental_income' } }));
                     d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing MRI job.' });
                 } else { throw new Error(dataResp.message || 'Auto-file request failed'); }
             } else if (dataResp.jobId) {
-                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'MRI Job queued...' } }));
+                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'MRI Job queued...', obligationType: 'monthly_rental_income' } }));
                 d.setDashboardNotice({ tone: 'success', message: 'MRI filing job started successfully.' });
             }
         } catch (error) {
@@ -496,11 +497,11 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const dataResp = await res.json().catch(() => ({}));
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
-                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.' } }));
+                    d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: 'turnover_tax' } }));
                     d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing TOT job.' });
                 } else { throw new Error(dataResp.message || 'Auto-file request failed'); }
             } else if (dataResp.jobId) {
-                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'TOT Job queued...' } }));
+                d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'TOT Job queued...', obligationType: 'turnover_tax' } }));
                 d.setDashboardNotice({ tone: 'success', message: 'TOT filing job started successfully.' });
             }
         } catch (error) {

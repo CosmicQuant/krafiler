@@ -95,6 +95,7 @@ export type ActiveDashboardJob = {
     progress: number;
     message: string;
     obligationType?: string;
+    isNil?: boolean;
     failedReason?: string;
     receiptUrl?: string;
     prnUrl?: string;

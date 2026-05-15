@@ -13,6 +13,8 @@ import {
 import {
   formatTaxAmount,
   getReceiptUrlForObligation,
+  getFilingStatusLabel,
+  getFilingProgressTone,
   isPendingFilingJob,
   isTerminalFilingJob,
   isSameMoney,
@@ -20,7 +22,7 @@ import {
 
 interface Desk20thViewProps {
   clients: ClientObligation[];
-  activeJobs: Record<string, { state: string; progress: number; message: string; failedReason?: string; receiptUrl?: string; prnUrl?: string; generatedZipUrl?: string; generatedZipLabel?: string; sourcePackageUrl?: string; sourcePackageLabel?: string; vatSummary?: VatPreparationSummary }>;
+  activeJobs: Record<string, { state: string; progress: number; message: string; failedReason?: string; receiptUrl?: string; prnUrl?: string; generatedZipUrl?: string; generatedZipLabel?: string; sourcePackageUrl?: string; sourcePackageLabel?: string; vatSummary?: VatPreparationSummary; obligationType?: string }>;
   monthlyReturnFilter: 'ALL' | 'VAT' | 'TOT' | 'MRI' | 'DST';
   setMonthlyReturnFilter: (filter: 'ALL' | 'VAT' | 'TOT' | 'MRI' | 'DST') => void;
   mriInputVals: Record<string, string>;
@@ -107,19 +109,21 @@ export function Desk20thView({
             <tbody className="divide-y divide-slate-200/50">
               {obligations.map((ob, idx) => {
                 const jobArtifacts = activeJobs[ob.client.id];
-                const latestReceiptUrl = jobArtifacts?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
-                const latestPrnUrl = jobArtifacts?.prnUrl;
+                const typeMap: Record<string, string> = { VAT: 'vat', TOT: 'turnover_tax', MRI: 'monthly_rental_income', PAYE: 'paye', NSSF: 'nssf' };
+                const relevantJob = !jobArtifacts?.obligationType || jobArtifacts.obligationType === typeMap[ob.type] ? jobArtifacts : undefined;
+                const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
+                const latestPrnUrl = relevantJob?.prnUrl;
                 const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
-                const vatGeneratedZipUrl = ob.client.vatZipUrl ?? jobArtifacts?.generatedZipUrl;
-                const vatSourcePackageUrl = ob.client.vatSourcePackageUrl ?? jobArtifacts?.sourcePackageUrl;
+                const vatGeneratedZipUrl = ob.client.vatZipUrl ?? relevantJob?.generatedZipUrl;
+                const vatSourcePackageUrl = ob.client.vatSourcePackageUrl ?? relevantJob?.sourcePackageUrl;
                 const vatSummary: VatPreparationSummary = {
-                  inputVat: ob.client.vatInputVat ?? jobArtifacts?.vatSummary?.inputVat ?? 0,
-                  outputVat: ob.client.vatOutputVat ?? jobArtifacts?.vatSummary?.outputVat ?? 0,
-                  previousCredit: ob.client.vatPreviousCredit ?? jobArtifacts?.vatSummary?.previousCredit ?? 0,
-                  payableVat: ob.client.vatPayableVat ?? jobArtifacts?.vatSummary?.payableVat ?? 0,
-                  netVatBalance: ob.client.vatNetVatBalance ?? jobArtifacts?.vatSummary?.netVatBalance ?? 0,
-                  sales: jobArtifacts?.vatSummary?.sales,
-                  purchases: jobArtifacts?.vatSummary?.purchases,
+                  inputVat: ob.client.vatInputVat ?? relevantJob?.vatSummary?.inputVat ?? 0,
+                  outputVat: ob.client.vatOutputVat ?? relevantJob?.vatSummary?.outputVat ?? 0,
+                  previousCredit: ob.client.vatPreviousCredit ?? relevantJob?.vatSummary?.previousCredit ?? 0,
+                  payableVat: ob.client.vatPayableVat ?? relevantJob?.vatSummary?.payableVat ?? 0,
+                  netVatBalance: ob.client.vatNetVatBalance ?? relevantJob?.vatSummary?.netVatBalance ?? 0,
+                  sales: relevantJob?.vatSummary?.sales,
+                  purchases: relevantJob?.vatSummary?.purchases,
                 };
                 const vatInputValue =
                   vatPreviousCreditVals[ob.client.id] ??
@@ -419,9 +423,9 @@ export function Desk20thView({
                           <>
                             <button
                               onClick={() => void onPrepareVat(ob.client)}
-                              disabled={isPendingFilingJob(activeJobs[ob.client.id] as any)}
+                              disabled={isPendingFilingJob(relevantJob as any)}
                               className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${
-                                isPendingFilingJob(activeJobs[ob.client.id] as any)
+                                isPendingFilingJob(relevantJob as any)
                                   ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
                                   : 'bg-blue-50 border-blue-500/20 text-blue-600 hover:bg-blue-100 hover:text-blue-500'
                               }`}
@@ -431,12 +435,12 @@ export function Desk20thView({
                             <button
                               onClick={() => void onConfirmVatFiling(ob.client)}
                               disabled={
-                                isPendingFilingJob(activeJobs[ob.client.id] as any) ||
+                                isPendingFilingJob(relevantJob as any) ||
                                 !vatHasPreparedArtifacts ||
                                 !vatCreditMatchesPrepared
                               }
                               className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${
-                                isPendingFilingJob(activeJobs[ob.client.id] as any) ||
+                                isPendingFilingJob(relevantJob as any) ||
                                 !vatHasPreparedArtifacts ||
                                 !vatCreditMatchesPrepared
                                   ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
@@ -455,11 +459,11 @@ export function Desk20thView({
                               else if (ob.type === 'NSSF') void onAutoFileNssf(ob.client);
                             }}
                             disabled={
-                              isPendingFilingJob(activeJobs[ob.client.id] as any) ||
+                              isPendingFilingJob(relevantJob as any) ||
                               (ob.type === 'TOT' && !ob.client.totZipUrl)
                             }
                             className={`flex w-full justify-center items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition shadow-sm drop-shadow ${
-                              isPendingFilingJob(activeJobs[ob.client.id] as any) ||
+                              isPendingFilingJob(relevantJob as any) ||
                               (ob.type === 'TOT' && !ob.client.totZipUrl)
                                 ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
                                 : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
@@ -471,13 +475,13 @@ export function Desk20thView({
 
                         <button
                           onClick={() => void onGeneratePrn(ob.client, ob.type)}
-                          disabled={isPendingFilingJob(activeJobs[ob.client.id] as any)}
+                          disabled={isPendingFilingJob(relevantJob as any)}
                           className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Generate Payment Slip directly without filing"
                         >
                           Print PRN
                         </button>
-                        {isTerminalFilingJob(activeJobs[ob.client.id] as any) &&
+                        {isTerminalFilingJob(relevantJob as any) &&
                           (latestReceiptUrl || latestPrnUrl) && (
                             <>
                               {latestReceiptUrl && !unifiedPrnUrl && latestReceiptUrl !== latestPrnUrl && (
@@ -502,6 +506,34 @@ export function Desk20thView({
                               )}
                             </>
                           )}
+
+                        {relevantJob && (
+                          <div className="w-full mt-2 bg-white border border-slate-100 rounded-lg p-2">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
+                                {getFilingStatusLabel(relevantJob as any)}
+                              </span>
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {relevantJob.progress}%
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
+                              <div
+                                className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(relevantJob as any)}`}
+                                style={{ width: `${Math.max(relevantJob.progress, 5)}%` }}
+                              ></div>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                              {relevantJob.state === 'failed' ? (
+                                <span className="text-red-600">
+                                  {relevantJob.failedReason || 'An error occurred during filing.'}
+                                </span>
+                              ) : (
+                                relevantJob.message
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </td>
                   </tr>

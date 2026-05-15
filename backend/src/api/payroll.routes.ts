@@ -5,6 +5,7 @@ import multer from 'multer';
 import archiver from 'archiver';
 import * as ExcelJS from 'exceljs';
 import { generateComplianceFiles } from '../scripts/axon-extraction-engine';
+import { processAndStandardizePayroll } from '../scripts/ai-mapper';
 import { openDb } from '../db/database';
 
 const router = Router();
@@ -73,9 +74,30 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Reque
             inputCsvPath = csvPath;
         }
 
-        const outputPaths = await generateComplianceFiles(inputCsvPath, config, options);
+        // Try to standardize the payroll file via AI mapper before processing
         const clientName = typeof req.body.clientName === 'string' ? req.body.clientName : undefined;
         const clientWorkspaceDir = getClientWorkspaceDir(clientName);
+        await fs.promises.mkdir(clientWorkspaceDir, { recursive: true });
+
+        const dummyClient = {
+            name: clientName || 'Demo Client',
+            pin: '',
+            nssfNo: '',
+            nssfPassword: '',
+            shaNo: '',
+            shaPassword: ''
+        };
+
+        try {
+            const stdResult = await processAndStandardizePayroll(inputCsvPath, dummyClient, clientWorkspaceDir, req.file.originalname || 'payroll.csv');
+            if (stdResult.success) {
+                inputCsvPath = stdResult.mappedFile;
+            }
+        } catch (stdErr: any) {
+            console.warn('[Payroll] AI standardization failed, using raw file:', stdErr.message);
+        }
+
+        const outputPaths = await generateComplianceFiles(inputCsvPath, config, options);
         fs.mkdirSync(clientWorkspaceDir, { recursive: true });
 
         // Copy files directly to workspace

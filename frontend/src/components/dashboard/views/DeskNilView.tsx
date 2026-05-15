@@ -57,9 +57,10 @@ export function DeskNilView({
                   periodTo: getPreviousYearIsoRange().periodTo,
                 };
                 const job = activeJobs[client.id];
-                const isProcessing = job && !isTerminalFilingJob(job);
-                const isCompleted = job?.state === 'completed';
-                const isFailed = job?.state === 'failed';
+                const displayJob = job?.isNil ? job : undefined;
+                const isProcessing = displayJob && !isTerminalFilingJob(displayJob);
+                const isCompleted = displayJob?.state === 'completed';
+                const isFailed = displayJob?.state === 'failed';
 
                 return (
                   <tr key={client.id} className="group transition hover:bg-slate-50">
@@ -148,12 +149,12 @@ export function DeskNilView({
                               : 'bg-[#ff0613] hover:bg-[#d80000] text-white shadow-sm'
                           }`}
                         >
-                          {isProcessing ? `Processing (${job.progress}%)` : isCompleted ? 'File Again' : 'File Nil'}
+                          {isProcessing ? `Processing (${displayJob.progress}%)` : isCompleted ? 'File Again' : 'File Nil'}
                         </button>
 
-                        {isCompleted && job.receiptUrl && (
+                        {isCompleted && displayJob.receiptUrl && (
                           <a
-                            href={job.receiptUrl}
+                            href={displayJob.receiptUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 transition"
@@ -162,9 +163,9 @@ export function DeskNilView({
                           </a>
                         )}
 
-                        {isFailed && job.failedReason && (
+                        {isFailed && displayJob.failedReason && (
                           <span className="text-[11px] text-red-600 max-w-[200px]">
-                            {job.failedReason}
+                            {displayJob.failedReason}
                           </span>
                         )}
                       </div>

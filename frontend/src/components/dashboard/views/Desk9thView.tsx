@@ -365,55 +365,61 @@ export function Desk9thView({
                     )}
                   </div>
 
-                  {activeJobs[client.id] && (
+                  {(() => {
+                    const job = activeJobs[client.id];
+                    const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                    const displayJob = isDesk9Job ? job : undefined;
+                    if (!displayJob) return null;
+                    return (
                     <div className="w-full mt-3 mb-3 bg-white border border-slate-100 rounded-lg p-2">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
-                          {getFilingStatusLabel(activeJobs[client.id])}
+                          {getFilingStatusLabel(displayJob)}
                         </span>
                         <span className="text-[10px] text-slate-500 font-mono">
-                          {activeJobs[client.id].progress}%
+                          {displayJob.progress}%
                         </span>
                       </div>
                       <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
                         <div
-                          className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
-                          style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
+                          className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(displayJob)}`}
+                          style={{ width: `${Math.max(displayJob.progress, 5)}%` }}
                         ></div>
                       </div>
                       <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
-                        {activeJobs[client.id].state === 'failed' ? (
+                        {displayJob.state === 'failed' ? (
                           <span className="text-red-600">
-                            {activeJobs[client.id].failedReason || 'An error occurred during filing.'}
+                            {displayJob.failedReason || 'An error occurred during filing.'}
                           </span>
                         ) : (
-                          activeJobs[client.id].message
+                          displayJob.message
                         )}
                       </div>
-                      {isPendingFilingJob(activeJobs[client.id]) && (
+                      {isPendingFilingJob(displayJob) && (
                         <button
                           onClick={() => void onCancelJob(client)}
                           disabled={
                             Boolean(cancellingClientIds[client.id]) ||
-                            activeJobs[client.id].state === 'cancelling'
+                            displayJob.state === 'cancelling'
                           }
                           className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         >
                           {Boolean(cancellingClientIds[client.id]) ||
-                          activeJobs[client.id].state === 'cancelling' ? (
+                          displayJob.state === 'cancelling' ? (
                             <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
                           ) : (
                             <X className="h-3 w-3 shrink-0" />
                           )}
                           <span>
-                            {activeJobs[client.id].state === 'cancelling'
+                            {displayJob.state === 'cancelling'
                               ? 'Cancelling...'
                               : 'Cancel Job'}
                           </span>
                         </button>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={() => void onGenerateClientZip(client)}
@@ -450,7 +456,11 @@ export function Desk9thView({
                         title="Auto File PAYE"
                       >
                         <Rocket className="h-4 w-4 shrink-0" />
-                        <span className="truncate">{getAutoFileLabel(activeJobs[client.id])}</span>
+                        <span className="truncate">{getAutoFileLabel((() => {
+                          const job = activeJobs[client.id];
+                          const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                          return isDesk9Job ? job : undefined;
+                        })())}</span>
                       </button>
                       <button
                         onClick={() => void onAutoFileNssf(client)}
@@ -727,10 +737,18 @@ export function Desk9thView({
                         <button
                           onClick={() => void onAutoFile(client)}
                           disabled={
-                            !client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])
+                            !client.payeZipUrl || isPendingFilingJob((() => {
+                              const job = activeJobs[client.id];
+                              const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                              return isDesk9Job ? job : undefined;
+                            })())
                           }
                           className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold leading-tight transition ${
-                            !client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])
+                            !client.payeZipUrl || isPendingFilingJob((() => {
+                              const job = activeJobs[client.id];
+                              const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                              return isDesk9Job ? job : undefined;
+                            })())
                               ? 'border-slate-100 bg-slate-100 text-slate-500 cursor-not-allowed'
                               : 'border-blue-500/30 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-slate-950'
                           }`}
@@ -741,7 +759,11 @@ export function Desk9thView({
                         </button>
                         <button
                           onClick={() => void onGeneratePrn(client, 'PAYE')}
-                          disabled={isPendingFilingJob(activeJobs[client.id])}
+                          disabled={isPendingFilingJob((() => {
+                            const job = activeJobs[client.id];
+                            const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                            return isDesk9Job ? job : undefined;
+                          })())}
                           className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold leading-tight text-[#ff0613] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-100 disabled:text-slate-500"
                           title="Print PAYE PRN"
                         >
@@ -758,58 +780,63 @@ export function Desk9thView({
                           <span className="truncate">Auto File NSSF</span>
                         </button>
                       </div>
-                      {activeJobs[client.id] && (
+                      {(() => {
+                        const job = activeJobs[client.id];
+                        const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                        const displayJob = isDesk9Job ? job : undefined;
+                        if (!displayJob) return null;
+                        return (
                         <div className="w-full bg-white border border-slate-100 rounded-lg p-2 text-left">
                           <div className="flex items-center justify-between gap-2 mb-1">
                             <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
-                              {getFilingStatusLabel(activeJobs[client.id])}
+                              {getFilingStatusLabel(displayJob)}
                             </span>
                             <span className="text-[10px] text-slate-500 font-mono">
-                              {activeJobs[client.id].progress}%
+                              {displayJob.progress}%
                             </span>
                           </div>
                           <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
                             <div
-                              className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(activeJobs[client.id])}`}
-                              style={{ width: `${Math.max(activeJobs[client.id].progress, 5)}%` }}
+                              className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(displayJob)}`}
+                              style={{ width: `${Math.max(displayJob.progress, 5)}%` }}
                             ></div>
                           </div>
                           <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
-                            {activeJobs[client.id].state === 'failed' ? (
+                            {displayJob.state === 'failed' ? (
                               <span className="text-red-600">
-                                {activeJobs[client.id].failedReason || 'An error occurred during filing.'}
+                                {displayJob.failedReason || 'An error occurred during filing.'}
                               </span>
                             ) : (
-                              activeJobs[client.id].message
+                              displayJob.message
                             )}
                           </div>
-                          {isPendingFilingJob(activeJobs[client.id]) && (
+                          {isPendingFilingJob(displayJob) && (
                             <button
                               onClick={() => void onCancelJob(client)}
                               disabled={
                                 Boolean(cancellingClientIds[client.id]) ||
-                                activeJobs[client.id].state === 'cancelling'
+                                displayJob.state === 'cancelling'
                               }
                               className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                             >
                               {Boolean(cancellingClientIds[client.id]) ||
-                              activeJobs[client.id].state === 'cancelling' ? (
+                              displayJob.state === 'cancelling' ? (
                                 <RefreshCw className="h-3 w-3 animate-spin" />
                               ) : (
                                 <X className="h-3 w-3" />
                               )}
-                              {activeJobs[client.id].state === 'cancelling'
+                              {displayJob.state === 'cancelling'
                                 ? 'Cancelling...'
                                 : 'Cancel Job'}
                             </button>
                           )}
-                          {isTerminalFilingJob(activeJobs[client.id]) &&
-                            (activeJobs[client.id].receiptUrl || activeJobs[client.id].prnUrl) && (
+                          {isTerminalFilingJob(displayJob) &&
+                            (displayJob.receiptUrl || displayJob.prnUrl) && (
                               <div className="mt-2 flex flex-col gap-1.5">
-                                {activeJobs[client.id].receiptUrl &&
-                                  activeJobs[client.id].receiptUrl !== activeJobs[client.id].prnUrl && (
+                                {displayJob.receiptUrl &&
+                                  displayJob.receiptUrl !== displayJob.prnUrl && (
                                     <a
-                                      href={activeJobs[client.id].receiptUrl}
+                                      href={displayJob.receiptUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-500 transition hover:bg-blue-600 hover:text-slate-950"
@@ -817,9 +844,9 @@ export function Desk9thView({
                                       <Download className="h-3 w-3" /> Download Receipt
                                     </a>
                                   )}
-                                {activeJobs[client.id].prnUrl && (
+                                {displayJob.prnUrl && (
                                   <a
-                                    href={activeJobs[client.id].prnUrl}
+                                    href={displayJob.prnUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950"
@@ -830,7 +857,8 @@ export function Desk9thView({
                               </div>
                             )}
                         </div>
-                      )}
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}

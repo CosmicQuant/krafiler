@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle, FileSpreadsheet, Upload } from 'lucide-react';
+import { CheckCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 type Category = 'accountants' | 'individuals';
@@ -12,21 +12,47 @@ const pricingData = {
             description: 'For independent accountants starting their practice.',
             monthlyPrice: 5000,
             annualPrice: 4000,
-            features: ['Up to 10 Client PINs', 'Bulk Nil Returns', 'Client Dashboard', 'Email Support', 'Pack Generation Only']
+            features: [
+                'Up to 10 Client PINs',
+                'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
+                'Pack Generation & automatic filing',
+                'Client Dashboard',
+                'Email Support'
+            ]
         },
         {
             name: 'Growth',
             description: 'For mid-sized firms managing multiple clients.',
             monthlyPrice: 10000,
             annualPrice: 8000,
-            features: ['Up to 50 Client PINs', 'Advanced Bulk Processing', 'Role-based Access', 'Priority Support', 'Pack Generation Only', 'VAT Filing Support']
+            features: [
+                'Up to 50 Client PINs',
+                'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
+                'Pack Generation & automatic filing',
+                'Client Dashboard',
+                'Priority Support',
+                'Advanced Bulk Processing',
+                'Role-based Access',
+                'E-tims VAT Reconciliation'
+            ]
         },
         {
-            name: 'Scale',
+            name: 'Premium',
             description: 'Designed for large auditing and accounting firms.',
-            monthlyPrice: 16000,
-            annualPrice: 12800,
-            features: ['Unlimited Client PINs', 'White-labeled Reports', 'API Access', 'Dedicated Success Manager', 'Automated Filing Enabled', 'VAT + All Returns']
+            monthlyPrice: 19000,
+            annualPrice: 15200,
+            features: [
+                'Unlimited Client PINs',
+                'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
+                'Pack Generation & automatic filing',
+                'Client Dashboard',
+                'Priority Support',
+                'Advanced Bulk Processing',
+                'Role-based Access',
+                'E-tims VAT Reconciliation',
+                'Custom integration',
+                'Dedicated Success Manager'
+            ]
         }
     ],
     individuals: [

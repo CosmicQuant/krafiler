@@ -291,7 +291,7 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
 // Update client
 router.put('/:id', async (req, res) => {
     try {
-        const { name, pin, password, iTaxPassword, obligations, sector } = req.body;
+        const { name, pin, password, iTaxPassword, obligations, sector, email, phone } = req.body;
         const clientId = req.params.id;
         const effectivePassword = String(iTaxPassword || password || '').trim();
 
@@ -299,36 +299,60 @@ router.put('/:id', async (req, res) => {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
-        const obsList = (obligations || '').split(',').map((s: string) => normalizeObligationToken(s));
-        const paye = obsList.includes('paye') ? 'due' : 'na';
-        const nssf = obsList.includes('nssf') ? 'due' : 'na';
-        const sha = obsList.includes('sha') ? 'due' : 'na';
-        const vat = obsList.includes('vat') ? 'due' : 'na';
-        const tot = obsList.includes('tot') ? 'due' : 'na';
-        const mri = obsList.includes('mri') ? 'due' : 'na';
-        const eLevy = obsList.includes('elevy') ? 'due' : 'na';
-        const dst = obsList.includes('dst') ? 'due' : 'na';
-
         const db = await openDb();
+        const existingClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        if (!existingClient) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        const obsList = (obligations || '').split(',').map((s: string) => normalizeObligationToken(s));
+        const paye = obsList.includes('paye') ? (existingClient.paye === 'na' ? 'due' : existingClient.paye) : 'na';
+        const nssf = obsList.includes('nssf') ? (existingClient.nssf === 'na' ? 'due' : existingClient.nssf) : 'na';
+        const sha = obsList.includes('sha') ? (existingClient.sha === 'na' ? 'due' : existingClient.sha) : 'na';
+        const vat = obsList.includes('vat') ? (existingClient.vat === 'na' ? 'due' : existingClient.vat) : 'na';
+        const tot = obsList.includes('tot') ? (existingClient.tot === 'na' ? 'due' : existingClient.tot) : 'na';
+        const mri = obsList.includes('mri') ? (existingClient.mri === 'na' ? 'due' : existingClient.mri) : 'na';
+        const eLevy = obsList.includes('elevy') ? (existingClient.eLevy === 'na' ? 'due' : existingClient.eLevy) : 'na';
+        const dst = obsList.includes('dst') ? (existingClient.dst === 'na' ? 'due' : existingClient.dst) : 'na';
+
         await db.run(
             `UPDATE clients 
-             SET name = ?, pin = ?, password = ?, obligations = ?, sector = ?,
-                 paye = CASE WHEN paye = 'na' THEN ? ELSE paye END,
-                 nssf = CASE WHEN nssf = 'na' THEN ? ELSE nssf END,
-                 sha = CASE WHEN sha = 'na' THEN ? ELSE sha END,
-                 vat = CASE WHEN vat = 'na' THEN ? ELSE vat END,
-                 tot = CASE WHEN tot = 'na' THEN ? ELSE tot END,
-                 mri = CASE WHEN mri = 'na' THEN ? ELSE mri END,
-                 eLevy = CASE WHEN eLevy = 'na' THEN ? ELSE eLevy END,
-                 dst = CASE WHEN dst = 'na' THEN ? ELSE dst END
+             SET name = ?, pin = ?, password = ?, obligations = ?, sector = ?, email = ?, phone = ?,
+                 paye = ?, nssf = ?, sha = ?, vat = ?, tot = ?, mri = ?, eLevy = ?, dst = ?
              WHERE id = ?`,
-            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
+            [name, pin, effectivePassword, obligations || '', sector || '', email || '', phone || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
         );
         
         const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
         res.json(updatedClient);
     } catch (err) {
         console.error('Error updating client:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Update single status field
+router.put('/:id/status', async (req, res) => {
+    try {
+        const { field, status } = req.body;
+        const clientId = req.params.id;
+        
+        const validFields = ['paye', 'nssf', 'sha', 'vat', 'tot', 'mri', 'eLevy', 'dst'];
+        if (!validFields.includes(field)) {
+            return res.status(400).json({ message: 'Invalid status field' });
+        }
+        
+        if (!status || typeof status !== 'string') {
+            return res.status(400).json({ message: 'Status is required' });
+        }
+
+        const db = await openDb();
+        await db.run(`UPDATE clients SET ${field} = ? WHERE id = ?`, [status, clientId]);
+        
+        const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        res.json(updatedClient);
+    } catch (err) {
+        console.error('Error updating client status:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

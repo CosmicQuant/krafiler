@@ -6,10 +6,28 @@ interface CompanyDetailsProps {
     client: ClientObligation; // We'll pass the client from PracticeDashboard
     onBack: () => void;
     onSave: (updatedClient: ClientObligation) => void | Promise<void>;
+    onFileAction?: (client: ClientObligation) => void;
 }
 
-export default function CompanyDetails({ client, onBack, onSave }: CompanyDetailsProps) {
+const ALL_OBLIGATIONS = [
+    { key: 'paye', label: 'PAYE' },
+    { key: 'nssf', label: 'NSSF' },
+    { key: 'sha', label: 'SHA' },
+    { key: 'vat', label: 'VAT' },
+    { key: 'tot', label: 'TOT' },
+    { key: 'mri', label: 'MRI' },
+    { key: 'eLevy', label: 'E-Levy' },
+    { key: 'dst', label: 'DST' },
+];
+
+export default function CompanyDetails({ client, onBack, onSave, onFileAction }: CompanyDetailsProps) {
     const [formData, setFormData] = useState({ ...client });
+    const [selectedObligations, setSelectedObligations] = useState<string[]>(() => {
+        if (client.obligations) {
+            return client.obligations.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+        }
+        return [];
+    });
     const [vatInput, setVatInput] = useState('');
     const [vatOutput, setVatOutput] = useState('');
     const [totSales, setTotSales] = useState('');
@@ -57,12 +75,24 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
         setSaveError(null);
 
         try {
-            await onSave(formData);
+            await onSave({
+                ...formData,
+                obligations: selectedObligations.join(','),
+            });
         } catch (error) {
             setSaveError(error instanceof Error ? error.message : 'Failed to save client details.');
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const toggleObligation = (key: string) => {
+        setSelectedObligations(prev => {
+            if (prev.includes(key)) {
+                return prev.filter(k => k !== key);
+            }
+            return [...prev, key];
+        });
     };
 
     return (
@@ -112,6 +142,26 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                                 />
                             </div>
                             <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-500">Email Address</label>
+                                <input
+                                    type="email"
+                                    value={formData.email || ''}
+                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                    placeholder="client@example.com"
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-[#ff0613] focus:bg-white transition"
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-1.5 block text-xs font-bold text-slate-500">Phone Number</label>
+                                <input
+                                    type="tel"
+                                    value={formData.phone || ''}
+                                    onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                                    placeholder="07XXXXXXXX"
+                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-[#ff0613] focus:bg-white transition"
+                                />
+                            </div>
+                            <div>
                                 <label className="mb-1.5 block text-xs font-bold text-slate-500">iTax Password</label>
                                 <input
                                     type="password"
@@ -133,8 +183,33 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                         </div>
                     </div>
 
+                    {/* Obligations */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <h2 className="text-xl font-bold text-slate-900 mb-4">Obligations</h2>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {ALL_OBLIGATIONS.map(obs => (
+                                <label
+                                    key={obs.key}
+                                    className={`flex items-center gap-2 rounded-xl border p-3 cursor-pointer transition ${
+                                        selectedObligations.includes(obs.key)
+                                            ? 'border-[#ff0613]/30 bg-red-50'
+                                            : 'border-slate-200 bg-slate-50'
+                                    }`}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedObligations.includes(obs.key)}
+                                        onChange={() => toggleObligation(obs.key)}
+                                        className="rounded border-slate-300 text-[#ff0613] focus:ring-[#ff0613] h-4 w-4"
+                                    />
+                                    <span className="text-sm font-semibold text-slate-700">{obs.label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
                     {/* Conditional Tax Sections based on Obligations */}
-                    {client.vat !== 'na' && (
+                    {selectedObligations.includes('vat') && (
                         <div className="rounded-2xl border border-blue-500/20 bg-white p-6">
                             <div className="flex items-center gap-3 mb-6">
                                 <Percent className="h-6 w-6 text-blue-600" />
@@ -171,7 +246,7 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                         </div>
                     )}
 
-                    {client.tot !== 'na' && (
+                    {selectedObligations.includes('tot') && (
                         <div className="rounded-2xl border border-amber-500/20 bg-white p-6">
                             <div className="flex items-center gap-3 mb-6">
                                 <Calculator className="h-6 w-6 text-[#ff0613]" />
@@ -199,7 +274,7 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
 
                 {/* Right Sidebar: Payroll & Files */}
                 <div className="space-y-6">
-                    {(client.paye !== 'na' || client.nssf !== 'na' || client.sha !== 'na') && (
+                    {(selectedObligations.includes('paye') || selectedObligations.includes('nssf') || selectedObligations.includes('sha')) && (
                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
                             <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500">Payroll Data</h3>
                             <div className="space-y-3">
@@ -237,7 +312,7 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                                             <>
                                                 <Cloud className="mb-2 h-6 w-6 text-slate-500" />
                                                 <span className="text-xs font-medium text-slate-600">Upload Master CSV</span>
-                                                <span className="mt-1 text-[10px] text-slate-500">Auto-generates ZIPs & records</span>
+                                                <span className="mt-1 text-[10px] text-slate-500">Auto-generates ZIPs &amp; records</span>
                                             </>
                                         )}
                                         <input 
@@ -274,16 +349,18 @@ export default function CompanyDetails({ client, onBack, onSave }: CompanyDetail
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
                         <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500">Active Obligations</h3>
                         <div className="flex flex-wrap gap-2">
-                            {['vat', 'tot', 'mri', 'dst', 'paye', 'nssf', 'sha', 'eLevy'].map(obs => {
-                                if (client[obs as keyof ClientObligation] !== 'na' && client[obs as keyof ClientObligation]) {
-                                    return (
-                                        <span key={obs} className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold uppercase text-slate-600 border border-slate-200">
-                                            {obs}
-                                        </span>
-                                    );
-                                }
-                                return null;
+                            {ALL_OBLIGATIONS.map(obs => {
+                                const isActive = selectedObligations.includes(obs.key);
+                                if (!isActive) return null;
+                                return (
+                                    <span key={obs.key} className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold uppercase text-slate-600 border border-slate-200">
+                                        {obs.label}
+                                    </span>
+                                );
                             })}
+                            {selectedObligations.length === 0 && (
+                                <span className="text-xs text-slate-500">No obligations selected</span>
+                            )}
                         </div>
                     </div>
                 </div>

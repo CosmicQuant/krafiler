@@ -18,6 +18,7 @@ import {
   isPendingFilingJob,
   isTerminalFilingJob,
   isSameMoney,
+  formatGeneratedDate,
 } from '../../../utils/dashboardUtils';
 
 interface Desk20thViewProps {
@@ -38,8 +39,9 @@ interface Desk20thViewProps {
   onFileTot: (client: ClientObligation) => Promise<void>;
   onAutoFile: (client: ClientObligation) => Promise<void>;
   onAutoFileNssf: (client: ClientObligation) => void;
-  onGenerateTotZip: (client: ClientObligation) => Promise<void>;
+    onGenerateTotZip: (client: ClientObligation) => Promise<void>;
   fixedType?: 'vat' | 'tot' | 'mri' | 'dst';
+  onSelectClient?: (client: ClientObligation) => void;
 }
 
 export function Desk20thView({
@@ -62,6 +64,7 @@ export function Desk20thView({
   onAutoFileNssf,
   onGenerateTotZip,
   fixedType,
+  onSelectClient,
 }: Desk20thViewProps) {
 
   let obligations: { client: ClientObligation; type: string; status: TaxStatus }[] = [];
@@ -166,9 +169,12 @@ export function Desk20thView({
                 return (
                   <tr key={`${ob.client.id}-${ob.type}-${idx}`} className="transition hover:bg-slate-100/50 group">
                     <td className="px-4 py-4">
-                      <div className="font-semibold text-slate-900">{ob.client.name}</div>
+                      <div 
+                        className="font-semibold text-slate-900 cursor-pointer hover:text-[#ff0613]"
+                        onClick={() => onSelectClient?.(ob.client)}
+                      >{ob.client.name}</div>
                       <div className="mt-1 flex items-center gap-2">
-                        <span className="text-xs text-slate-500">PIN: {ob.client.pin}</span>
+                        <span className="text-xs text-slate-500 cursor-pointer hover:text-[#ff0613]" onClick={() => onSelectClient?.(ob.client)}>PIN: {ob.client.pin}</span>
                         <span className="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
                           {ob.type}
                         </span>
@@ -191,12 +197,12 @@ export function Desk20thView({
                                     <Download className="h-3 w-3" /> Generated VAT ZIP (KRA Upload)
                                   </a>
                                   <span className="text-[10px] text-slate-500 text-center">
-                                    Generated: {new Date(ob.client.vatPreparedAt || Date.now()).toLocaleString()}
-                                  </span>
-                                </>
-                              ) : (
-                                <span className="text-[11px] text-slate-500">No VAT ZIP generated yet.</span>
-                              )}
+                                  Generated: {formatGeneratedDate(ob.client.vatPreparedAt)}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-slate-500">No VAT ZIP generated yet.</span>
+                            )}
 
                               {vatSourcePackageUrl && (
                                 <a
@@ -405,7 +411,7 @@ export function Desk20thView({
                                   <Download className="h-3 w-3" /> Download Generated ZIP
                                 </a>
                                 <span className="text-[10px] text-center text-slate-500">
-                                  Generated: {new Date(ob.client.lastGeneratedAt || Date.now()).toLocaleString()}
+                                  Generated: {formatGeneratedDate(ob.client.lastGeneratedAt)}
                                 </span>
                               </div>
                             )}

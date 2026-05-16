@@ -490,6 +490,7 @@ export default function PracticeDashboard() {
                 onUpdateStatus={filingActions.updateSingleStatus}
                 onOpenNewClientModal={openNewClientModal}
                 onGlobalMasterCsvUpload={filingActions.globalMasterCsvUpload}
+                onSelectClient={setSelectedClient}
               />
             )}
 

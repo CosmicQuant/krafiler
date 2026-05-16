@@ -31,6 +31,8 @@ export type ClientObligation = {
     iTaxPassword?: string;
     sector?: string;
     obligations?: string;
+    email?: string;
+    phone?: string;
     id: string;
     name: string;
     pin: string;

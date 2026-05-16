@@ -16,6 +16,7 @@ import {
   getFilingProgressTone,
   isPendingFilingJob,
   isTerminalFilingJob,
+  formatGeneratedDate,
 } from '../../../utils/dashboardUtils';
 import { ExcelIcon, ZipIcon } from '../Icons';
 import { StatusBadge, InteractiveStatusBadge } from '../StatusBadges';
@@ -39,6 +40,7 @@ interface Desk9thViewProps {
   onUpdateStatus: (clientId: string, field: 'paye' | 'nssf' | 'sha', newStatus: TaxStatus) => void;
   onOpenNewClientModal: (client?: ClientObligation) => void;
   onGlobalMasterCsvUpload: (file: File) => Promise<void>;
+  onSelectClient?: (client: ClientObligation) => void;
 }
 
 export function Desk9thView({
@@ -60,6 +62,7 @@ export function Desk9thView({
   onUpdateStatus,
   onOpenNewClientModal,
   onGlobalMasterCsvUpload,
+  onSelectClient,
 }: Desk9thViewProps) {
   const payrollClients = clients.filter(
     (c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na',
@@ -106,8 +109,8 @@ export function Desk9thView({
                 <div className="flex flex-col border-b border-slate-200/50 pb-3">
                   <h4
                     className="text-sm font-bold text-emerald-600 hover:text-emerald-500 cursor-pointer"
-                    onClick={() => onOpenNewClientModal(client)}
-                    title="Edit client details"
+                    onClick={() => onSelectClient ? onSelectClient(client) : onOpenNewClientModal(client)}
+                    title="View client details"
                   >
                     {client.name}
                   </h4>
@@ -443,7 +446,8 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4">
                       <div
                         className="font-semibold break-words text-emerald-600 hover:text-emerald-500 cursor-pointer"
-                        onClick={() => onOpenNewClientModal(client)}
+                        onClick={() => onSelectClient ? onSelectClient(client) : onOpenNewClientModal(client)}
+                        title="View client details"
                         title="Edit client details"
                       >
                         {client.name}
@@ -637,9 +641,9 @@ export function Desk9thView({
                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right align-top">
                       <div className="mb-2 ml-auto flex w-full max-w-[150px] flex-col items-stretch gap-1.5">
                         <div className="flex flex-col items-end gap-1 w-full">
-                          {client.payeZipUrl && (
+                          {client.payeZipUrl && formatGeneratedDate(client.lastGeneratedAt) && (
                             <span className="text-[10px] text-right text-slate-500">
-                              Generated: {new Date(client.lastGeneratedAt || Date.now()).toLocaleString()}
+                              Generated: {formatGeneratedDate(client.lastGeneratedAt)}
                             </span>
                           )}
                           <button

@@ -11,6 +11,7 @@ import { Desk9thView } from './dashboard/views/Desk9thView';
 import { Desk20thView } from './dashboard/views/Desk20thView';
 import { DeskNilView } from './dashboard/views/DeskNilView';
 import { ClientsView } from './dashboard/views/ClientsView';
+import { PayrollWebView } from './dashboard/views/PayrollWebView';
 import { apiFetch } from '../services/api';
 
 import {
@@ -55,6 +56,15 @@ export default function PracticeDashboard() {
 
   // Local state
   const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
+  const [showPayrollCompanyDetails, setShowPayrollCompanyDetails] = useState(false);
+  const isPayrollClient = selectedClient
+    ? selectedClient.paye !== 'na' || selectedClient.nssf !== 'na' || selectedClient.sha !== 'na'
+    : false;
+
+  useEffect(() => {
+    setShowPayrollCompanyDetails(false);
+  }, [selectedClient]);
+
   const [isGeneratingZips, setIsGeneratingZips] = useState(false);
   const [isGlobalUploading, setIsGlobalUploading] = useState(false);
   const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
@@ -448,11 +458,27 @@ export default function PracticeDashboard() {
               </div>
             )}
 
-            {selectedClient && (
+            {selectedClient && !showPayrollCompanyDetails && isPayrollClient && (
+              <div className="mt-10">
+                <PayrollWebView
+                  client={selectedClient}
+                  onBack={() => { setSelectedClient(null); setShowPayrollCompanyDetails(false); }}
+                  onEditClient={() => setShowPayrollCompanyDetails(true)}
+                />
+              </div>
+            )}
+
+            {selectedClient && (showPayrollCompanyDetails || !isPayrollClient) && (
               <div className="mt-10">
                 <CompanyDetails
                   client={selectedClient}
-                  onBack={() => setSelectedClient(null)}
+                  onBack={() => {
+                    if (isPayrollClient) {
+                      setShowPayrollCompanyDetails(false);
+                    } else {
+                      setSelectedClient(null);
+                    }
+                  }}
                   onSave={handleSaveClientDetails}
                 />
               </div>
@@ -462,8 +488,6 @@ export default function PracticeDashboard() {
               <OverviewView
                 clients={clients}
                 activeJobs={activeJobs}
-                payrollPendingCount={payrollPendingCount}
-                taxPendingCount={taxPendingCount}
                 onOpenNewClientModal={() => openNewClientModal()}
                 onNavigateToView={(v) => setView(v)}
                 onBulkCsvUpload={filingActions.bulkCsvUpload(() => queryClient.invalidateQueries({ queryKey: ['clients'] }))}

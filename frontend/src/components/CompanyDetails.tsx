@@ -3,10 +3,9 @@ import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileA
 import { ClientObligation } from '../types';
 
 interface CompanyDetailsProps {
-    client: ClientObligation; // We'll pass the client from PracticeDashboard
+    client: ClientObligation;
     onBack: () => void;
     onSave: (updatedClient: ClientObligation) => void | Promise<void>;
-    onFileAction?: (client: ClientObligation) => void;
 }
 
 const ALL_OBLIGATIONS = [
@@ -20,7 +19,7 @@ const ALL_OBLIGATIONS = [
     { key: 'dst', label: 'DST' },
 ];
 
-export default function CompanyDetails({ client, onBack, onSave, onFileAction }: CompanyDetailsProps) {
+export default function CompanyDetails({ client, onBack, onSave,     }: CompanyDetailsProps) {
     const [formData, setFormData] = useState({ ...client });
     const [selectedObligations, setSelectedObligations] = useState<string[]>(() => {
         if (client.obligations) {

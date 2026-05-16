@@ -1,6 +1,5 @@
 import {
   RefreshCw,
-  UploadCloud,
   FileArchive,
   Rocket,
   PlayCircle,
@@ -50,7 +49,6 @@ export function Desk9thView({
   uploadingClientIds,
   cancellingClientIds,
   isGeneratingZips,
-  isGlobalUploading,
   onGenerateClientZip,
   onAutoFile,
   onAutoFileNssf,
@@ -61,7 +59,6 @@ export function Desk9thView({
   onRemoveMasterCsv,
   onUpdateStatus,
   onOpenNewClientModal,
-  onGlobalMasterCsvUpload,
   onSelectClient,
 }: Desk9thViewProps) {
   const payrollClients = clients.filter(
@@ -448,7 +445,6 @@ export function Desk9thView({
                         className="font-semibold break-words text-emerald-600 hover:text-emerald-500 cursor-pointer"
                         onClick={() => onSelectClient ? onSelectClient(client) : onOpenNewClientModal(client)}
                         title="View client details"
-                        title="Edit client details"
                       >
                         {client.name}
                       </div>

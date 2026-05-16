@@ -8,7 +8,6 @@
 import { useMemo, useState } from 'react';
 import type { DashboardView } from '../../../types';
 import {
-  CalendarClock,
   CheckCircle2,
   Activity,
   Plus,
@@ -16,7 +15,6 @@ import {
   Upload,
   Download,
   Building2,
-  ArrowRight,
   TrendingUp,
   AlertTriangle,
   FileCheck2,
@@ -37,8 +35,6 @@ import { useDeleteClient } from '../../../hooks/useClients';
 interface OverviewViewProps {
   clients: any[];
   activeJobs: Record<string, any>;
-  payrollPendingCount: number;
-  taxPendingCount: number;
   onOpenNewClientModal: () => void;
   onNavigateToView: (view: DashboardView) => void;
   onBulkCsvUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
@@ -47,8 +43,6 @@ interface OverviewViewProps {
 export function OverviewView({
   clients,
   activeJobs,
-  payrollPendingCount,
-  taxPendingCount,
   onOpenNewClientModal,
   onNavigateToView,
   onBulkCsvUpload,

@@ -4,12 +4,14 @@ import { openDb } from '../db/database';
 import path from 'path';
 import fs from 'fs/promises';
 import { processAndStandardizePayroll } from '../scripts/ai-mapper';
+import { calculatePayrollFields } from '../utils/payroll-calculations';
 
 const router = Router();
 const upload = multer({ dest: path.resolve(__dirname, '..', '..', 'tmp') });
 
 import csv from 'csv-parser';
 import fsStandard from 'fs';
+import * as fastCsv from 'fast-csv';
 
 function normalizeObligationToken(value: string): string {
     const normalized = value.trim().toLowerCase();
@@ -385,6 +387,263 @@ router.post('/:id/payroll-source', async (req, res) => {
         
         res.json({ message: 'Updated successfully' });
     } catch (err) {
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Get payroll data (standardized CSV)
+router.get('/:id/payroll-data', async (req, res) => {
+    try {
+        const clientId = req.params.id;
+        const db = await openDb();
+        const client = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        if (!client) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        if (!client.masterFileUrl) {
+            console.log(`[PayrollData] Client ${clientId} has no masterFileUrl`);
+            return res.json({ hasData: false, clientId: Number(clientId), clientName: client.name, employees: [] });
+        }
+
+        const decUrl = decodeURIComponent(client.masterFileUrl);
+        const relPath = decUrl.replace(/^\/clients\//, '');
+        const csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+
+        console.log(`[PayrollData] Client ${clientId} masterFileUrl=${client.masterFileUrl}`);
+        console.log(`[PayrollData] Resolved CSV path: ${csvPath}`);
+
+        const fileExists = await fs.stat(csvPath).then(() => true).catch(() => false);
+        if (!fileExists) {
+            console.log(`[PayrollData] File NOT FOUND at ${csvPath}`);
+            return res.json({ hasData: false, clientId: Number(clientId), clientName: client.name, employees: [] });
+        }
+
+        const rawRows: string[][] = [];
+        await new Promise<void>((resolve, reject) => {
+            fsStandard.createReadStream(csvPath)
+                .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
+                .on('data', (row: string[]) => rawRows.push(row))
+                .on('error', reject)
+                .on('end', resolve);
+        });
+
+        console.log(`[PayrollData] Parsed ${rawRows.length} rows from CSV`);
+
+        const preamble: Record<string, string> = {};
+        let dataStartIndex = 0;
+        for (let i = 0; i < rawRows.length; i++) {
+            const row = rawRows[i];
+            if (row.length >= 2 && row[0].endsWith(':')) {
+                preamble[row[0].replace(':', '').trim()] = row[1] || '';
+            } else if (row.length === 0 || (row.length === 1 && !row[0])) {
+                continue;
+            } else if (row.some(c => c.toLowerCase().includes('payroll number'))) {
+                dataStartIndex = i + 1;
+                break;
+            }
+        }
+
+        console.log(`[PayrollData] dataStartIndex=${dataStartIndex}, preamble keys=${Object.keys(preamble).join(', ')}`);
+
+        const headers = rawRows[dataStartIndex - 1] || [];
+        const employees = rawRows.slice(dataStartIndex)
+            .filter(row => row.some(c => c.trim()))
+            .map(row => {
+                const record: Record<string, string | number> = {};
+                headers.forEach((h, idx) => {
+                    const val = row[idx] || '';
+                    const num = parseFloat(val);
+                    record[h] = isNaN(num) || val.trim() === '' ? val : num;
+                });
+                return record;
+            });
+
+        console.log(`[PayrollData] Returning ${employees.length} employees with ${headers.length} headers`);
+
+        res.json({
+            hasData: true,
+            clientId: Number(clientId),
+            clientName: client.name,
+            preamble: {
+                companyName: preamble['COMPANY NAME'] || preamble['ï»¿COMPANY NAME'] || '',
+                companyPin: preamble['COMPANY KRA PIN'] || '',
+                companyNssf: preamble['COMPANY NSSF NO'] || '',
+                companyNssfPassword: preamble['COMPANY NSSF PASSWORD'] || '',
+                companyShaLogin: preamble['COMPANY SHA LOGIN'] || '',
+                companyShaPassword: preamble['COMPANY SHA PASSWORD'] || '',
+            },
+            headers,
+            employees,
+        });
+    } catch (err) {
+        console.error('[PayrollData] Error fetching payroll data:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Update payroll data (save edited standardized CSV)
+router.put('/:id/payroll-data', async (req, res) => {
+    try {
+        const clientId = req.params.id;
+        const { employees } = req.body;
+        const db = await openDb();
+        const client = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        if (!client) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        const decUrl = decodeURIComponent(client.masterFileUrl);
+        const relPath = decUrl.replace(/^\/clients\//, '');
+        const csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+
+        const rawRows: string[][] = [];
+        await new Promise<void>((resolve, reject) => {
+            fsStandard.createReadStream(csvPath)
+                .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
+                .on('data', (row: string[]) => rawRows.push(row))
+                .on('error', reject)
+                .on('end', resolve);
+        });
+
+        const headerRowIndex = rawRows.findIndex(row =>
+            row.some(c => c.toLowerCase().includes('payroll number'))
+        );
+
+        const headers = rawRows[headerRowIndex] || [];
+
+        const standardHeaders = [
+            "Payroll Number", "PIN of Employee", "ID Number", "Identity Type", "Name of Employee",
+            "SHA No", "NSSF No", "Residential Status", "Type of Employee", "Persons with Disability(PWD)",
+            "Exemption Certificate", "Total Cash Pay (A)", "Value of Car Benefit (B)", "Value of Meals (C)",
+            "Non Cash Benefits (D)", "Type of Housing", "Housing Benefit (F)", "Other Benefits (G)",
+            "Total Gross Pay (Ksh) (H)", "Social Health Insurance Fund (I)", "NSSF Contribution (J)",
+            "Other Pension Contribution (K)", "Post Retirement Medical Fund (L)", "Mortgage Interest (M)",
+            "Affordable Housing Levy (N)", "Taxable Pay(Ksh) (O)", "Monthly Personal Relief (Ksh) (P)",
+            "Amount of Insurance Relief (Q)", "PAYE Tax (Ksh) (R)", "Self Assessed PAYE Tax (Ksh) (S)"
+        ];
+
+        const preambleRows = rawRows.slice(0, headerRowIndex)
+            .filter(row => row.length > 0 && row[0]);
+        if (preambleRows.length === 0) {
+            preambleRows.push(
+                ['COMPANY NAME:', client.name || ''],
+                ['COMPANY KRA PIN:', client.pin || ''],
+                ['COMPANY NSSF NO:', ''],
+                ['COMPANY NSSF PASSWORD:', ''],
+                ['COMPANY SHA LOGIN:', ''],
+                ['COMPANY SHA PASSWORD:', ''],
+            );
+        }
+
+        const getVal = (emp: any, idx: number): string => {
+            const header = standardHeaders[idx];
+            const val = emp[header] !== undefined ? emp[header] : '';
+            return String(val);
+        };
+
+        const headerMap: Record<string, number> = {};
+        standardHeaders.forEach((h, i) => { headerMap[h] = i; });
+
+        const csvLines: string[] = [];
+        preambleRows.forEach(row => csvLines.push(row.join(',')));
+        csvLines.push('');
+        csvLines.push(standardHeaders.join(','));
+
+        let totalPaye = 0;
+        let totalNssf = 0;
+        let totalSha = 0;
+        let totalNita = 0;
+        let totalHousingLevy = 0;
+
+        employees.forEach((emp: any, index: number) => {
+            const totalCashPay = parseFloat(emp[standardHeaders[11]]) || 0;
+            const carBenefit = parseFloat(emp[standardHeaders[12]]) || 0;
+            const meals = parseFloat(emp[standardHeaders[13]]) || 0;
+            const nonCash = parseFloat(emp[standardHeaders[14]]) || 0;
+            const housingBenefit = parseFloat(emp[standardHeaders[16]]) || 0;
+            const otherBenefits = parseFloat(emp[standardHeaders[17]]) || 0;
+            const pwd = String(emp[standardHeaders[9]] || 'No');
+            const otherPension = parseFloat(emp[standardHeaders[21]]) || 0;
+            const postRetMedical = parseFloat(emp[standardHeaders[22]]) || 0;
+            const mortgage = parseFloat(emp[standardHeaders[23]]) || 0;
+            const insuranceRelief = parseFloat(emp[standardHeaders[27]]) || 0;
+            const nameOfEmployee = String(emp[standardHeaders[4]] || '');
+
+            const calc = calculatePayrollFields({
+                employeeName: nameOfEmployee,
+                totalCashPay,
+                carBenefit,
+                meals,
+                nonCash,
+                housingBenefit,
+                otherBenefits,
+                pwd,
+                otherPension,
+                postRetMedical,
+                mortgage,
+                insuranceRelief,
+            });
+
+            const row: string[] = [];
+            for (let i = 0; i < standardHeaders.length; i++) {
+                const header = standardHeaders[i];
+                switch (i) {
+                    case 0: row.push(getVal(emp, i) || String(index + 1)); break;
+                    case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 15:
+                        row.push(getVal(emp, i)); break;
+                    case 11: row.push(String(totalCashPay)); break;
+                    case 12: row.push(String(carBenefit)); break;
+                    case 13: row.push(String(meals)); break;
+                    case 14: row.push(String(nonCash)); break;
+                    case 16: row.push(String(housingBenefit)); break;
+                    case 17: row.push(String(otherBenefits)); break;
+                    case 18: row.push(calc.grossSalary.toFixed(2)); break;
+                    case 19: row.push(calc.shaContribution.toFixed(2)); break;
+                    case 20: row.push(calc.nssfContribution.toFixed(2)); break;
+                    case 21: row.push(String(otherPension)); break;
+                    case 22: row.push(String(postRetMedical)); break;
+                    case 23: row.push(String(mortgage)); break;
+                    case 24: row.push(calc.ahl.toFixed(2)); break;
+                    case 25: row.push(calc.taxablePay.toFixed(2)); break;
+                    case 26: row.push(calc.personalRelief.toFixed(2)); break;
+                    case 27: row.push(String(insuranceRelief)); break;
+                    case 28: row.push(calc.paye.toFixed(2)); break;
+                    case 29: row.push(calc.selfAssessedPaye.toFixed(2)); break;
+                    default: row.push(getVal(emp, i)); break;
+                }
+            }
+
+            totalPaye += calc.paye;
+            totalNssf += calc.nssfContribution;
+            totalSha += calc.shaContribution;
+            totalNita += calc.paye * 0.0175; // approximate NITA
+            totalHousingLevy += calc.ahl;
+
+            csvLines.push(row.join(','));
+        });
+
+        await fs.writeFile(csvPath, '\ufeff' + csvLines.join('\n'), 'utf-8');
+
+        // Update summary amounts in DB
+        await db.run(
+            `UPDATE clients SET 
+                payeAmount = ?, nitaAmount = ?, housingLevyAmount = ?, 
+                nssfAmount = ?, shaAmount = ? 
+             WHERE id = ?`,
+            [
+                Math.round(totalPaye * 100) / 100,
+                Math.round(totalNita * 100) / 100,
+                Math.round(totalHousingLevy * 100) / 100,
+                Math.round(totalNssf * 100) / 100,
+                Math.round(totalSha * 100) / 100,
+                clientId
+            ]
+        );
+
+        res.json({ success: true, message: 'Payroll data saved and recalculated.' });
+    } catch (err) {
+        console.error('Error saving payroll data:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

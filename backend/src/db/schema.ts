@@ -68,6 +68,7 @@ export interface ClientsTable {
     etimsPassword: string | null;
     eLevyLogin: string | null;
     eLevyPassword: string | null;
+    payStructure: string;
 }
 
 export interface JobHistoryTable {
@@ -99,6 +100,8 @@ export interface EmployeesTable {
     bankAccount: string;
     bankCode: string;
     department: string;
+    departmentId: number | null;
+    role: string;
     jobTitle: string;
     employmentType: string;
     employmentStatus: string;
@@ -177,6 +180,98 @@ export interface EmailHistoryTable {
     sentAt: string;
 }
 
+export interface PayrollRunsTable {
+    id: Generated<number>;
+    clientId: number;
+    period: string;
+    periodLabel: string;
+    status: string;
+    totalEmployees: number;
+    totalGross: number;
+    totalDeductions: number;
+    totalNet: number;
+    notes: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface PayrollEntriesTable {
+    id: Generated<number>;
+    payrollRunId: number;
+    clientId: number;
+    employeeId: number;
+    employeeName: string;
+    kraPin: string;
+    payrollNumber: string;
+    basicPay: number;
+    benefits: number;
+    grossPay: number;
+    shaDeduction: number;
+    nssfDeduction: number;
+    ahlDeduction: number;
+    otherDeductions: number;
+    totalDeductions: number;
+    taxablePay: number;
+    payeTax: number;
+    netPay: number;
+    daysWorked: number;
+    unpaidLeaveDays: number;
+    loanDeduction: number;
+    overtimePay: number;
+    absentDays: number;
+    lateDays: number;
+    status: string;
+    createdAt: string;
+}
+
+export interface DepartmentsTable {
+    id: Generated<number>;
+    clientId: number;
+    name: string;
+    headEmployeeId: number | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface DocumentsTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    documentType: string;
+    fileName: string;
+    originalName: string;
+    fileSize: number;
+    mimeType: string;
+    notes: string;
+    uploadedAt: string;
+}
+
+export interface OvertimeRecordsTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    period: string;
+    hours: number;
+    rate: number;
+    multiplier: number;
+    amount: number;
+    description: string;
+    createdAt: string;
+}
+
+export interface AuditLogTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number | null;
+    action: string;
+    entityType: string;
+    entityId: number | null;
+    oldValues: string | null;
+    newValues: string | null;
+    performedBy: string;
+    createdAt: string;
+}
+
 export interface Database {
     clients: ClientsTable;
     job_history: JobHistoryTable;
@@ -185,4 +280,10 @@ export interface Database {
     loans: LoansTable;
     attendance_records: AttendanceRecordsTable;
     email_history: EmailHistoryTable;
+    payroll_runs: PayrollRunsTable;
+    payroll_entries: PayrollEntriesTable;
+    departments: DepartmentsTable;
+    documents: DocumentsTable;
+    audit_log: AuditLogTable;
+    overtime_records: OvertimeRecordsTable;
 }

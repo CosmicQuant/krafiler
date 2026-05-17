@@ -10,7 +10,6 @@ import {
     Activity,
     ChevronDown,
     ChevronUp,
-    Clock,
     Zap,
 } from 'lucide-react';
 import JobTracker, { JobTrackerProps } from './JobTracker';

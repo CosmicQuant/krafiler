@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ArrowLeft, Calendar, Download, Save, Plus, Trash2, RefreshCw, AlertCircle, FileSpreadsheet, Cloud, X, Users, Pencil, FileText, Banknote, CalendarCheck, BarChart3, DollarSign, Briefcase, TrendingUp, Mail, Globe, LogIn, User } from 'lucide-react';
+import { ArrowLeft, Calendar, Download, Save, Plus, Trash2, RefreshCw, AlertCircle, FileSpreadsheet, Cloud, X, Users, Pencil, FileText, Banknote, CalendarCheck, BarChart3, DollarSign, Briefcase, TrendingUp, Mail, Globe, LogIn, User, FolderOpen, Upload } from 'lucide-react';
 import { ClientObligation } from '../../../types';
 import { apiFetch } from '../../../services/api';
 import helbLogo from '../../../../assests/HELB.png';
+import { DepartmentsView } from './DepartmentsView';
+import { AuditView } from './AuditView';
+import { KpiCharts } from '../KpiCharts';
 
 const STANDARD_HEADERS = [
   'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
@@ -51,7 +54,7 @@ type PayloadPreamble = {
   companyShaPassword: string;
 };
 
-type TabId = 'master' | 'paye' | 'nssf' | 'sha' | 'helb' | 'employees' | 'leave' | 'loans' | 'attendance' | 'reports' | 'email' | 'portal';
+type TabId = 'master' | 'paye' | 'nssf' | 'sha' | 'helb' | 'employees' | 'leave' | 'loans' | 'attendance' | 'reports' | 'email' | 'portal' | 'runs' | 'p10p11' | 'departments' | 'audit' | 'kpi';
 
 const TABS: { id: TabId; label: string; img?: string }[] = [
   { id: 'master', label: 'Master Payroll' },
@@ -66,6 +69,11 @@ const TABS: { id: TabId; label: string; img?: string }[] = [
   { id: 'sha', label: 'SHA', img: '/logos/shalogo.png' },
   { id: 'helb', label: 'HELB', img: helbLogo },
   { id: 'portal', label: 'Portal' },
+  { id: 'runs', label: 'Payroll Runs' },
+  { id: 'p10p11', label: 'P10/P11' },
+  { id: 'departments', label: 'Departments' },
+  { id: 'audit', label: 'Audit Trail' },
+  { id: 'kpi', label: 'Dashboard KPIs' },
 ];
 
 function roundMoney(amount: number): number {
@@ -171,6 +179,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     bankAccount: '', bankCode: '', department: '', jobTitle: '',
     employmentType: 'Permanent', employmentStatus: 'Active',
     dateJoined: '', dateLeft: '', basicPay: 0,
+    role: 'employee', departmentId: null,
   });
 
   const [leaveRecords, setLeaveRecords] = useState<any[]>([]);
@@ -225,6 +234,33 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [showPortalPasswordModal, setShowPortalPasswordModal] = useState(false);
   const [portalPasswordTarget, setPortalPasswordTarget] = useState<{ id: number; name: string; kraPin: string } | null>(null);
   const [portalPasswordValue, setPortalPasswordValue] = useState('');
+  const [portalDocuments, setPortalDocuments] = useState<any[]>([]);
+
+  // Payroll Runs state
+  const [payrollRuns, setPayrollRuns] = useState<any[]>([]);
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [selectedRun, setSelectedRun] = useState<any>(null);
+  const [runEntries, setRunEntries] = useState<any[]>([]);
+  const [loadingEntries, setLoadingEntries] = useState(false);
+  const [newRunPeriod, setNewRunPeriod] = useState('');
+  const [newRunNotes, setNewRunNotes] = useState('');
+  const [generatingRun, setGeneratingRun] = useState(false);
+  const [runDetailView, setRunDetailView] = useState<'list' | 'detail'>('list');
+  const [overtimeData, setOvertimeData] = useState<Record<number, { hours: number; rate: number; multiplier: number }>>({});
+  const [savingOvertime, setSavingOvertime] = useState(false);
+
+  // Employee Documents modal state
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [docModalEmployee, setDocModalEmployee] = useState<any>(null);
+  const [empDocuments, setEmpDocuments] = useState<any[]>([]);
+  const [loadingEmpDocs, setLoadingEmpDocs] = useState(false);
+
+  // P10/P11 state
+  const [p10Year, setP10Year] = useState(new Date().getFullYear().toString());
+  const [p10Data, setP10Data] = useState<any>(null);
+  const [loadingP10, setLoadingP10] = useState(false);
+  const [p11Data, setP11Data] = useState<any>(null);
+  const [loadingP11, setLoadingP11] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -622,14 +658,89 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { if (activeTab === 'email') fetchEmailHistory(); }, [fetchEmailHistory, activeTab]);
 
+  const fetchRuns = useCallback(async () => {
+    setLoadingRuns(true);
+    try {
+      const res = await apiFetch(`/clients/${client.id}/payroll-runs`);
+      if (res.ok) setPayrollRuns(await res.json());
+    } catch { /* ignore */ } finally { setLoadingRuns(false); }
+  }, [client.id]);
+
+  useEffect(() => { if (activeTab === 'runs') fetchRuns(); }, [fetchRuns, activeTab]);
+
+  const fetchEmpDocuments = async (employeeId: number) => {
+    setLoadingEmpDocs(true);
+    try {
+      const res = await apiFetch(`/clients/${client.id}/employees/${employeeId}/documents`);
+      if (res.ok) setEmpDocuments(await res.json());
+    } catch { /* ignore */ } finally { setLoadingEmpDocs(false); }
+  };
+
+  const handleEmpDocUpload = async (employeeId: number, file: File, documentType: string, notes: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('documentType', documentType);
+    formData.append('notes', notes);
+    try {
+      const res = await apiFetch(`/clients/${client.id}/employees/${employeeId}/documents/upload`, { method: 'POST', body: formData });
+      if (res.ok) { fetchEmpDocuments(employeeId); return true; }
+    } catch { /* ignore */ }
+    return false;
+  };
+
+  const handleEmpDocDelete = async (docId: number) => {
+    if (!window.confirm('Delete this document?')) return;
+    try {
+      const res = await apiFetch(`/clients/${client.id}/documents/${docId}`, { method: 'DELETE' });
+      if (res.ok && docModalEmployee) fetchEmpDocuments(docModalEmployee.id);
+    } catch { /* ignore */ }
+  };
+
+  const fetchRunEntries = useCallback(async (runId: number) => {
+    setLoadingEntries(true);
+    try {
+      const [entriesRes, overtimeRes] = await Promise.all([
+        apiFetch(`/clients/${client.id}/payroll-runs/${runId}/entries`),
+        apiFetch(`/clients/${client.id}/payroll-runs/${runId}/overtime`),
+      ]);
+      if (entriesRes.ok) {
+        const entries = await entriesRes.json();
+        setRunEntries(entries);
+        if (overtimeRes.ok) {
+          const otRecords = await overtimeRes.json();
+          const otMap: Record<number, { hours: number; rate: number; multiplier: number }> = {};
+          for (const ot of otRecords) {
+            otMap[ot.employeeId] = { hours: ot.hours, rate: ot.rate, multiplier: ot.multiplier };
+          }
+          for (const entry of entries) {
+            if (!otMap[entry.employeeId]) {
+              otMap[entry.employeeId] = { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
+            }
+          }
+          setOvertimeData(otMap);
+        } else {
+          const otMap: Record<number, { hours: number; rate: number; multiplier: number }> = {};
+          for (const entry of entries) {
+            otMap[entry.employeeId] = { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
+          }
+          setOvertimeData(otMap);
+        }
+      }
+    } catch { /* ignore */ } finally { setLoadingEntries(false); }
+  }, [client.id]);
+
   // Auto-load portal dashboard when token exists and tab is portal
   useEffect(() => {
     if (activeTab === 'portal' && portalToken && !portalDashboard && !portalLoading) {
       setPortalLoading(true);
       (async () => {
         try {
-          const r = await fetch('/api/portal/dashboard', { headers: { 'Authorization': `Bearer ${portalToken}` } });
-          if (r.ok) { const d = await r.json(); setPortalDashboard(d); }
+          const [dashRes, docRes] = await Promise.all([
+            fetch('/api/portal/dashboard', { headers: { 'Authorization': `Bearer ${portalToken}` } }),
+            fetch('/api/portal/documents', { headers: { 'Authorization': `Bearer ${portalToken}` } }),
+          ]);
+          if (dashRes.ok) { const d = await dashRes.json(); setPortalDashboard(d); }
+          if (docRes.ok) { const d = await docRes.json(); setPortalDocuments(d); }
         } catch { /* ignore */ } finally { setPortalLoading(false); }
       })();
     }
@@ -748,6 +859,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         dateJoined: emp.dateJoined || '',
         dateLeft: emp.dateLeft || '',
         basicPay: emp.basicPay || 0,
+        role: emp.role || 'employee',
+        departmentId: emp.departmentId || null,
       });
     } else {
       setEditingEmployee(null);
@@ -757,6 +870,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         bankAccount: '', bankCode: '', department: '', jobTitle: '',
         employmentType: 'Permanent', employmentStatus: 'Active',
         dateJoined: '', dateLeft: '', basicPay: 0,
+        role: 'employee', departmentId: null,
       });
     }
     setShowEmployeeModal(true);
@@ -1072,6 +1186,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 <Mail className="h-5 w-5" />
               ) : id === 'portal' ? (
                 <Globe className="h-5 w-5" />
+              ) : id === 'runs' ? (
+                <RefreshCw className="h-5 w-5" />
+              ) : id === 'p10p11' ? (
+                <FileText className="h-5 w-5" />
               ) : (
                 <FileSpreadsheet className="h-5 w-5" />
               )}
@@ -1446,6 +1564,13 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             title="Download P9 Annual Tax Card"
                           >
                             P9
+                          </button>
+                          <button
+                            onClick={() => { setDocModalEmployee(emp); fetchEmpDocuments(emp.id); setShowDocModal(true); }}
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                            title="Documents"
+                          >
+                            <FolderOpen className="h-3.5 w-3.5" />
                           </button>
                           <button
                             onClick={() => { setPortalPasswordTarget({ id: emp.id, name: emp.employeeName, kraPin: emp.kraPin }); setPortalPasswordValue(''); setShowPortalPasswordModal(true); }}
@@ -2386,7 +2511,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   </button>
                 </div>
                 <button
-                  onClick={() => { setPortalToken(null); setPortalEmployee(null); setPortalDashboard(null); localStorage.removeItem('portal_token'); }}
+                  onClick={() => { setPortalToken(null); setPortalEmployee(null); setPortalDashboard(null); setPortalDocuments([]); localStorage.removeItem('portal_token'); }}
                   className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition"
                 >
                   Sign Out
@@ -2405,8 +2530,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       onClick={async () => {
                         setPortalLoading(true);
                         try {
-                          const r = await fetch('/api/portal/dashboard', { headers: { 'Authorization': `Bearer ${portalToken}` } });
-                          if (r.ok) setPortalDashboard(await r.json());
+                          const [dashRes, docRes] = await Promise.all([
+                            fetch('/api/portal/dashboard', { headers: { 'Authorization': `Bearer ${portalToken}` } }),
+                            fetch('/api/portal/documents', { headers: { 'Authorization': `Bearer ${portalToken}` } }),
+                          ]);
+                          if (dashRes.ok) setPortalDashboard(await dashRes.json());
+                          if (docRes.ok) setPortalDocuments(await docRes.json());
                         } catch { /* ignore */ } finally { setPortalLoading(false); }
                       }}
                       className="rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 transition"
@@ -2434,6 +2563,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           <div><span className="text-slate-400">Basic Pay</span><p className="font-mono font-semibold text-slate-900">KES {Number(portalDashboard.employee.basicPay).toLocaleString()}</p></div>
                           <div><span className="text-slate-400">NSSF No</span><p className="font-mono font-semibold text-slate-900">{portalDashboard.employee.nssfNo || '-'}</p></div>
                           <div><span className="text-slate-400">SHA No</span><p className="font-mono font-semibold text-slate-900">{portalDashboard.employee.shaNo || '-'}</p></div>
+                          <div><span className="text-slate-400">Unpaid Leave Days</span><p className="font-mono font-semibold text-amber-700">{portalDashboard.totalUnpaidLeaveDays || 0}</p></div>
+                          <div><span className="text-slate-400">Loan Deductions</span><p className="font-mono font-semibold text-rose-700">KES {Number(portalDashboard.totalLoanDeduction || 0).toLocaleString()}</p></div>
+                          <div><span className="text-slate-400">Active Loans</span><p className="font-mono font-semibold text-slate-900">{portalDashboard.loanSummary.active}</p></div>
+                          <div><span className="text-slate-400">Outstanding Balance</span><p className="font-mono font-semibold text-slate-900">KES {Number(portalDashboard.loanSummary.outstandingBalance || 0).toLocaleString()}</p></div>
                         </div>
                       </div>
 
@@ -2513,7 +2646,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       {/* Document Downloads */}
                       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                         <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Documents</h4>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2 mb-3">
                           <button
                             onClick={async () => {
                               try {
@@ -2537,6 +2670,33 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             <FileText className="h-3.5 w-3.5" /> Download P9
                           </button>
                         </div>
+                        {portalDocuments.length > 0 && (
+                          <div className="border-t border-slate-100 pt-2">
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase mb-1.5">Uploaded Documents</p>
+                            <div className="space-y-1">
+                              {portalDocuments.map((d: any) => (
+                                <div key={d.id} className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center gap-1.5 text-slate-700 truncate">
+                                    <FileText className="h-3 w-3 shrink-0 text-slate-400" />
+                                    <span className="truncate">{d.originalName}</span>
+                                    <span className="text-slate-400">({(d.fileSize / 1024).toFixed(0)} KB)</span>
+                                  </div>
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const r = await fetch(`/api/portal/documents/${d.id}/download`, { headers: { 'Authorization': `Bearer ${portalToken}` } });
+                                        if (r.ok) { const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = d.originalName; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+                                      } catch { /* ignore */ }
+                                    }}
+                                    className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition"
+                                  >
+                                    Download
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2617,6 +2777,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           if (r.ok) {
                             setPortalSubView('dashboard');
                             setPortalDashboard(null);
+                            setPortalDocuments([]);
                             setPortalLeaveForm({ leaveType: 'Annual', startDate: '', endDate: '', daysCount: 1, reason: '' });
                           }
                         } catch { /* ignore */ } finally { setPortalSubmitting(false); }
@@ -2699,6 +2860,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           if (r.ok) {
                             setPortalSubView('dashboard');
                             setPortalDashboard(null);
+                            setPortalDocuments([]);
                             setPortalLoanForm({ loanType: 'Salary Advance', principal: 0, installments: 1, interestRate: 0, notes: '' });
                           }
                         } catch { /* ignore */ } finally { setPortalSubmitting(false); }
@@ -3132,6 +3294,566 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         </div>
       )}
 
+      {/* ───── Payroll Runs Tab ───── */}
+      {activeTab === 'runs' && (
+        <div>
+          {runDetailView === 'list' ? (
+            <>
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Payroll Runs</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newRunPeriod}
+                    onChange={e => setNewRunPeriod(e.target.value)}
+                    placeholder="YYYY-MM"
+                    className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                  <input
+                    type="text"
+                    value={newRunNotes}
+                    onChange={e => setNewRunNotes(e.target.value)}
+                    placeholder="Notes (optional)"
+                    className="w-40 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                  <button
+                    disabled={!newRunPeriod || loadingRuns}
+                    onClick={async () => {
+                      setLoadingRuns(true);
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/payroll-runs`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ period: newRunPeriod, notes: newRunNotes }),
+                        });
+                        if (r.ok) { setNewRunPeriod(''); setNewRunNotes(''); setStatusMessage('Payroll run created'); }
+                        else { const e = await r.json(); setError(e.message || 'Failed'); }
+                        fetchRuns();
+                      } catch { setError('Network error'); } finally { setLoadingRuns(false); }
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Run
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/payroll-runs/debug`);
+                        const d = await r.json();
+                        setStatusMessage(`Debug: ${d.activeEmployees} active employees. Sample: ${JSON.stringify(d.sample)}`);
+                      } catch { setError('Debug fetch failed'); }
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 transition"
+                    title="Debug: check employee data"
+                  >
+                    Debug
+                  </button>
+                </div>
+              </div>
+
+              {loadingRuns ? (
+                <div className="flex items-center justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>
+              ) : payrollRuns.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
+                  <RefreshCw className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+                  <p className="text-sm font-semibold text-slate-500">No payroll runs</p>
+                  <p className="mt-2 text-xs text-slate-400">Enter a period (YYYY-MM) and click New Run to start.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Period</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Status</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Employees</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Gross Pay</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Net Pay</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Notes</th>
+                        <th className="px-3 py-2.5 w-32" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {payrollRuns.map((run: any) => (
+                        <tr key={run.id} className="hover:bg-slate-50/50 transition">
+                          <td className="px-3 py-2 font-semibold text-slate-900">{run.periodLabel} <span className="text-slate-400 font-mono">({run.period})</span></td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              run.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
+                              run.status === 'processing' ? 'bg-blue-50 text-blue-700' :
+                              'bg-slate-100 text-slate-500'
+                            }`}>{run.status}</span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{run.totalEmployees}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(run.totalGross).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(run.totalNet).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-slate-500 max-w-[120px] truncate">{run.notes || '-'}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => { setSelectedRun(run); fetchRunEntries(run.id); setRunDetailView('detail'); }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                                title="View"
+                              ><FileText className="h-3.5 w-3.5" /></button>
+                              <button
+                                onClick={async () => {
+                                  setGeneratingRun(true);
+                                  try {
+                                    const r = await apiFetch(`/clients/${client.id}/payroll-runs/${run.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prorate: true }) });
+                                    if (r.ok) {
+                                      const data = await r.json();
+                                      const diag = data.diagnostic;
+                                      if (diag?.employeesWithZeroBasicPay > 0) {
+                                        setError(`Warning: ${diag.employeesWithZeroBasicPay} employee(s) have basicPay=0. Check their profiles.`);
+                                      }
+                                      setStatusMessage(`Generated ${data.entriesGenerated} entries for ${run.periodLabel}`);
+                                      setPayrollRuns((prev: any[]) => prev.map((p: any) => p.id === run.id ? data.run : p));
+                                    } else {
+                                      const e = await r.json();
+                                      setError(e.hint || e.message || 'Failed');
+                                    }
+                                  } catch { setError('Network error'); } finally { setGeneratingRun(false);
+                                  }
+                                }}
+                                disabled={generatingRun}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700 transition"
+                                title={run.status === 'draft' ? 'Generate Entries' : 'Regenerate Entries'}
+                              ><RefreshCw className={`h-3.5 w-3.5 ${generatingRun ? 'animate-spin' : ''}`} /></button>
+                              {run.status === 'completed' && (
+                                <a
+                                  href={`/api/clients/${client.id}/payroll-runs/${run.id}/payslips`}
+                                  className="rounded-lg p-1.5 text-slate-400 hover:bg-blue-50 hover:text-blue-700 transition"
+                                  title="Download All Payslips (ZIP)"
+                                ><Download className="h-3.5 w-3.5" /></a>
+                              )}
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm('Delete this payroll run?')) return;
+                                  try { await apiFetch(`/clients/${client.id}/payroll-runs/${run.id}`, { method: 'DELETE' }); fetchRuns(); }
+                                  catch { setError('Delete failed'); }
+                                }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+                                title="Delete"
+                              ><Trash2 className="h-3.5 w-3.5" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  onClick={() => { setRunDetailView('list'); setSelectedRun(null); setRunEntries([]); }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Back
+                </button>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  {selectedRun?.periodLabel} — {selectedRun?.status}
+                </span>
+              </div>
+
+              {/* Overtime Entry Section */}
+              {runEntries.length > 0 && (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Overtime Entry</h4>
+                    <button
+                      disabled={savingOvertime}
+                      onClick={async () => {
+                        setSavingOvertime(true);
+                        try {
+                          for (const [empId, ot] of Object.entries(overtimeData)) {
+                            const data = ot as { hours: number; rate: number; multiplier: number };
+                            if (data.hours > 0) {
+                              const amount = data.hours * (data.rate || 0) * (data.multiplier || 1);
+                              await apiFetch(`/clients/${client.id}/employees/${empId}/overtime`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  period: selectedRun?.period,
+                                  hours: data.hours,
+                                  rate: data.rate || 0,
+                                  multiplier: data.multiplier || 1,
+                                  amount,
+                                }),
+                              });
+                            }
+                          }
+                          setStatusMessage('Overtime saved. Regenerate entries to apply.');
+                        } catch { setError('Failed to save overtime'); }
+                        finally { setSavingOvertime(false); }
+                      }}
+                      className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                    >
+                      {savingOvertime ? 'Saving...' : 'Save Overtime'}
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Hours</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Rate (KES/hr)</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Multiplier</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Amount (KES)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {runEntries.map((entry: any) => {
+                          const ot = overtimeData[entry.employeeId] || { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
+                          return (
+                            <tr key={entry.employeeId} className="hover:bg-slate-50/50 transition">
+                              <td className="px-3 py-2 font-medium text-slate-900">{entry.employeeName}</td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  value={ot.hours}
+                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { rate: Math.round(entry.basicPay / 240), multiplier: 1.5 }, hours: parseFloat(e.target.value) || 0 } }))}
+                                  className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  value={ot.rate}
+                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { hours: 0, multiplier: 1.5 }, rate: parseFloat(e.target.value) || 0 } }))}
+                                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
+                                />
+                              </td>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="number"
+                                  value={ot.multiplier}
+                                  step="0.5"
+                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { hours: 0, rate: Math.round(entry.basicPay / 240) }, multiplier: parseFloat(e.target.value) || 1 } }))}
+                                  className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                                {(ot.hours * ot.rate * ot.multiplier).toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <p className="mt-2 text-[10px] text-slate-400">After saving overtime, click <strong>Regenerate</strong> from the runs list to recompute entries with overtime included.</p>
+                  </div>
+                </div>
+              )}
+
+              {loadingEntries ? (
+                <div className="flex items-center justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>
+              ) : runEntries.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
+                  <p className="text-sm font-semibold text-slate-500">No entries yet</p>
+                  <p className="mt-2 text-xs text-slate-400">Click the Generate button to auto-compute entries.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">KRA PIN</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Days</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Basic</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">OT</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Gross</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">PAYE</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">SHA</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">NSSF</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">AHL</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Absent</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Late</th>
+                        <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Net</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {runEntries.map((entry: any) => (
+                        <tr key={entry.id} className="hover:bg-slate-50/50 transition">
+                          <td className="px-3 py-2 font-medium text-slate-900">{entry.employeeName}</td>
+                          <td className="px-3 py-2 font-mono text-slate-700">{entry.kraPin}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{entry.daysWorked}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.basicPay).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-amber-700">{Number(entry.overtimePay || 0).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.grossPay).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.payeTax).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.shaDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.nssfDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(entry.ahlDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-rose-600">{entry.absentDays || 0}</td>
+                          <td className="px-3 py-2 text-right font-mono text-amber-600">{entry.lateDays || 0}</td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">{Number(entry.netPay).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+                    {runEntries.length} entries
+                    <span className="ml-3">
+                      Total Gross: KES {runEntries.reduce((s: number, e: any) => s + Number(e.grossPay), 0).toLocaleString()} |
+                      Total Net: KES {runEntries.reduce((s: number, e: any) => s + Number(e.netPay), 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ───── P10/P11 Tab ───── */}
+      {activeTab === 'p10p11' && (
+        <div className="space-y-6">
+          {/* P10 Section */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-slate-900">P10 — Annual PAYE Reconciliation</h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={p10Year}
+                  onChange={e => setP10Year(e.target.value)}
+                  placeholder="YYYY"
+                  className="w-20 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                />
+                <button
+                  disabled={loadingP10}
+                  onClick={async () => {
+                    setLoadingP10(true);
+                    try { const r = await apiFetch(`/clients/${client.id}/p10?year=${p10Year}`); if (r.ok) setP10Data(await r.json()); else setError('Failed to load P10'); }
+                    catch { setError('Network error'); } finally { setLoadingP10(false); }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                >
+                  {loadingP10 ? <><RefreshCw className="h-3 w-3 animate-spin" /> Loading</> : 'Load P10'}
+                </button>
+                {p10Data && (
+                  <a
+                    href={`/api/clients/${client.id}/p10/pdf?year=${p10Year}`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  >
+                    <Download className="h-3.5 w-3.5" /> PDF
+                  </a>
+                )}
+              </div>
+            </div>
+            {p10Data ? (
+              <div>
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div className="rounded-lg bg-slate-50 p-3"><span className="text-xs text-slate-500">Employees</span><p className="text-lg font-bold text-slate-900">{p10Data.totalEmployees}</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><span className="text-xs text-slate-500">Total Gross</span><p className="text-lg font-bold text-slate-900">KES {Number(p10Data.totalGross).toLocaleString()}</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><span className="text-xs text-slate-500">Total PAYE</span><p className="text-lg font-bold text-slate-900">KES {Number(p10Data.totalPaye).toLocaleString()}</p></div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">KRA PIN</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Months</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Gross Pay</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">PAYE</th>
+                        <th className="px-3 py-2 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {p10Data.employeeDetails?.map((emp: any) => (
+                        <tr key={emp.kraPin} className="hover:bg-slate-50/50">
+                          <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
+                          <td className="px-3 py-2 font-mono text-slate-700">{emp.kraPin}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{emp.monthsWorked}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(emp.totalGross).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(emp.totalPaye).toFixed(2)}</td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={async () => {
+                                setLoadingP11(true);
+                                try { const r = await apiFetch(`/clients/${client.id}/p11/${emp.kraPin}?year=${p10Year}`); if (r.ok) setP11Data(await r.json()); else setError('Failed to load P11'); }
+                                catch { setError('Network error'); } finally { setLoadingP11(false); }
+                              }}
+                              className="rounded-lg px-1.5 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                            >P11</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">Click Load P10 to generate annual reconciliation.</p>
+            )}
+          </div>
+
+          {/* P11 Section */}
+          {p11Data && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-slate-900">
+                  P11 — {p11Data.employeeName} ({p11Data.kraPin})
+                </h3>
+                <a
+                  href={`/api/clients/${client.id}/p11/${p11Data.kraPin}/pdf?year=${p10Year}`}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  <Download className="h-3.5 w-3.5" /> PDF
+                </a>
+              </div>
+              {loadingP11 ? (
+                <div className="flex items-center justify-center py-8"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Month</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Gross</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">PAYE</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">SHA</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">NSSF</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">AHL</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Net</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {p11Data.monthly?.map((m: any, i: number) => (
+                        <tr key={i} className="hover:bg-slate-50/50">
+                          <td className="px-3 py-2 font-medium text-slate-900">{m.periodLabel || m.period}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(m.grossPay).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(m.payeTax).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(m.shaDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(m.nssfDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(m.ahlDeduction).toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">{Number(m.netPay).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-slate-200 bg-slate-50">
+                        <td className="px-3 py-2 font-bold text-slate-900">TOTAL</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalGross || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalPaye || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalSha || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalNssf || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalAhl || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">{Number(p11Data.totals?.totalNet || 0).toLocaleString()}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ───── Departments Tab ───── */}
+      {activeTab === 'departments' && (
+        <DepartmentsView client={client} />
+      )}
+
+      {/* ───── Audit Trail Tab ───── */}
+      {activeTab === 'audit' && (
+        <AuditView client={client} />
+      )}
+
+      {/* ───── Dashboard KPIs Tab ───── */}
+      {activeTab === 'kpi' && (
+        <div className="p-6">
+          <KpiCharts clientId={client.id} />
+        </div>
+      )}
+
+      {/* ───── Employee Documents Modal ───── */}
+      {showDocModal && docModalEmployee && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-lg rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <h3 className="text-sm font-bold text-slate-900">Documents — {docModalEmployee.employeeName}</h3>
+              <button onClick={() => { setShowDocModal(false); setDocModalEmployee(null); setEmpDocuments([]); }} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Upload Section */}
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4">
+                <p className="text-xs font-semibold text-slate-500 mb-2">Upload Document</p>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    type="file"
+                    id="docUploadInput"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const docType = (document.getElementById('docTypeSelect') as HTMLSelectElement)?.value || 'other';
+                      const notes = (document.getElementById('docNotesInput') as HTMLInputElement)?.value || '';
+                      await handleEmpDocUpload(docModalEmployee.id, file, docType, notes);
+                      e.target.value = '';
+                    }}
+                  />
+                  <select id="docTypeSelect" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900">
+                    <option value="contract">Contract</option>
+                    <option value="id">ID Document</option>
+                    <option value="certificate">Certificate</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <input id="docNotesInput" type="text" placeholder="Notes" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 w-32" />
+                  <label htmlFor="docUploadInput" className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition">
+                    <Upload className="h-3 w-3" /> Upload
+                  </label>
+                </div>
+              </div>
+
+              {/* Documents List */}
+              {loadingEmpDocs ? (
+                <div className="flex items-center justify-center py-6"><RefreshCw className="h-4 w-4 animate-spin text-slate-400" /></div>
+              ) : empDocuments.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-6">No documents uploaded for this employee.</p>
+              ) : (
+                <div className="space-y-2">
+                  {empDocuments.map((doc: any) => (
+                    <div key={doc.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-3 py-2 text-xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        <span className="truncate text-slate-900">{doc.originalName}</span>
+                        <span className="shrink-0 text-slate-400">({(doc.fileSize / 1024).toFixed(0)} KB)</span>
+                        {doc.documentType && <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{doc.documentType}</span>}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <a
+                          href={`/api/clients/${client.id}/documents/${doc.id}/download`}
+                          className="rounded px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                          title="Download"
+                        >
+                          <Download className="h-3 w-3" />
+                        </a>
+                        <button
+                          onClick={() => handleEmpDocDelete(doc.id)}
+                          className="rounded px-2 py-1 text-[10px] font-semibold text-red-500 hover:bg-red-50 transition"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ───── Portal Password Modal ───── */}
       {showPortalPasswordModal && portalPasswordTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -3283,6 +4005,19 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     onChange={e => setEmployeeForm((f: any) => ({ ...f, basicPay: parseFloat(e.target.value) || 0 }))}
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                   />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Role</label>
+                  <select
+                    value={employeeForm.role || 'employee'}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, role: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  >
+                    <option value="employee">Employee</option>
+                    <option value="hr">HR</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Admin</option>
+                  </select>
                 </div>
               </div>
             </div>

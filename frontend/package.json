@@ -85,6 +85,7 @@
     "react-router-dom": "^7.14.2",
     "read-cache": "^1.0.0",
     "readdirp": "^3.6.0",
+    "recharts": "^3.8.1",
     "resolve": "^1.22.12",
     "reusify": "^1.1.0",
     "rollup": "^4.60.1",

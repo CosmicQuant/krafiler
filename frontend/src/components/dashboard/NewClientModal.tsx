@@ -14,6 +14,8 @@ type NewClientModalProps = {
     setNewClientMasterCsv: (f: File | null) => void;
     newClientModalError: string | null;
     setNewClientModalError: (e: string | null) => void;
+    newClientPayStructure: 'fixed' | 'prorated';
+    setNewClientPayStructure: (v: 'fixed' | 'prorated') => void;
     isSavingClient: boolean;
     resetNewClientForm: () => void;
     handleSaveClient: () => void;
@@ -27,6 +29,7 @@ export function NewClientModal({
     newClientObligations, setNewClientObligations,
     newClientMasterCsv, setNewClientMasterCsv,
     newClientModalError, setNewClientModalError,
+    newClientPayStructure, setNewClientPayStructure,
     isSavingClient,
     resetNewClientForm,
     handleSaveClient,
@@ -98,6 +101,34 @@ export function NewClientModal({
                                             </button>
                                         );
                                     })}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">Pay Structure</label>
+                                <div className="mt-2 flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setNewClientPayStructure('fixed')}
+                                        className={`flex-1 rounded-xl border p-3 text-sm font-bold transition-all ${
+                                            newClientPayStructure === 'fixed'
+                                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                                                : 'border-slate-200 bg-slate-50/50 text-slate-500 hover:border-slate-300 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        Fixed (30-day month)
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setNewClientPayStructure('prorated')}
+                                        className={`flex-1 rounded-xl border p-3 text-sm font-bold transition-all ${
+                                            newClientPayStructure === 'prorated'
+                                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                                                : 'border-slate-200 bg-slate-50/50 text-slate-500 hover:border-slate-300 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        Prorated (actual days)
+                                    </button>
                                 </div>
                             </div>
 

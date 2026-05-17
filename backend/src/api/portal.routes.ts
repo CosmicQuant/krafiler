@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { logAudit } from '../services/auditService';
+import path from 'path';
+import fs from 'fs';
 
 const router = Router();
 
@@ -82,6 +85,17 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
         // Recent loans (last 5)
         const recentLoans = loans.slice(0, 5);
 
+        // Payroll summary — unpaid leave
+        const payrollEntries = await db
+            .selectFrom('payroll_entries')
+            .selectAll()
+            .where('employeeId', '=', employeeId)
+            .where('clientId', '=', clientId)
+            .execute();
+
+        const totalUnpaidLeaveDays = payrollEntries.reduce((sum, e) => sum + (e.unpaidLeaveDays || 0), 0);
+        const totalLoanDeduction = payrollEntries.reduce((sum, e) => sum + (e.loanDeduction || 0), 0);
+
         // Recent attendance (last 5)
         const recentAttendance = attendance.slice(0, 5);
 
@@ -107,6 +121,8 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
             leaveSummary,
             loanSummary,
             attendanceSummary,
+            totalUnpaidLeaveDays,
+            totalLoanDeduction,
             recentLeave,
             recentLoans,
             recentAttendance,
@@ -154,6 +170,16 @@ router.post('/leave', async (req: AuthRequest, res) => {
             .selectAll()
             .where('id', '=', id)
             .executeTakeFirst();
+
+        logAudit({
+            clientId,
+            employeeId,
+            action: 'CREATE',
+            entityType: 'leave_request',
+            entityId: id,
+            newValues: record,
+            performedBy: req.employee!.employeeName,
+        });
 
         res.status(201).json(record);
     } catch (err) {
@@ -211,6 +237,16 @@ router.post('/loans', async (req: AuthRequest, res) => {
             .selectAll()
             .where('id', '=', id)
             .executeTakeFirst();
+
+        logAudit({
+            clientId,
+            employeeId,
+            action: 'CREATE',
+            entityType: 'loan',
+            entityId: id,
+            newValues: record,
+            performedBy: req.employee!.employeeName,
+        });
 
         res.status(201).json(record);
     } catch (err) {
@@ -418,6 +454,55 @@ router.get('/p9', async (req: AuthRequest, res) => {
         doc.end();
     } catch (err) {
         console.error('Error generating portal P9:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// GET /api/portal/documents — list employee documents
+router.get('/documents', async (req: AuthRequest, res) => {
+    try {
+        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId;
+        const docs = await db
+            .selectFrom('documents')
+            .selectAll()
+            .where('employeeId', '=', employeeId)
+            .where('clientId', '=', clientId)
+            .orderBy('uploadedAt', 'desc')
+            .execute();
+        res.json(docs);
+    } catch (err) {
+        console.error('Error fetching portal documents:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// GET /api/portal/documents/:id/download — download a specific document
+router.get('/documents/:id/download', async (req: AuthRequest, res) => {
+    try {
+        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
+
+        const doc = await db
+            .selectFrom('documents')
+            .selectAll()
+            .where('id', '=', id)
+            .where('employeeId', '=', employeeId)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!doc) { res.status(404).json({ message: 'Document not found' }); return; }
+
+        const uploadDir = path.join(__dirname, '../../uploads/documents');
+        const filePath = path.join(uploadDir, doc.fileName);
+        if (!fs.existsSync(filePath)) { res.status(404).json({ message: 'File not found on disk' }); return; }
+        res.setHeader('Content-Type', doc.mimeType || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${doc.originalName}"`);
+        res.sendFile(filePath);
+    } catch (err) {
+        console.error('Error downloading portal document:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { openDb } from '../db/database';
 import { db } from '../db/kysely';
+import { logAudit } from '../services/auditService';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
@@ -35,13 +36,13 @@ router.post('/:clientId/employees', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
             .insertInto('employees')
             .values({
-                clientId,
+        clientId,
                 payrollNumber: payrollNumber || '',
                 employeeName: employeeName || '',
                 idNumber: idNumber || '',
@@ -54,23 +55,35 @@ router.post('/:clientId/employees', async (req, res) => {
                 bankAccount: bankAccount || '',
                 bankCode: bankCode || '',
                 department: department || '',
+                departmentId: departmentId || null,
                 jobTitle: jobTitle || '',
                 employmentType: employmentType || 'Permanent',
                 employmentStatus: employmentStatus || 'Active',
                 dateJoined: dateJoined || '',
                 dateLeft: dateLeft || null,
                 basicPay: basicPay || 0,
+                role: role || 'employee',
                 createdAt: now,
                 updatedAt: now,
             })
             .executeTakeFirst();
 
         const id = Number(result.insertId || 0);
+
         const employee = await db
             .selectFrom('employees')
             .selectAll()
             .where('id', '=', id)
             .executeTakeFirst();
+
+        logAudit({
+            clientId,
+            action: 'CREATE',
+            entityType: 'employee',
+            entityId: id,
+            newValues: employee,
+            performedBy: 'admin',
+        });
 
         res.status(201).json(employee);
     } catch (err) {
@@ -95,7 +108,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Employee not found' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId } = req.body;
 
         await db
             .updateTable('employees')
@@ -112,12 +125,14 @@ router.put('/:clientId/employees/:id', async (req, res) => {
                 bankAccount: bankAccount !== undefined ? bankAccount : existing.bankAccount,
                 bankCode: bankCode !== undefined ? bankCode : existing.bankCode,
                 department: department !== undefined ? department : existing.department,
+                departmentId: departmentId !== undefined ? departmentId : existing.departmentId,
                 jobTitle: jobTitle !== undefined ? jobTitle : existing.jobTitle,
                 employmentType: employmentType !== undefined ? employmentType : existing.employmentType,
                 employmentStatus: employmentStatus !== undefined ? employmentStatus : existing.employmentStatus,
                 dateJoined: dateJoined !== undefined ? dateJoined : existing.dateJoined,
                 dateLeft: dateLeft !== undefined ? (dateLeft || null) : existing.dateLeft,
                 basicPay: basicPay !== undefined ? basicPay : existing.basicPay,
+                role: role !== undefined ? role : existing.role,
                 updatedAt: new Date().toISOString(),
             })
             .where('id', '=', id)
@@ -128,6 +143,17 @@ router.put('/:clientId/employees/:id', async (req, res) => {
             .selectAll()
             .where('id', '=', id)
             .executeTakeFirst();
+
+        logAudit({
+            clientId,
+            employeeId: id,
+            action: 'UPDATE',
+            entityType: 'employee',
+            entityId: id,
+            oldValues: existing,
+            newValues: updated,
+            performedBy: 'admin',
+        });
 
         res.json(updated);
     } catch (err) {
@@ -143,11 +169,30 @@ router.delete('/:clientId/employees/:id', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(id) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
 
+        const existing = await db
+            .selectFrom('employees')
+            .selectAll()
+            .where('id', '=', id)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!existing) return res.status(404).json({ message: 'Employee not found' });
+
         await db
             .deleteFrom('employees')
             .where('id', '=', id)
             .where('clientId', '=', clientId)
             .execute();
+
+        logAudit({
+            clientId,
+            employeeId: id,
+            action: 'DELETE',
+            entityType: 'employee',
+            entityId: id,
+            oldValues: existing,
+            performedBy: 'admin',
+        });
 
         res.json({ success: true });
     } catch (err) {
@@ -220,6 +265,7 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     dateJoined: '',
                     dateLeft: null,
                     basicPay: parseFloat(String(emp['Total Cash Pay (A)'] ?? '0')) || 0,
+                    role: 'employee',
                     createdAt: now,
                     updatedAt: now,
                 })

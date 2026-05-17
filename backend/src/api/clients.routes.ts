@@ -143,7 +143,7 @@ router.delete('/:id/master-csv', async (req, res) => {
 // Add new client
 router.post('/', async (req, res) => {
     try {
-        const { name, pin, password, iTaxPassword, obligations, sector } = req.body;
+        const { name, pin, password, iTaxPassword, obligations, sector, payStructure } = req.body;
         const effectivePassword = String(iTaxPassword || password || '').trim();
 
         if (!name || !pin || !effectivePassword) {
@@ -162,8 +162,8 @@ router.post('/', async (req, res) => {
 
         const db = await openDb();
         const result = await db.run(
-            `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst]
+            `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure || 'fixed']
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
@@ -293,7 +293,7 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
 // Update client
 router.put('/:id', async (req, res) => {
     try {
-        const { name, pin, password, iTaxPassword, obligations, sector, email, phone } = req.body;
+        const { name, pin, password, iTaxPassword, obligations, sector, email, phone, payStructure } = req.body;
         const clientId = req.params.id;
         const effectivePassword = String(iTaxPassword || password || '').trim();
 
@@ -320,9 +320,9 @@ router.put('/:id', async (req, res) => {
         await db.run(
             `UPDATE clients 
              SET name = ?, pin = ?, password = ?, obligations = ?, sector = ?, email = ?, phone = ?,
-                 paye = ?, nssf = ?, sha = ?, vat = ?, tot = ?, mri = ?, eLevy = ?, dst = ?
+                 paye = ?, nssf = ?, sha = ?, vat = ?, tot = ?, mri = ?, eLevy = ?, dst = ?, payStructure = ?
              WHERE id = ?`,
-            [name, pin, effectivePassword, obligations || '', sector || '', email || '', phone || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, clientId]
+            [name, pin, effectivePassword, obligations || '', sector || '', email || '', phone || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure || 'fixed', clientId]
         );
         
         const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);

@@ -218,7 +218,7 @@ export default function JobTracker({
                         
                         {/* Step indicators */}
                         <div className="flex items-center gap-1 pt-2">
-                            {filingSteps.slice(0, 5).map((step, i) => {
+                            {filingSteps.slice(0, 5).map((_step, i) => {
                                 const isActive = i === activeStepIndex;
                                 const isDone = i < activeStepIndex;
                                 return (

@@ -24,6 +24,11 @@ import reportsRoutes from './api/reports.routes';
 import emailRoutes from './api/email.routes';
 import authRoutes from './api/auth.routes';
 import portalRoutes from './api/portal.routes';
+import payrollRunsRoutes from './api/payroll-runs.routes';
+import departmentsRoutes from './api/departments.routes';
+import documentsRoutes from './api/documents.routes';
+import auditRoutes from './api/audit.routes';
+import kpiRoutes from './api/kpi.routes';
 import { initDb } from './db/database';
 import { logger } from './logger';
 import pinoHttp from 'pino-http';
@@ -92,6 +97,11 @@ app.use('/api/clients', reportsRoutes);
 app.use('/api/clients', emailRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/portal', portalRoutes);
+app.use('/api/clients', payrollRunsRoutes);
+app.use('/api/clients', departmentsRoutes);
+app.use('/api/clients', documentsRoutes);
+app.use('/api/clients', auditRoutes);
+app.use('/api/clients', kpiRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });

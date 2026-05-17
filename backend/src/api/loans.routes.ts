@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
+import { logAudit } from '../services/auditService';
 
 const router = Router();
 
@@ -63,6 +64,16 @@ router.post('/:clientId/loans', async (req, res) => {
             .where('id', '=', id)
             .executeTakeFirst();
 
+        logAudit({
+            clientId,
+            employeeId: employeeId || 0,
+            action: 'CREATE',
+            entityType: 'loan',
+            entityId: id,
+            newValues: record,
+            performedBy: 'admin',
+        });
+
         res.status(201).json(record);
     } catch (err) {
         console.error('Error creating loan:', err);
@@ -117,6 +128,17 @@ router.put('/:clientId/loans/:id', async (req, res) => {
             .where('id', '=', id)
             .executeTakeFirst();
 
+        logAudit({
+            clientId,
+            employeeId: existing.employeeId,
+            action: 'UPDATE',
+            entityType: 'loan',
+            entityId: id,
+            oldValues: existing,
+            newValues: updated,
+            performedBy: 'admin',
+        });
+
         res.json(updated);
     } catch (err) {
         console.error('Error updating loan:', err);
@@ -131,11 +153,30 @@ router.delete('/:clientId/loans/:id', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(id) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
 
+        const existing = await db
+            .selectFrom('loans')
+            .selectAll()
+            .where('id', '=', id)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!existing) return res.status(404).json({ message: 'Loan not found' });
+
         await db
             .deleteFrom('loans')
             .where('id', '=', id)
             .where('clientId', '=', clientId)
             .execute();
+
+        logAudit({
+            clientId,
+            employeeId: existing.employeeId,
+            action: 'DELETE',
+            entityType: 'loan',
+            entityId: id,
+            oldValues: existing,
+            performedBy: 'admin',
+        });
 
         res.json({ success: true });
     } catch (err) {

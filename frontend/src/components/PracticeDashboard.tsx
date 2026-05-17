@@ -86,6 +86,7 @@ export default function PracticeDashboard() {
   const [vatPreviousCreditVals, setVatPreviousCreditVals] = useState<Record<string, string>>({});
   const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
   const [newClientModalError, setNewClientModalError] = useState<string | null>(null);
+  const [newClientPayStructure, setNewClientPayStructure] = useState<'fixed' | 'prorated'>('fixed');
 
   const resetNewClientForm = () => {
     setEditingClientId(null);
@@ -96,6 +97,7 @@ export default function PracticeDashboard() {
     setNewClientObligations([]);
     setNewClientMasterCsv(null);
     setNewClientModalError(null);
+    setNewClientPayStructure('fixed');
   };
 
   const openNewClientModal = (clientToEdit?: ClientObligation) => {
@@ -114,12 +116,14 @@ export default function PracticeDashboard() {
               .filter(Boolean)
           : [],
       );
+      setNewClientPayStructure((clientToEdit as any).payStructure || 'fixed');
     } else {
       setEditingClientId(null);
       setNewClientName('');
       setNewClientPin('');
       setNewClientPassword('');
       setNewClientObligations([]);
+      setNewClientPayStructure('fixed');
     }
     setNewClientModalError(null);
     setShowNewClientModal(true);
@@ -165,6 +169,7 @@ export default function PracticeDashboard() {
           pin,
           password,
           obligations: newClientObligations.map(normalizeClientObligation).join(', '),
+          payStructure: newClientPayStructure,
         },
       });
 
@@ -585,6 +590,8 @@ export default function PracticeDashboard() {
           setNewClientMasterCsv={setNewClientMasterCsv}
           newClientModalError={newClientModalError}
           setNewClientModalError={setNewClientModalError}
+          newClientPayStructure={newClientPayStructure}
+          setNewClientPayStructure={setNewClientPayStructure}
           isSavingClient={isSavingClient}
           resetNewClientForm={resetNewClientForm}
           handleSaveClient={handleSaveClient}

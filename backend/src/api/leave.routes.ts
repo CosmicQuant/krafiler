@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
+import { logAudit } from '../services/auditService';
 
 const router = Router();
 
@@ -57,6 +58,16 @@ router.post('/:clientId/leave', async (req, res) => {
             .where('id', '=', id)
             .executeTakeFirst();
 
+        logAudit({
+            clientId,
+            employeeId: employeeId || 0,
+            action: 'CREATE',
+            entityType: 'leave_request',
+            entityId: id,
+            newValues: record,
+            performedBy: 'admin',
+        });
+
         res.status(201).json(record);
     } catch (err) {
         console.error('Error creating leave request:', err);
@@ -105,6 +116,17 @@ router.put('/:clientId/leave/:id', async (req, res) => {
             .where('id', '=', id)
             .executeTakeFirst();
 
+        logAudit({
+            clientId,
+            employeeId: existing.employeeId,
+            action: 'UPDATE',
+            entityType: 'leave_request',
+            entityId: id,
+            oldValues: existing,
+            newValues: updated,
+            performedBy: 'admin',
+        });
+
         res.json(updated);
     } catch (err) {
         console.error('Error updating leave request:', err);
@@ -119,11 +141,30 @@ router.delete('/:clientId/leave/:id', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(id) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
 
+        const existing = await db
+            .selectFrom('leave_requests')
+            .selectAll()
+            .where('id', '=', id)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!existing) return res.status(404).json({ message: 'Leave request not found' });
+
         await db
             .deleteFrom('leave_requests')
             .where('id', '=', id)
             .where('clientId', '=', clientId)
             .execute();
+
+        logAudit({
+            clientId,
+            employeeId: existing.employeeId,
+            action: 'DELETE',
+            entityType: 'leave_request',
+            entityId: id,
+            oldValues: existing,
+            performedBy: 'admin',
+        });
 
         res.json({ success: true });
     } catch (err) {

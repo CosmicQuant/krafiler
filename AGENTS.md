@@ -5,7 +5,7 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 ## Architecture
 
 - **Monorepo** (`npm workspaces`): `frontend/` (React 18 + Vite + Tailwind) and `backend/` (Express 4 + TypeScript).
-- **Runtime model**: Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
+- **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
 - **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes.
 - **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
 - **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`.
@@ -26,12 +26,13 @@ Root-level shortcuts:
 Utility scripts (backend):
 - `npm run tot` — one-off ToT filing script (`src/scripts/file-kra-tot-return.ts`)
 - `npm run generate:tot` — ToT ZIP generator (`src/scripts/kra-tot-generator.ts`)
+- `npm run start` / `npm run start:worker` / `npm run start:tot` — production runs from compiled `dist/`
 
 ## Critical Setup
 
 1. `npm install` in both `frontend/` and `backend/`.
 2. `cd backend && npx playwright install chromium`
-3. `cp backend/.env.example backend/.env` — fill `GEMINI_API_KEY`, Redis credentials.
+3. `cp backend/.env.example backend/.env` — fill `GEMINI_API_KEY`, Redis credentials, `JWT_SECRET` (employee portal), and `SMTP_*` for payslip emailing.
 4. Start Redis → API → Worker → Frontend (four terminals).
 
 Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http://localhost:3001`.
@@ -45,7 +46,7 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 ## Database
 
 - SQLite file at `backend/src/db/krafiler.sqlite`.
-- Migrations auto-run on API startup (`initDb()` in `server.ts`). Migrations in `backend/src/db/migrations/`: `001_initial.ts`, `002_job_history.ts`.
+- Migrations auto-run on API startup (`initDb()` in `server.ts`). All 13 migrations in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
 - Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
 - Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
 
@@ -54,10 +55,13 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 From `.env.example`, key groups:
 
 | Variable | Purpose |
-|---|---|
+|---|---|---|
+| `JWT_SECRET` | Secret for signing employee portal JWT tokens |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Captcha solving via Gemini Vision API |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | BullMQ backing store |
+| `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
 | `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport) |
 | `PLAYWRIGHT_HEADLESS=false` | `true` for headless mode |
 | `PLAYWRIGHT_SLOW_MO=0` | Millisecond delay between Playwright actions (debugging) |
 | `KRA_BROWSER_CHANNEL=chrome` | Browser channel: `chrome` or `msedge` |
@@ -85,19 +89,62 @@ From `.env.example`, key groups:
 
 ## API Routes
 
+Routes are mounted in `backend/src/server.ts:87-104`:
+
+### `/api/tax` — KRA Filing (`tax.routes.ts`)
 - `POST /api/tax/file-return` (+ legacy `/api/tax/file-nil-return`) — Enqueue filing job. Rate limited: 10 req / 15 min per IP.
 - `GET /api/tax/filing-status/:jobId` — Poll job status/progress/stepLogs.
 - `POST /api/tax/filing-status/:jobId/cancel` — Request job cancellation (graceful checkpoint-based).
 - `POST /api/tax/file-nssf-return` — NSSF filing (reads credentials from uploaded Master CSV rows 3-4).
 - `POST /api/tax/generate-tot-zip` — Generate ToT ZIP package without filing.
+
+### `/api/payroll` — Payroll Processing (`payroll.routes.ts`)
 - `POST /api/payroll/generate-unified` — Payroll processing.
-- `GET|POST|PUT|DELETE /api/clients/...` — Client CRUD and Master CSV upload.
+
+### `/api/clients` — Practice Management
+All mounted under `/api/clients`:
+- `clients.routes.ts` — Client CRUD and Master CSV upload.
+- `employees.routes.ts` — Employee management.
+- `leave.routes.ts` — Leave requests and approvals.
+- `loans.routes.ts` — Loan management.
+- `attendance.routes.ts` — Attendance tracking.
+- `reports.routes.ts` — Reports.
+- `email.routes.ts` — Email sending (payslips, P9s).
+- `payroll-runs.routes.ts` — Payroll run lifecycle.
+- `departments.routes.ts` — Department management.
+- `documents.routes.ts` — Document upload/storage.
+- `audit.routes.ts` — Audit log queries.
+- `kpi.routes.ts` — KPI tracking.
+
+### `/api/auth` — Authentication (`auth.routes.ts`)
+- Employee portal login (JWT-based).
+
+### `/api/portal` — Employee Portal (`portal.routes.ts`)
+- Employee self-service endpoints (payslips, P9s, leave requests).
+
+### Other
+- `GET /health` — Health check.
+
+## Backend Services (non-worker)
+
+Located at `backend/src/services/`:
+- `payrollEngine.ts` — Core payroll computation logic.
+- `emailService.ts` — SMTP email dispatch for payslips/P9s.
+- `auditService.ts` — Audit trail recording (used across routes).
+
+## Frontend Architecture
+
+- **Router**: `App.tsx` defines routes: `/` → PracticeLandingPage, `/dashboard` → PracticeDashboard (catch-all for all modules).
+- **API client**: `services/api.ts` — Axios-based REST client.
+- **State**: `store/uiStore.ts` — Zustand store for UI state.
+- **Hooks**: `useClients.ts`, `useFilingActions.ts`, `useJobPolling.ts`, `useClientModal.ts` — TanStack Query wrappers in `hooks/`.
 
 ## Worker Services
 
 Located at `backend/src/workers/services/`:
-- `LoginService.ts` — Portal login, captcha, password reset, mobile verification.
-- `NilReturnService.ts`, `MriFilingService.ts`, `TotFilingService.ts`, `VatFilingService.ts`, `PayeFilingService.ts` — Per-return-type filing.
+- `LoginService.ts` — Defined but **dead code** (never instantiated); login+captcha is inline in the worker.
+- `NilReturnService.ts` — Defined but **dead code** (never instantiated); nil returns are handled inline.
+- `MriFilingService.ts`, `TotFilingService.ts`, `VatFilingService.ts`, `PayeFilingService.ts` — Per-return-type filing.
 - `NssfService.ts` — NSSF portal automation.
 - `PrnService.ts` — Payment Registration Number (PRN) generation.
 - `BrowserService.ts`, `NavigationService.ts`, `ReceiptService.ts` — Shared helpers.

@@ -56,14 +56,15 @@ export default function PracticeDashboard() {
 
   // Local state
   const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
-  const [showPayrollCompanyDetails, setShowPayrollCompanyDetails] = useState(false);
+  const [showPayrollView, setShowPayrollView] = useState(false);
   const isPayrollClient = selectedClient
     ? selectedClient.paye !== 'na' || selectedClient.nssf !== 'na' || selectedClient.sha !== 'na'
     : false;
 
-  useEffect(() => {
-    setShowPayrollCompanyDetails(false);
-  }, [selectedClient]);
+  const handleGoToPayrollView = (client: ClientObligation) => {
+    setSelectedClient(client);
+    setShowPayrollView(true);
+  };
 
   const [isGeneratingZips, setIsGeneratingZips] = useState(false);
   const [isGlobalUploading, setIsGlobalUploading] = useState(false);
@@ -458,28 +459,28 @@ export default function PracticeDashboard() {
               </div>
             )}
 
-            {selectedClient && !showPayrollCompanyDetails && isPayrollClient && (
+            {selectedClient && showPayrollView && isPayrollClient && (
               <div className="mt-10">
                 <PayrollWebView
                   client={selectedClient}
-                  onBack={() => { setSelectedClient(null); setShowPayrollCompanyDetails(false); }}
-                  onEditClient={() => setShowPayrollCompanyDetails(true)}
+                  onBack={() => { setSelectedClient(null); setShowPayrollView(false); }}
+                  onEditClient={() => setShowPayrollView(false)}
+                  onUploadMasterCsv={filingActions.uploadMasterCsv}
+                  onRemoveMasterCsv={filingActions.removeMasterCsv}
+                  onGeneratePayrollPacks={filingActions.generateClientZip}
+                  onAutoFilePaye={filingActions.autoFile}
+                  onAutoFileNssf={filingActions.fileNssf}
                 />
               </div>
             )}
 
-            {selectedClient && (showPayrollCompanyDetails || !isPayrollClient) && (
+            {selectedClient && !showPayrollView && (
               <div className="mt-10">
                 <CompanyDetails
                   client={selectedClient}
-                  onBack={() => {
-                    if (isPayrollClient) {
-                      setShowPayrollCompanyDetails(false);
-                    } else {
-                      setSelectedClient(null);
-                    }
-                  }}
+                  onBack={() => setSelectedClient(null)}
                   onSave={handleSaveClientDetails}
+                  onGoToPayrollView={isPayrollClient ? () => setShowPayrollView(true) : undefined}
                 />
               </div>
             )}
@@ -491,6 +492,7 @@ export default function PracticeDashboard() {
                 onOpenNewClientModal={() => openNewClientModal()}
                 onNavigateToView={(v) => setView(v)}
                 onBulkCsvUpload={filingActions.bulkCsvUpload(() => queryClient.invalidateQueries({ queryKey: ['clients'] }))}
+                onSelectClient={setSelectedClient}
               />
             )}
 
@@ -515,6 +517,7 @@ export default function PracticeDashboard() {
                 onOpenNewClientModal={openNewClientModal}
                 onGlobalMasterCsvUpload={filingActions.globalMasterCsvUpload}
                 onSelectClient={setSelectedClient}
+                onGoToPayrollView={handleGoToPayrollView}
               />
             )}
 
@@ -559,6 +562,7 @@ export default function PracticeDashboard() {
                 nilSelections={nilSelections}
                 setNilSelections={setNilSelections}
                 onFileNil={filingActions.fileNil}
+                onSelectClient={setSelectedClient}
                 filterType={view === 'income-tax-individual' ? 'income-tax-individual' : view === 'income-tax-company' ? 'income-tax-company' : null}
               />
             )}

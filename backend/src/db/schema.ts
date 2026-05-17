@@ -84,7 +84,105 @@ export interface JobHistoryTable {
     durationMs: number;
 }
 
+export interface EmployeesTable {
+    id: Generated<number>;
+    clientId: number;
+    payrollNumber: string;
+    employeeName: string;
+    idNumber: string;
+    kraPin: string;
+    nssfNo: string;
+    shaNo: string;
+    phone: string;
+    email: string;
+    bankName: string;
+    bankAccount: string;
+    bankCode: string;
+    department: string;
+    jobTitle: string;
+    employmentType: string;
+    employmentStatus: string;
+    dateJoined: string;
+    dateLeft: string | null;
+    basicPay: number;
+    passwordHash: string | null;
+    passwordChangedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LeaveRequestsTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    employeeName: string;
+    kraPin: string;
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+    daysCount: number;
+    reason: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LoansTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    employeeName: string;
+    kraPin: string;
+    loanType: string;
+    principal: number;
+    monthlyDeduction: number;
+    installments: number;
+    remainingInstallments: number;
+    interestRate: number;
+    totalInterest: number;
+    totalRepayable: number;
+    amountPaid: number;
+    status: string;
+    disbursedAt: string | null;
+    notes: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface AttendanceRecordsTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    employeeName: string;
+    kraPin: string;
+    date: string;
+    checkIn: string;
+    checkOut: string;
+    status: string;
+    notes: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface EmailHistoryTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    employeeName: string;
+    kraPin: string;
+    emailAddress: string;
+    documentType: string;
+    status: string;
+    errorMessage: string | null;
+    sentAt: string;
+}
+
 export interface Database {
     clients: ClientsTable;
     job_history: JobHistoryTable;
+    employees: EmployeesTable;
+    leave_requests: LeaveRequestsTable;
+    loans: LoansTable;
+    attendance_records: AttendanceRecordsTable;
+    email_history: EmailHistoryTable;
 }

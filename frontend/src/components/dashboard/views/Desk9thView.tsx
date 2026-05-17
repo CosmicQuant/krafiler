@@ -40,13 +40,13 @@ interface Desk9thViewProps {
   onOpenNewClientModal: (client?: ClientObligation) => void;
   onGlobalMasterCsvUpload: (file: File) => Promise<void>;
   onSelectClient?: (client: ClientObligation) => void;
+  onGoToPayrollView?: (client: ClientObligation) => void;
 }
 
 export function Desk9thView({
   clients,
   activeJobs,
   generatingClientIds,
-  uploadingClientIds,
   cancellingClientIds,
   isGeneratingZips,
   onGenerateClientZip,
@@ -55,11 +55,10 @@ export function Desk9thView({
   onCancelJob,
   onGenerateAllZips,
   onGeneratePrn,
-  onUploadMasterCsv,
-  onRemoveMasterCsv,
   onUpdateStatus,
   onOpenNewClientModal,
   onSelectClient,
+  onGoToPayrollView,
 }: Desk9thViewProps) {
   const payrollClients = clients.filter(
     (c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na',
@@ -111,7 +110,10 @@ export function Desk9thView({
                   >
                     {client.name}
                   </h4>
-                  <span className="text-xs text-slate-500">{client.pin}</span>
+                  <span
+                    className="text-xs text-slate-500 cursor-pointer hover:text-emerald-500"
+                    onClick={() => onSelectClient ? onSelectClient(client) : onOpenNewClientModal(client)}
+                  >{client.pin}</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-xs overflow-visible">
@@ -195,64 +197,13 @@ export function Desk9thView({
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2 border-t border-slate-200/50">
-                  {client.masterFileUrl ? (
-                    <div className="flex items-center gap-2 w-full">
-                      <a
-                        href={client.masterFileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-1 flex items-center justify-center rounded-lg border border-slate-300 bg-slate-200/50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300 hover:text-slate-900 transition"
-                      >
-                        <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0 text-slate-500" />
-                        <span className="truncate">{client.masterFileLabel || 'View Master CSV'}</span>
-                      </a>
-                      <label
-                        className="flex shrink-0 items-center justify-center cursor-pointer rounded-lg border border-slate-300 bg-slate-200/30 p-2 hover:bg-slate-300 transition"
-                        title="Replace CSV"
-                      >
-                        <RefreshCw className="h-4 w-4 text-slate-500 hover:text-slate-900" />
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept=".csv,.xlsx"
-                          onChange={(e) => {
-                            if (e.target.files?.[0]) {
-                              if (window.confirm('Replace the existing Master CSV?')) {
-                                void onUploadMasterCsv(client.id, e.target.files[0]);
-                              }
-                            }
-                          }}
-                        />
-                      </label>
-                      <button
-                        onClick={() => void onRemoveMasterCsv(client.id)}
-                        className="flex shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-50 p-2 hover:bg-red-100 transition"
-                        title="Remove Master CSV"
-                      >
-                        <X className="h-4 w-4 text-red-600" />
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="inline-flex cursor-pointer items-center justify-center w-full rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition">
-                      {uploadingClientIds[client.id] ? (
-                        <>
-                          <RefreshCw className="h-3 w-3 mr-2 animate-spin" /> Uploading...
-                        </>
-                      ) : (
-                        'Upload Master CSV'
-                      )}
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".csv,.xlsx"
-                        onChange={(e) => {
-                          if (e.target.files?.[0]) {
-                            void onUploadMasterCsv(client.id, e.target.files[0]);
-                          }
-                        }}
-                      />
-                    </label>
-                  )}
+                  <button
+                    onClick={() => onGoToPayrollView?.(client)}
+                    className="flex items-center justify-center w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 hover:text-slate-900 transition"
+                  >
+                    <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0 text-slate-500" />
+                    Go to Payroll View
+                  </button>
 
                   <div className="flex flex-col gap-2 mt-2">
                     {client.payeZipUrl && (
@@ -412,7 +363,7 @@ export function Desk9thView({
                     Client Portfolio
                   </th>
                   <th className="w-[18%] px-2 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider">
-                    Master CSV
+                    Payroll View
                   </th>
                   <th className="px-1 py-3 sm:px-2 sm:py-2 font-semibold uppercase tracking-wider text-center">
                     PAYE
@@ -448,71 +399,19 @@ export function Desk9thView({
                       >
                         {client.name}
                       </div>
-                      <div className="mt-1 text-xs text-slate-500">{client.pin}</div>
+                      <div
+                        className="mt-1 text-xs text-slate-500 cursor-pointer hover:text-emerald-500"
+                        onClick={() => onSelectClient ? onSelectClient(client) : onOpenNewClientModal(client)}
+                      >{client.pin}</div>
                     </td>
                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-2 sm:py-2">
-                      {client.masterFileUrl ? (
-                        <div className="flex max-w-[180px] flex-col gap-1.5 xl:max-w-[220px]">
-                          <a
-                            href={client.masterFileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex w-full items-center gap-2 truncate rounded-lg border border-slate-100 bg-slate-100/50 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition"
-                          >
-                            <FileSpreadsheet className="h-3 w-3 shrink-0 text-slate-500" />
-                            <span className="truncate">{client.masterFileLabel || 'Open file'}</span>
-                          </a>
-                          <div className="flex items-center justify-end gap-1.5">
-                            <label
-                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-200/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600 hover:bg-slate-300 transition"
-                              title="Replace CSV/XLSX"
-                            >
-                              <RefreshCw className="h-3 w-3 text-slate-500" />
-                              <span>Replace</span>
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept=".csv,.xlsx"
-                                onChange={(e) => {
-                                  if (e.target.files?.[0]) {
-                                    if (window.confirm('Replace the existing Master CSV?')) {
-                                      void onUploadMasterCsv(client.id, e.target.files[0]);
-                                    }
-                                  }
-                                }}
-                              />
-                            </label>
-                            <button
-                              onClick={() => void onRemoveMasterCsv(client.id)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700 hover:bg-red-100 transition"
-                              title="Remove Master CSV"
-                            >
-                              <X className="h-3 w-3 text-red-600" />
-                              <span>Remove</span>
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <label className="inline-flex w-full max-w-[180px] cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-100 bg-slate-50/60 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition xl:max-w-[220px]">
-                          {uploadingClientIds[client.id] ? (
-                            <>
-                              <RefreshCw className="h-3 w-3 mr-2 animate-spin" /> Uploading...
-                            </>
-                          ) : (
-                            'Upload Master CSV'
-                          )}
-                          <input
-                            type="file"
-                            className="hidden"
-                            accept=".csv,.xlsx"
-                            onChange={(e) => {
-                              if (e.target.files?.[0]) {
-                                void onUploadMasterCsv(client.id, e.target.files[0]);
-                              }
-                            }}
-                          />
-                        </label>
-                      )}
+                      <button
+                        onClick={() => onGoToPayrollView?.(client)}
+                        className="flex items-center justify-center w-full max-w-[180px] rounded-lg border border-slate-300 bg-slate-100/80 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 hover:text-slate-900 transition xl:max-w-[220px]"
+                      >
+                        <FileSpreadsheet className="h-4 w-4 mr-1.5 shrink-0 text-slate-500" />
+                        Go to Payroll View
+                      </button>
                     </td>
                     <td className="whitespace-normal min-w-0 px-1 py-3 sm:px-2 sm:py-2 text-center overflow-visible">
                       <div className="flex flex-col items-center gap-1">

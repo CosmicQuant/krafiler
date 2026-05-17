@@ -23,6 +23,7 @@ interface DeskNilViewProps {
     >
   >;
   onFileNil: (client: ClientObligation) => Promise<void>;
+  onSelectClient?: (client: ClientObligation) => void;
   filterType?: 'income-tax-individual' | 'income-tax-company' | null;
 }
 
@@ -32,6 +33,7 @@ export function DeskNilView({
   nilSelections,
   setNilSelections,
   onFileNil,
+  onSelectClient,
   filterType,
 }: DeskNilViewProps) {
   let availableOptions = TAX_OBLIGATION_OPTIONS.filter((o) => o.filingMode === 'nil');
@@ -75,7 +77,7 @@ export function DeskNilView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {clients.map((client) => {
+              {                  clients.map((client) => {
                 const sel = nilSelections[client.id] || {
                   type: '',
                   periodFrom: getPreviousYearIsoRange().periodFrom,
@@ -90,8 +92,14 @@ export function DeskNilView({
                 return (
                   <tr key={client.id} className="group transition hover:bg-slate-50">
                     <td className="px-6 py-4">
-                      <div className="font-bold text-slate-900">{client.name}</div>
-                      <div className="text-xs text-slate-500 font-mono mt-0.5">{client.pin}</div>
+                      <div
+                        className="font-bold text-slate-900 cursor-pointer hover:text-[#ff0613]"
+                        onClick={() => onSelectClient?.(client)}
+                      >{client.name}</div>
+                      <div
+                        className="text-xs text-slate-500 font-mono mt-0.5 cursor-pointer hover:text-[#ff0613]"
+                        onClick={() => onSelectClient?.(client)}
+                      >{client.pin}</div>
                     </td>
                     <td className="px-6 py-4">
                       {filterType ? (

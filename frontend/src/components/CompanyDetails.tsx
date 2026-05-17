@@ -6,6 +6,7 @@ interface CompanyDetailsProps {
     client: ClientObligation;
     onBack: () => void;
     onSave: (updatedClient: ClientObligation) => void | Promise<void>;
+    onGoToPayrollView?: () => void;
 }
 
 const ALL_OBLIGATIONS = [
@@ -19,7 +20,7 @@ const ALL_OBLIGATIONS = [
     { key: 'dst', label: 'DST' },
 ];
 
-export default function CompanyDetails({ client, onBack, onSave,     }: CompanyDetailsProps) {
+export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollView }: CompanyDetailsProps) {
     const [formData, setFormData] = useState({ ...client });
     const [selectedObligations, setSelectedObligations] = useState<string[]>(() => {
         if (client.obligations) {
@@ -277,6 +278,15 @@ export default function CompanyDetails({ client, onBack, onSave,     }: CompanyD
                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
                             <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500">Payroll Data</h3>
                             <div className="space-y-3">
+                                {onGoToPayrollView && (
+                                    <button
+                                        onClick={onGoToPayrollView}
+                                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 hover:text-slate-900 transition"
+                                    >
+                                        <FileArchive className="h-4 w-4" />
+                                        Open Payroll View
+                                    </button>
+                                )}
                                 {formData.masterFileUrl ? (
                                     <div className="flex flex-col gap-2">
                                         <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">

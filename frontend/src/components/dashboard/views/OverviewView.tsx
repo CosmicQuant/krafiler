@@ -38,6 +38,7 @@ interface OverviewViewProps {
   onOpenNewClientModal: () => void;
   onNavigateToView: (view: DashboardView) => void;
   onBulkCsvUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onSelectClient?: (client: any) => void;
 }
 
 export function OverviewView({
@@ -46,6 +47,7 @@ export function OverviewView({
   onOpenNewClientModal,
   onNavigateToView,
   onBulkCsvUpload,
+  onSelectClient,
 }: OverviewViewProps) {
   const deleteClientMutation = useDeleteClient();
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -195,6 +197,33 @@ export function OverviewView({
         ))}
       </div>
 
+      {/* Upcoming Deadlines — horizontal cards */}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {deadlines.map((d) => (
+          <button
+            key={d.title}
+            onClick={() => onNavigateToView(d.title.includes('Payroll') ? 'payroll' : 'vat')}
+            className={`rounded-xl border px-3 py-2.5 text-left transition-all hover:shadow-sm ${
+              d.urgent
+                ? 'border-[#ff0613]/20 bg-red-50/50'
+                : 'border-slate-100 bg-white shadow-sm hover:border-slate-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className={`text-xs font-bold truncate ${d.urgent ? 'text-[#ff0613]' : 'text-slate-700'}`}>{d.title}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] text-slate-400">{d.date}</span>
+                <div className={`h-1.5 w-1.5 rounded-full ${d.urgent ? 'bg-[#ff0613] animate-pulse' : 'bg-emerald-500'}`} />
+              </div>
+              {d.urgent && <AlertTriangle className="h-3 w-3 shrink-0 text-[#ff0613]" />}
+            </div>
+            <span className={`text-[11px] font-bold ${d.urgent ? 'text-[#ff0613]' : 'text-emerald-600'}`}>
+              {d.days} day{d.days !== 1 ? 's' : ''} left
+            </span>
+          </button>
+        ))}
+      </div>
+
       {/* Two Column Layout */}
       <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
         {/* Left Column */}
@@ -236,8 +265,14 @@ export function OverviewView({
                               <Building2 className="h-3.5 w-3.5" />
                             </div>
                             <div>
-                              <p className="text-sm font-semibold text-slate-900">{client.name}</p>
-                              <p className="text-[10px] font-mono text-slate-400">{client.pin}</p>
+                              <p
+                                className="text-sm font-semibold text-slate-900 cursor-pointer hover:text-[#ff0613]"
+                                onClick={() => onSelectClient?.(client)}
+                              >{client.name}</p>
+                              <p
+                                className="text-[10px] font-mono text-slate-400 cursor-pointer hover:text-[#ff0613]"
+                                onClick={() => onSelectClient?.(client)}
+                              >{client.pin}</p>
                             </div>
                           </div>
                         </td>
@@ -497,36 +532,6 @@ export function OverviewView({
                 <Briefcase className="h-4 w-4 text-slate-600" />
               </div>
             </button>
-          </div>
-
-          {/* Deadlines */}
-          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900 mb-4">Upcoming Deadlines</h3>
-            <div className="space-y-3">
-              {deadlines.map((d) => (
-                <button
-                  key={d.title}
-                  onClick={() => onNavigateToView(d.title.includes('Payroll') ? 'payroll' : 'vat')}
-                  className={`w-full text-left rounded-xl border p-4 transition-all hover:shadow-sm ${
-                    d.urgent
-                      ? 'border-[#ff0613]/20 bg-red-50/50'
-                      : 'border-slate-100 bg-slate-50/50 hover:border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className={`text-sm font-bold ${d.urgent ? 'text-[#ff0613]' : 'text-slate-700'}`}>{d.title}</p>
-                    {d.urgent && <AlertTriangle className="h-4 w-4 text-[#ff0613]" />}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400">{d.date}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className={`h-2 w-2 rounded-full ${d.urgent ? 'bg-[#ff0613] animate-pulse' : 'bg-emerald-500'}`} />
-                    <span className={`text-xs font-bold ${d.urgent ? 'text-[#ff0613]' : 'text-emerald-600'}`}>
-                      {d.days} days left
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Mini Tip */}

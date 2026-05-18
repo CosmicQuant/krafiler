@@ -3,6 +3,40 @@ import { db } from '../db/kysely';
 
 const router = Router();
 
+async function autoCalculateOvertime(clientId: number, employeeId: number, date: string, checkOut: string): Promise<void> {
+    if (!checkOut || !date || !employeeId) return;
+    const emp = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).where('clientId', '=', clientId).executeTakeFirst();
+    if (!emp) return;
+
+    const standardCO = emp.standardCheckOut || '17:00';
+    const [sH, sM] = standardCO.split(':').map(Number);
+    const [cH, cM] = checkOut.split(':').map(Number);
+    if (isNaN(sH) || isNaN(cH)) return;
+
+    const standardMins = sH * 60 + (sM || 0);
+    const actualMins = cH * 60 + (cM || 0);
+    if (actualMins <= standardMins) {
+        await db.deleteFrom('overtime_records').where('clientId', '=', clientId).where('employeeId', '=', employeeId).where('period', '=', date.substring(0, 7)).execute();
+        return;
+    }
+
+    const overtimeHours = (actualMins - standardMins) / 60;
+    const hourlyRate = (emp.basicPay || 0) / 240;
+    const amount = Math.round(overtimeHours * hourlyRate * 1.5 * 100) / 100;
+    const period = date.substring(0, 7);
+
+    await db.deleteFrom('overtime_records').where('clientId', '=', clientId).where('employeeId', '=', employeeId).where('period', '=', period).execute();
+    await db.insertInto('overtime_records').values({
+        clientId, employeeId, period,
+        hours: Math.round(overtimeHours * 100) / 100,
+        rate: Math.round(hourlyRate * 100) / 100,
+        multiplier: 1.5,
+        amount,
+        description: '',
+        createdAt: new Date().toISOString(),
+    }).execute();
+}
+
 // GET /api/clients/:clientId/attendance
 router.get('/:clientId/attendance', async (req, res) => {
     try {
@@ -68,6 +102,7 @@ router.post('/:clientId/attendance', async (req, res) => {
             .executeTakeFirst();
 
         res.status(201).json(record);
+        autoCalculateOvertime(clientId, employeeId || 0, date || '', checkOut || '').catch(() => {});
     } catch (err) {
         console.error('Error creating attendance record:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -115,6 +150,10 @@ router.put('/:clientId/attendance/:id', async (req, res) => {
             .executeTakeFirst();
 
         res.json(updated);
+        const effEmployeeId = employeeId !== undefined ? employeeId : existing.employeeId;
+        const effDate = date !== undefined ? date : existing.date;
+        const effCheckOut = checkOut !== undefined ? checkOut : existing.checkOut;
+        autoCalculateOvertime(clientId, effEmployeeId, effDate, effCheckOut).catch(() => {});
     } catch (err) {
         console.error('Error updating attendance record:', err);
         res.status(500).json({ message: 'Internal server error' });

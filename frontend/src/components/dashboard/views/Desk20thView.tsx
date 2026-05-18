@@ -32,6 +32,8 @@ interface Desk20thViewProps {
   setTotInputVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   vatPreviousCreditVals: Record<string, string>;
   setVatPreviousCreditVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  vatSectionBWithoutPinVals: Record<string, string>;
+  setVatSectionBWithoutPinVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onPrepareVat: (client: ClientObligation) => Promise<void>;
   onConfirmVatFiling: (client: ClientObligation) => Promise<void>;
   onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
@@ -55,6 +57,8 @@ export function Desk20thView({
   setTotInputVals,
   vatPreviousCreditVals,
   setVatPreviousCreditVals,
+  vatSectionBWithoutPinVals,
+  setVatSectionBWithoutPinVals,
   onPrepareVat,
   onConfirmVatFiling,
   onGeneratePrn,
@@ -160,6 +164,11 @@ export function Desk20thView({
                     : '');
                 const parsedVatInputValue = vatInputValue.trim().length > 0 ? Number.parseFloat(vatInputValue) : 0;
                 const vatCurrentCredit = Number.isFinite(parsedVatInputValue) ? parsedVatInputValue : 0;
+                const vatSectionBWithoutPinInputValue =
+                  vatSectionBWithoutPinVals[ob.client.id] ??
+                  (typeof ob.client.vatSectionBWithoutPinSales === 'number'
+                    ? String(ob.client.vatSectionBWithoutPinSales)
+                    : '');
                 const vatHasPreparedArtifacts = Boolean(vatGeneratedZipUrl);
                 const vatCreditMatchesPrepared = isSameMoney(vatSummary.previousCredit, vatCurrentCredit);
                 const vatGenerateActionLabel = vatHasPreparedArtifacts ? 'Regenerate VAT ZIP' : 'Generate VAT ZIP';
@@ -247,6 +256,28 @@ export function Desk20thView({
                     <td className="px-4 py-4 min-w-[280px]">
                       {ob.type === 'VAT' && (
                         <div className="flex flex-col gap-3 rounded-xl bg-slate-50 border border-slate-200/50 p-4 shadow-sm group-hover:border-slate-300 transition">
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              Section B Without VAT PIN Sales
+                            </label>
+                            <div className="mt-1 flex items-center gap-2">
+                              <span className="text-xs font-medium text-slate-500">KES</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="Sales to non-VAT buyers"
+                                value={vatSectionBWithoutPinInputValue}
+                                onChange={(e) =>
+                                  setVatSectionBWithoutPinVals((prev) => ({
+                                    ...prev,
+                                    [ob.client.id]: e.target.value,
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 transition shadow-inner"
+                              />
+                            </div>
+                          </div>
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                               Previous Month VAT Credit

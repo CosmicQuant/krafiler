@@ -60,6 +60,7 @@ export type ClientObligation = {
     vatInputVat?: number;
     vatOutputVat?: number;
     vatPreviousCredit?: number;
+    vatSectionBWithoutPinSales?: number;
     vatPayableVat?: number;
     vatNetVatBalance?: number;
     vatPreparedAt?: string;

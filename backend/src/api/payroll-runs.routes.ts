@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
 import { computePayrollEntry } from '../services/payrollEngine';
+import { generateComplianceFromPayrollRun } from '../services/complianceFileGenerator';
 import PDFDocument from 'pdfkit';
 
 const router = Router();
@@ -612,6 +613,30 @@ router.post('/:clientId/employees/:employeeId/overtime', async (req, res) => {
     }
 });
 
+// DELETE /api/clients/:clientId/employees/:employeeId/overtime?period=YYYY-MM
+router.delete('/:clientId/employees/:employeeId/overtime', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.clientId, 10);
+        const employeeId = parseInt(req.params.employeeId, 10);
+        if (isNaN(clientId) || isNaN(employeeId)) return res.status(400).json({ message: 'Invalid ID' });
+
+        const period = req.query.period as string;
+        if (!period) return res.status(400).json({ message: 'period query parameter is required' });
+
+        await db
+            .deleteFrom('overtime_records')
+            .where('clientId', '=', clientId)
+            .where('employeeId', '=', employeeId)
+            .where('period', '=', period)
+            .execute();
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting overtime:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 // GET /api/clients/:clientId/payroll-runs/:id/overtime — fetch overtime records for a run's period
 router.get('/:clientId/payroll-runs/:id/overtime', async (req, res) => {
     try {
@@ -633,6 +658,29 @@ router.get('/:clientId/payroll-runs/:id/overtime', async (req, res) => {
             .selectAll()
             .where('clientId', '=', clientId)
             .where('period', '=', run.period)
+            .execute();
+
+        res.json(records);
+    } catch (err) {
+        console.error('Error fetching overtime:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// GET /api/clients/:clientId/overtime-by-period?period=YYYY-MM — overtime by period (no run needed)
+router.get('/:clientId/overtime-by-period', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const period = req.query.period as string;
+        if (!period) return res.status(400).json({ message: 'period query parameter is required (YYYY-MM)' });
+
+        const records = await db
+            .selectFrom('overtime_records')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('period', '=', period)
             .execute();
 
         res.json(records);
@@ -1011,5 +1059,65 @@ router.get('/:clientId/p11/:kraPin/pdf', async (req, res) => {
 function roundMoney(amount: number): number {
     return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
+
+// ─── Compliance File Generation ─────────────────────────────────────────────
+
+// POST /api/clients/:clientId/payroll-runs/:id/generate-compliance
+router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(id) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
+
+        const { generatePaye, generateNssf, generateSha } = req.body;
+
+        const result = await generateComplianceFromPayrollRun(id, clientId, {
+            generatePaye: generatePaye !== false,
+            generateNssf: generateNssf !== false,
+            generateSha: generateSha !== false,
+        });
+
+        // Update client table with generated file URLs and amounts
+        const updates: Record<string, any> = {};
+        if (result.payeZipUrl) {
+            updates.payeZipUrl = result.payeZipUrl;
+            updates.payeZipLabel = result.payeZipLabel;
+        }
+        if (result.nssfFileUrl) {
+            updates.nssfFileUrl = result.nssfFileUrl;
+            updates.nssfFileLabel = result.nssfFileLabel;
+        }
+        if (result.shaFileUrl) {
+            updates.shaFileUrl = result.shaFileUrl;
+            updates.shaFileLabel = result.shaFileLabel;
+        }
+        updates.payeAmount = result.summaryAmounts.payeAmount;
+        updates.nitaAmount = result.summaryAmounts.nitaAmount;
+        updates.housingLevyAmount = result.summaryAmounts.housingLevyAmount;
+        updates.nssfAmount = result.summaryAmounts.nssfAmount;
+        updates.shaAmount = result.summaryAmounts.shaAmount;
+
+        await db.updateTable('clients').set(updates).where('id', '=', clientId).execute();
+
+        res.json({
+            payeZipUrl: result.payeZipUrl,
+            payeZipLabel: result.payeZipLabel,
+            nssfFileUrl: result.nssfFileUrl,
+            nssfFileLabel: result.nssfFileLabel,
+            shaFileUrl: result.shaFileUrl,
+            shaFileLabel: result.shaFileLabel,
+            summaryAmounts: result.summaryAmounts,
+        });
+    } catch (err: any) {
+        console.error('Error generating compliance files:', err);
+        if (err.message === 'Payroll run not found' || err.message === 'Client not found') {
+            res.status(404).json({ message: err.message });
+        } else if (err.message === 'No payroll entries found for this run') {
+            res.status(400).json({ message: err.message });
+        } else {
+            res.status(500).json({ message: err.message || 'Failed to generate compliance files' });
+        }
+    }
+});
 
 export default router;

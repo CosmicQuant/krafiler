@@ -50,11 +50,25 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Reque
             return res.status(400).json({ error: 'No CSV file uploaded.' });
         }
 
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
+        const currentDay = now.getDate();
+        let defaultMonth = currentMonth;
+        let defaultYear = currentYear;
+        if (currentDay <= 9) {
+            defaultMonth = currentMonth - 1;
+            if (defaultMonth === 0) { defaultMonth = 12; defaultYear = currentYear - 1; }
+        }
+        const defaultPeriod = `${String(defaultMonth).padStart(2, '0')}${defaultYear}`;
+
+        const periodMMYYYY = req.body.periodMMYYYY || defaultPeriod;
+
         const config = {
             employerPin: 'P000000000A',
             nssfEmployerNo: 'N00000000',
             employerName: 'TEST COMPANY LTD',
-            periodMMYYYY: '042026'
+            periodMMYYYY,
         };
 
         const options = {

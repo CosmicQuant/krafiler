@@ -1,4 +1,4 @@
-﻿COMPANY NAME:,GOLDEN CLOVE INVESTMENT LIMITED
+COMPANY NAME:,GOLDEN CLOVE INVESTMENT LIMITED
 COMPANY KRA PIN:,P052262687K
 COMPANY NSSF NO:,24041742
 COMPANY NSSF PASSWORD:,24041742
@@ -6,6 +6,6 @@ COMPANY SHA LOGIN:,
 COMPANY SHA PASSWORD:,
 
 Payroll Number,PIN of Employee,ID Number,Identity Type,Name of Employee,SHA No,NSSF No,Residential Status,Type of Employee,Persons with Disability(PWD),Exemption Certificate,Total Cash Pay (A),Value of Car Benefit (B),Value of Meals (C),Non Cash Benefits (D),Type of Housing,Housing Benefit (F),Other Benefits (G),Total Gross Pay (Ksh) (H),Social Health Insurance Fund (I),NSSF Contribution (J),Other Pension Contribution (K),Post Retirement Medical Fund (L),Mortgage Interest (M),Affordable Housing Levy (N),Taxable Pay(Ksh) (O),Monthly Personal Relief (Ksh) (P),Amount of Insurance Relief (Q),PAYE Tax (Ksh) (R),Self Assessed PAYE Tax (Ksh) (S)
-1,A004386405Q,22503847,National ID,Said Ali,CR3039079816869-0,2034387226,Resident,Primary Employee,No,0,30000,0,0,0,Benefit not given,0,0,30000.00,825.00,1800.00,0,0,0,450.00,26925.00,2400.00,0,731.25,731.25
-2,A013554210D,33926980,National ID,Ali Mwalimu Kassim,,2021466055,Resident,Primary Employee,No,0,16000,0,0,0,Benefit not given,0,0,16000.00,440.00,960.00,0,0,0,240.00,14360.00,2400.00,0,0.00,0.00
-3,A017444897K,39679210,National ID,Kevin Barasa,,2046011233,Resident,Primary Employee,No,0,15000,0,0,0,Benefit not given,0,0,15000.00,412.50,900.00,0,0,0,225.00,13462.50,2400.00,0,0.00,0.00
+1,A004386405Q,22503847,National ID,Said Ali,CR3039079816869-0,2034387226,Resident,Primary Employee,No,0,30000,0,0,0,Benefit not given,0,0,30000,825,1800,0,0,0,450,26925,2400,0,731.25,731.25
+2,A013554210D,33926980,National ID,Ali Mwalimu Kassim,,2021466055,Resident,Primary Employee,No,0,16000,0,0,0,Benefit not given,0,0,16000,440,960,0,0,0,240,14360,2400,0,0,0
+3,A017444897K,39679210,National ID,Kevin Barasa,,2046011233,Resident,Primary Employee,No,0,15000,0,0,0,Benefit not given,0,0,15000,412.5,900,0,0,0,225,13462.5,2400,0,0,0

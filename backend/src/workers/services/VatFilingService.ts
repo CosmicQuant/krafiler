@@ -27,7 +27,7 @@ export class VatFilingService {
         this.job = job;
     }
 
-    async prepareFromPortal(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number }): Promise<VatPrepareResult> {
+    async prepareFromPortal(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
         const sourceZipPath = await downloadVatAutoPopulatedReturn(this.page, this.job, options.kraPin);
 
         try {
@@ -39,6 +39,7 @@ export class VatFilingService {
                     periodFrom: options.periodFrom,
                     periodTo: options.periodTo,
                     previousCredit: options.previousCredit,
+                    sectionBWithoutPinSales: options.sectionBWithoutPinSales,
                 })
             );
 

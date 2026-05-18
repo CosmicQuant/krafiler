@@ -52,6 +52,8 @@ export interface NilReturnPayload {
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
     vatPreviousCredit?: number;
+    /** User-supplied taxable sales to non-VAT-registered buyers to add to Section B without-PIN totals */
+    sectionBWithoutPinSales?: number;
     nssfFileUrl?: string;
     masterFileUrl?: string;
 }
@@ -111,6 +113,7 @@ export interface FileNilReturnRequest {
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
     vatPreviousCredit?: number;
+    sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;
 }
 

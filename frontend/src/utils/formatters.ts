@@ -41,15 +41,31 @@ export function buildStoredArtifactUrl(resultPath?: string) {
     return `/api/${normalized.replace(/^\/+/, '')}`;
 }
 
-export function getPreviousMonthIsoRange(referenceDate = new Date()) {
-    const year = referenceDate.getFullYear();
-    const month = referenceDate.getMonth();
-    const previousMonthStart = new Date(year, month - 1, 1);
-    const previousMonthEnd = new Date(year, month, 0);
+export function getCurrentFilingPeriod() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+
+    let filingMonth = month;
+    let filingYear = year;
+
+    if (day <= 9) {
+        filingMonth = month - 1;
+        if (filingMonth === 0) { filingMonth = 12; filingYear--; }
+    }
+
+    const mm = String(filingMonth).padStart(2, '0');
+    const yyyy = String(filingYear);
+    const lastDay = new Date(filingYear, filingMonth, 0).getDate();
+    const dd = String(lastDay).padStart(2, '0');
 
     return {
-        periodFrom: previousMonthStart.toISOString().slice(0, 10),
-        periodTo: previousMonthEnd.toISOString().slice(0, 10),
+        period: `${yyyy}-${mm}`,
+        periodFrom: `${yyyy}-${mm}-01`,
+        periodTo: `${yyyy}-${mm}-${dd}`,
+        mmYYYY: `${mm}${yyyy}`,
+        mmSlashYYYY: `${mm}/${yyyy}`,
     };
 }
 

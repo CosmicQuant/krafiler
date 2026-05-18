@@ -6,7 +6,7 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 
 - **Monorepo** (`npm workspaces`): `frontend/` (React 18 + Vite + Tailwind) and `backend/` (Express 4 + TypeScript).
 - **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
-- **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes.
+- **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker.
 - **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
 - **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`.
 - **VAT has two modes**: `prepareVatOnly` (download auto-populated data & generate ZIP without filing) and `upload` (file the prepared ZIP).
@@ -46,20 +46,22 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 ## Database
 
 - SQLite file at `backend/src/db/krafiler.sqlite`.
-- Migrations auto-run on API startup (`initDb()` in `server.ts`). All 13 migrations in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
+- Migrations auto-run on API startup (`initDb()` in `server.ts`). 15 migrations in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
 - Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
 - Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
+- `DB_PATH` env var overrides the SQLite location (default: alongside `kysely.ts`).
 
 ## Environment Variables (Backend)
 
-From `.env.example`, key groups:
+From `.env.example` and additional code-read vars:
 
 | Variable | Purpose |
-|---|---|---|
+|---|---|
 | `JWT_SECRET` | Secret for signing employee portal JWT tokens |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Captcha solving via Gemini Vision API |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | BullMQ backing store |
 | `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
+| `NODE_ENV` | `development` or `production` (changes Playwright headless behavior in some scripts) |
 | `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport) |
 | `PLAYWRIGHT_HEADLESS=false` | `true` for headless mode |
@@ -71,6 +73,8 @@ From `.env.example`, key groups:
 | `KRA_OTP_CODE` | Pre-set OTP for mobile verification (bypasses SMS fetch) |
 | `KRA_DEBUG_ARTIFACTS=false` | Dump login page elements, screenshots, nav metadata to console |
 | `TEMP_DIR` | Temporary directory for receipts/captchas (default: `/tmp` or `C:\Temp`) |
+| `DB_PATH` | Override SQLite DB location (not in `.env.example`) |
+| `RECEIPTS_DIR` | Receipt storage directory (not in `.env.example`) |
 | `AWS_*` / `S3_BUCKET_NAME` | Defined in `.env.example`, **not wired** — receipts stay local |
 | `WEBHOOK_URL` / `WEBHOOK_SECRET` | Defined, **not wired** — notification is a mock log |
 
@@ -82,7 +86,7 @@ From `.env.example`, key groups:
 - **Mobile verification**: Worker waits for OTP — provide via `otpCode` in payload or `KRA_OTP_CODE` env var. No SMS gateway integration exists.
 - **Browser launch strategy**: tries `KRA_BROWSER_EXECUTABLE_PATH` → Windows system browsers (Chrome/Edge) → Playwright channel → bundled Chromium.
 - **Job dedup**: API checks for pending (waiting/active/delayed) jobs with identical parameters before enqueuing — returns 409 with existing `jobId`.
-- **Receipts**: Stored locally under `receipts/<jobId>/receipt.pdf`, served via `/api/receipts/...`.
+- **Receipts**: Stored locally under `receipts/<jobId>/receipt.pdf`, served via `/api/receipts/...`. Server hardcodes `receipts/` relative to project root; storage utility respects `RECEIPTS_DIR` env var (mismatch possible if overridden).
 - **Job queue settings**: `attempts: 1`, no retries. KRA validation/credential errors surface immediately.
 - **Cancellation**: Jobs can be cancelled mid-execution via `POST /api/tax/filing-status/:jobId/cancel`. Worker polls for `cancelRequestedAt` at checkpoints.
 - **PAYE/VAT**: Upload artifacts are resolved from URLs (downloaded to `TEMP_DIR`) or local filesystem paths — see `resolveUploadArtifactPath()`.
@@ -131,6 +135,7 @@ Located at `backend/src/services/`:
 - `payrollEngine.ts` — Core payroll computation logic.
 - `emailService.ts` — SMTP email dispatch for payslips/P9s.
 - `auditService.ts` — Audit trail recording (used across routes).
+- `complianceFileGenerator.ts` — Generates SHA/PAYE/NSSF/ToT compliance ZIP packages.
 
 ## Frontend Architecture
 
@@ -156,3 +161,6 @@ Located at `backend/src/workers/services/`:
 - **Worker concurrency must stay at 1** — increasing it risks KRA IP bans.
 - **No CI, no tests, no lint rules** — verify by manual type-checking (`tsc --noEmit`) and local worker runs.
 - **Duplicate filing guard**: the API rejects identical pending jobs — an agent modifying filing parameters should be aware of the dedup key.
+- **Search policy**: `AGENTS-node_modules.md` prohibits reading/traversing `node_modules/` without explicit user instruction.
+- **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.
+- **`receipts/` is git-ignored** (`.gitignore` line 19).

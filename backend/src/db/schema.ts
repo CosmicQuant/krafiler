@@ -107,6 +107,7 @@ export interface EmployeesTable {
     employmentStatus: string;
     dateJoined: string;
     dateLeft: string | null;
+    standardCheckOut: string;
     basicPay: number;
     passwordHash: string | null;
     passwordChangedAt: string | null;

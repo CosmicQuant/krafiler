@@ -83,6 +83,8 @@ export type PrepareVatReturnParams = {
     periodFrom: string;
     periodTo: string;
     previousCredit: number;
+    /** User-entered taxable sales to non-VAT-registered buyers, added to Section B without-PIN totals */
+    sectionBWithoutPinSales?: number;
 };
 
 function sanitizeClientName(clientName: string): string {
@@ -735,6 +737,14 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const cWithoutPin = mapSectionRows({ rows: cSource.withoutPin, section: 'C' });
     const dWithoutPin = mapSectionRows({ rows: dSource.withoutPin, section: 'D1' });
     const eWithoutPin = mapSectionRows({ rows: eSource.withoutPin, section: 'E' });
+
+    // ── Incorporate user-supplied section B without-PIN sales ────────────────
+    if (params.sectionBWithoutPinSales && Number.isFinite(params.sectionBWithoutPinSales) && params.sectionBWithoutPinSales > 0) {
+        const extraBase = round(params.sectionBWithoutPinSales, 2);
+        const extraVat = round(extraBase * 0.16, 2);
+        bWithoutPin.totalBase += extraBase;
+        bWithoutPin.totalVat += extraVat;
+    }
 
     // ── Process purchases ───────────────────────────────────────────────────
     const fPurchases = mapSectionRows({ rows: fSource, section: 'F' });

@@ -8,7 +8,7 @@
 import { useRef, useCallback } from 'react';
 import { apiFetch } from '../services/api';
 import { ClientObligation, FilingJobState, ActiveDashboardJob, TaxStatus } from '../types';
-import { getPreviousMonthIsoRange } from '../utils/taxPeriods';
+import { getCurrentFilingPeriod } from '../utils/taxPeriods';
 import { isPendingFilingJob, isTerminalFilingJob, markPayrollStatusesGenerated } from '../utils/dashboardUtils';
 
 export type DashboardNotice = { tone: 'success' | 'error' | 'info'; message: string } | null;
@@ -16,6 +16,7 @@ export type DashboardNotice = { tone: 'success' | 'error' | 'info'; message: str
 export type FilingActionsDeps = {
     setDashboardNotice: (notice: DashboardNotice) => void;
     setClients: React.Dispatch<React.SetStateAction<ClientObligation[]>>;
+    setSelectedClient?: React.Dispatch<React.SetStateAction<ClientObligation | null>>;
     setActiveJobs: React.Dispatch<React.SetStateAction<Record<string, ActiveDashboardJob>>>;
     setGeneratingClientIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
     setCancellingClientIds?: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
@@ -25,6 +26,7 @@ export type FilingActionsDeps = {
     getActiveJobs: () => Record<string, ActiveDashboardJob>;
     getNilSelections: () => Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>;
     getVatPreviousCreditVals: () => Record<string, string>;
+    getVatSectionBWithoutPinVals: () => Record<string, string>;
     getMriInputVals: () => Record<string, string>;
     getTotInputVals: () => Record<string, string>;
 };
@@ -95,19 +97,19 @@ export function useFilingActions(deps: FilingActionsDeps) {
         }
 
         const data = await response.json();
+        const updatedClient = {
+            ...markPayrollStatusesGenerated(client),
+            payeZipUrl: data.paye?.url,
+            payeZipLabel: data.paye?.label,
+            nssfFileUrl: data.nssf?.url,
+            nssfFileLabel: data.nssf?.label,
+            shaFileUrl: data.sha?.url,
+            shaFileLabel: data.sha?.label,
+        };
         d.setClients((current) => current.map((existingClient) => (
-            existingClient.id === client.id
-                ? {
-                    ...markPayrollStatusesGenerated(existingClient),
-                    payeZipUrl: data.paye?.url,
-                    payeZipLabel: data.paye?.label,
-                    nssfFileUrl: data.nssf?.url,
-                    nssfFileLabel: data.nssf?.label,
-                    shaFileUrl: data.sha?.url,
-                    shaFileLabel: data.sha?.label,
-                }
-                : existingClient
+            existingClient.id === client.id ? updatedClient : existingClient
         )));
+        if (d.setSelectedClient) d.setSelectedClient((prev: ClientObligation | null) => prev?.id === client.id ? updatedClient : prev);
         return data;
     }, []);
 
@@ -189,7 +191,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!activeClient.payeZipUrl) throw new Error("No PAYE ZIP available to upload.");
 
             d.setDashboardNotice({ tone: 'info', message: `Dispatching KRA filing job for ${client.name}...` });
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+            const { periodFrom, periodTo } = getCurrentFilingPeriod('paye');
             const payload = {
                 kraPin: activeClient.pin,
                 kraPassword: activeClient.password || activeClient.iTaxPassword || "1234",
@@ -219,6 +221,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const d = getD();
         const activeJobs = d.getActiveJobs();
         const vatPreviousCreditVal = d.getVatPreviousCreditVals()[client.id] || '';
+        const vatSectionBWithoutPinVal = d.getVatSectionBWithoutPinVals()[client.id] || '';
         try {
             if (isPendingFilingJob(activeJobs[client.id])) {
                 d.setDashboardNotice({ tone: 'info', message: `A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.` });
@@ -226,9 +229,10 @@ export function useFilingActions(deps: FilingActionsDeps) {
             }
             const previousCredit = !vatPreviousCreditVal.trim() ? 0 : parseFloat(vatPreviousCreditVal);
             if (!Number.isFinite(previousCredit) || previousCredit < 0) throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
+            const sectionBWithoutPinSales = !vatSectionBWithoutPinVal.trim() ? 0 : parseFloat(vatSectionBWithoutPinVal);
+            if (!Number.isFinite(sectionBWithoutPinSales) || sectionBWithoutPinSales < 0) throw new Error(`Enter a valid non-negative Section B Without PIN sales amount for ${client.name}.`);
 
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
-            d.setDashboardNotice({ tone: 'info', message: `Generating VAT ZIP for ${client.name}. The worker will download the KRA auto-populated package first.` });
+            const { periodFrom, periodTo } = getCurrentFilingPeriod('vat');
 
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
@@ -243,6 +247,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                     ownsRentalProperty: false,
                     prepareVatOnly: true,
                     vatPreviousCredit: previousCredit,
+                    sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
                 }),
             });
 
@@ -284,7 +289,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const previousCredit = !vatPreviousCreditVal.trim() ? 0 : parseFloat(vatPreviousCreditVal);
             if (!Number.isFinite(previousCredit) || previousCredit < 0) throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
 
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+            const { periodFrom, periodTo } = getCurrentFilingPeriod('vat');
             d.setDashboardNotice({ tone: 'info', message: `Filing VAT for ${client.name} with the generated ZIP.` });
 
             const res = await apiFetch('/tax/file-return', {
@@ -330,7 +335,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         d.setDashboardNotice({ tone: 'info', message: `Queuing PRN Generation for ${client.name} (${type})...` });
         try {
             const taxObligationMap: Record<string, string> = { 'PAYE': 'paye', 'TOT': 'turnover_tax', 'MRI': 'monthly_rental_income', 'VAT': 'vat' };
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+            const { periodFrom, periodTo } = getCurrentFilingPeriod(taxObligationMap[type]);
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -364,7 +369,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const res = await apiFetch('/tax/file-nssf-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nssfFileUrl: client.nssfFileUrl, masterFileUrl: client.masterFileUrl, period: "04/2026" }),
+                body: JSON.stringify({ nssfFileUrl: client.nssfFileUrl, masterFileUrl: client.masterFileUrl, period: getCurrentFilingPeriod('nssf').mmSlashYYYY }),
             });
             const dataResp = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -433,7 +438,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         d.setDashboardNotice({ tone: 'info', message: `Starting MRI Auto-filing for ${client.name}... ` });
         try {
             const isNilMri = amount === 0;
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+            const { periodFrom, periodTo } = getCurrentFilingPeriod('monthly_rental_income');
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -478,7 +483,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             currentDate.setMonth(currentDate.getMonth() - 1);
             const year = currentDate.getFullYear();
             const isNilTot = amount === 0;
-            const { periodFrom, periodTo } = getPreviousMonthIsoRange();
+            const { periodFrom, periodTo } = getCurrentFilingPeriod('turnover_tax');
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -667,6 +672,40 @@ export function useFilingActions(deps: FilingActionsDeps) {
         d.setDashboardNotice({ tone: 'success', message: `Updated ${field.toUpperCase()} status.` });
     }, []);
 
+    const generatePayrollCompliance = useCallback(async (client: ClientObligation, runId: number) => {
+        const d = getD();
+        d.setDashboardNotice({ tone: 'info', message: `Generating compliance files for ${client.name}...` });
+        try {
+            const res = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/generate-compliance`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.message || 'Failed to generate compliance files.');
+            const updatedClient = {
+                ...client,
+                payeZipUrl: data.payeZipUrl,
+                payeZipLabel: data.payeZipLabel,
+                nssfFileUrl: data.nssfFileUrl,
+                nssfFileLabel: data.nssfFileLabel,
+                shaFileUrl: data.shaFileUrl,
+                shaFileLabel: data.shaFileLabel,
+                payeAmount: data.summaryAmounts?.payeAmount,
+                nitaAmount: data.summaryAmounts?.nitaAmount,
+                housingLevyAmount: data.summaryAmounts?.housingLevyAmount,
+                nssfAmount: data.summaryAmounts?.nssfAmount,
+                shaAmount: data.summaryAmounts?.shaAmount,
+            };
+            d.setClients((current) => current.map((c) => (c.id === client.id ? updatedClient : c)));
+            if (d.setSelectedClient) d.setSelectedClient((prev) => prev?.id === client.id ? updatedClient : prev);
+            d.setDashboardNotice({ tone: 'success', message: `Compliance files generated for ${client.name}.` });
+            return data;
+        } catch (err: any) {
+            d.setDashboardNotice({ tone: 'error', message: err.message || 'Failed to generate compliance files.' });
+        }
+    }, []);
+
     return {
         generateClientZip,
         generateAllZips,
@@ -685,5 +724,6 @@ export function useFilingActions(deps: FilingActionsDeps) {
         bulkCsvUpload,
         globalMasterCsvUpload,
         updateSingleStatus,
+        generatePayrollCompliance,
     };
 }

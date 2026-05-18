@@ -84,6 +84,7 @@ export default function PracticeDashboard() {
   const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
   const [totInputVals, setTotInputVals] = useState<Record<string, string>>({});
   const [vatPreviousCreditVals, setVatPreviousCreditVals] = useState<Record<string, string>>({});
+  const [vatSectionBWithoutPinVals, setVatSectionBWithoutPinVals] = useState<Record<string, string>>({});
   const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
   const [newClientModalError, setNewClientModalError] = useState<string | null>(null);
   const [newClientPayStructure, setNewClientPayStructure] = useState<'fixed' | 'prorated'>('fixed');
@@ -132,6 +133,7 @@ export default function PracticeDashboard() {
   const filingActions = useFilingActions({
     setDashboardNotice,
     setClients,
+    setSelectedClient,
     setActiveJobs,
     setGeneratingClientIds,
     setCancellingClientIds,
@@ -141,6 +143,7 @@ export default function PracticeDashboard() {
     getActiveJobs: () => activeJobs,
     getNilSelections: () => nilSelections,
     getVatPreviousCreditVals: () => vatPreviousCreditVals,
+    getVatSectionBWithoutPinVals: () => vatSectionBWithoutPinVals,
     getMriInputVals: () => mriInputVals,
     getTotInputVals: () => totInputVals,
   });
@@ -475,6 +478,22 @@ export default function PracticeDashboard() {
                   onGeneratePayrollPacks={filingActions.generateClientZip}
                   onAutoFilePaye={filingActions.autoFile}
                   onAutoFileNssf={filingActions.fileNssf}
+                  onGenerateCompliance={(client, result) => {
+                    setSelectedClient(prev => prev?.id === client.id ? {
+                      ...prev,
+                      payeZipUrl: result.payeZipUrl,
+                      payeZipLabel: result.payeZipLabel,
+                      nssfFileUrl: result.nssfFileUrl,
+                      nssfFileLabel: result.nssfFileLabel,
+                      shaFileUrl: result.shaFileUrl,
+                      shaFileLabel: result.shaFileLabel,
+                      payeAmount: result.summaryAmounts?.payeAmount,
+                      nitaAmount: result.summaryAmounts?.nitaAmount,
+                      housingLevyAmount: result.summaryAmounts?.housingLevyAmount,
+                      nssfAmount: result.summaryAmounts?.nssfAmount,
+                      shaAmount: result.summaryAmounts?.shaAmount,
+                    } : prev);
+                  }}
                 />
               </div>
             )}
@@ -539,6 +558,8 @@ export default function PracticeDashboard() {
                   setTotInputVals={setTotInputVals}
                   vatPreviousCreditVals={vatPreviousCreditVals}
                   setVatPreviousCreditVals={setVatPreviousCreditVals}
+                  vatSectionBWithoutPinVals={vatSectionBWithoutPinVals}
+                  setVatSectionBWithoutPinVals={setVatSectionBWithoutPinVals}
                   onPrepareVat={filingActions.prepareVat}
                   onConfirmVatFiling={filingActions.confirmVatFiling}
                   onGeneratePrn={filingActions.generatePrn}

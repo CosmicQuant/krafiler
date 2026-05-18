@@ -36,7 +36,7 @@ router.post('/:clientId/employees', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, standardCheckOut } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
@@ -63,6 +63,7 @@ router.post('/:clientId/employees', async (req, res) => {
                 dateLeft: dateLeft || null,
                 basicPay: basicPay || 0,
                 role: role || 'employee',
+                standardCheckOut: standardCheckOut || '17:00',
                 createdAt: now,
                 updatedAt: now,
             })
@@ -108,7 +109,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Employee not found' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId, standardCheckOut } = req.body;
 
         await db
             .updateTable('employees')
@@ -133,6 +134,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
                 dateLeft: dateLeft !== undefined ? (dateLeft || null) : existing.dateLeft,
                 basicPay: basicPay !== undefined ? basicPay : existing.basicPay,
                 role: role !== undefined ? role : existing.role,
+                standardCheckOut: standardCheckOut !== undefined ? (standardCheckOut || '17:00') : existing.standardCheckOut,
                 updatedAt: new Date().toISOString(),
             })
             .where('id', '=', id)
@@ -266,6 +268,7 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     dateLeft: null,
                     basicPay: parseFloat(String(emp['Total Cash Pay (A)'] ?? '0')) || 0,
                     role: 'employee',
+                    standardCheckOut: '17:00',
                     createdAt: now,
                     updatedAt: now,
                 })

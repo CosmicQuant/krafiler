@@ -1572,6 +1572,9 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
     const vatPreviousCredit = typeof (payload as any).vatPreviousCredit === 'number'
         ? (payload as any).vatPreviousCredit
         : Number((payload as any).vatPreviousCredit ?? 0) || 0;
+    const sectionBWithoutPinSales = typeof (payload as any).sectionBWithoutPinSales === 'number'
+        ? (payload as any).sectionBWithoutPinSales
+        : Number((payload as any).sectionBWithoutPinSales ?? 0) || 0;
     const resolvedClientName = payload.clientName?.trim() || kraPin;
 
     
@@ -1586,8 +1589,9 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
     if (isNssfReturn) {
         const nssfFileUrl = (payload as any).nssfFileUrl;
         if (!nssfFileUrl) throw new Error('Missing NSSF File URL in payload.');
+        const nssfPeriod = (payload as any).nssfPeriod as string | undefined;
         const nssfService = new NssfService(job);
-        await nssfService.execute(kraPin, activePassword, nssfFileUrl);
+        await nssfService.execute(kraPin, activePassword, nssfFileUrl, nssfPeriod);
         return { receiptPath: '', receiptNumber: null, credentialUpdate };
     }
 
@@ -2048,6 +2052,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
             periodFrom,
             periodTo,
             previousCredit: vatPreviousCredit,
+            sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
         });
 
         if (context) {

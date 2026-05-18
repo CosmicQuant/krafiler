@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArrowLeft, Calendar, Download, Save, Plus, Trash2, RefreshCw, AlertCircle, FileSpreadsheet, Cloud, X, Users, Pencil, FileText, Banknote, CalendarCheck, BarChart3, DollarSign, Briefcase, TrendingUp, Mail, Globe, LogIn, User, FolderOpen, Upload } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { ClientObligation } from '../../../types';
 import { apiFetch } from '../../../services/api';
 import helbLogo from '../../../../assests/HELB.png';
 import { DepartmentsView } from './DepartmentsView';
 import { AuditView } from './AuditView';
-import { KpiCharts } from '../KpiCharts';
+import { getCurrentFilingPeriod, isPastDeadline } from '../../../utils/taxPeriods';
 
 const STANDARD_HEADERS = [
   'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
@@ -54,15 +55,13 @@ type PayloadPreamble = {
   companyShaPassword: string;
 };
 
-type TabId = 'master' | 'paye' | 'nssf' | 'sha' | 'helb' | 'employees' | 'leave' | 'loans' | 'attendance' | 'reports' | 'email' | 'portal' | 'runs' | 'p10p11' | 'departments' | 'audit' | 'kpi';
+type TabId = 'master' | 'paye' | 'nssf' | 'sha' | 'helb' | 'time' | 'loans' | 'reports' | 'email' | 'portal' | 'runs' | 'p10p11' | 'departments' | 'audit';
 
 const TABS: { id: TabId; label: string; img?: string }[] = [
-  { id: 'master', label: 'Master Payroll' },
-  { id: 'employees', label: 'Employees' },
-  { id: 'leave', label: 'Leave' },
+  { id: 'master', label: 'Payroll Data' },
+  { id: 'time', label: 'Time & Attendance' },
   { id: 'loans', label: 'Loans' },
-  { id: 'attendance', label: 'Attendance' },
-  { id: 'reports', label: 'Reports' },
+  { id: 'reports', label: 'Reports & KPIs' },
   { id: 'email', label: 'Email' },
   { id: 'paye', label: 'PAYE', img: '/logos/kra.png' },
   { id: 'nssf', label: 'NSSF', img: '/logos/nssflogo.png' },
@@ -73,11 +72,25 @@ const TABS: { id: TabId; label: string; img?: string }[] = [
   { id: 'p10p11', label: 'P10/P11' },
   { id: 'departments', label: 'Departments' },
   { id: 'audit', label: 'Audit Trail' },
-  { id: 'kpi', label: 'Dashboard KPIs' },
 ];
 
 function roundMoney(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function KpiCard({ icon: Icon, label, value, sub, color }: { icon: any; label: string; value: string | number; sub?: string; color?: string }) {
+    return (
+        <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-start gap-2">
+            <div className={`rounded-lg p-2 ${color || 'bg-slate-100'}`}>
+                <Icon className={`h-4 w-4 ${color ? 'text-white' : 'text-slate-600'}`} />
+            </div>
+            <div>
+                <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+                <p className="text-base font-bold text-slate-900">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+                {sub && <p className="text-[9px] text-slate-500">{sub}</p>}
+            </div>
+        </div>
+    );
 }
 
 function calculateFields(emp: PayrollEmployee): void {
@@ -156,9 +169,10 @@ interface PayrollWebViewProps {
   onGeneratePayrollPacks?: (client: ClientObligation) => void;
   onAutoFilePaye?: (client: ClientObligation) => void;
   onAutoFileNssf?: (client: ClientObligation) => void;
+  onGenerateCompliance?: (client: ClientObligation, result: any) => void;
 }
 
-export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv, onRemoveMasterCsv, onGeneratePayrollPacks, onAutoFilePaye, onAutoFileNssf }: PayrollWebViewProps) {
+export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv, onRemoveMasterCsv, onGeneratePayrollPacks, onAutoFilePaye, onAutoFileNssf, onGenerateCompliance }: PayrollWebViewProps) {
   const [preamble, setPreamble] = useState<PayloadPreamble | null>(null);
   const [employees, setEmployees] = useState<PayrollEmployee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -168,8 +182,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [hasData, setHasData] = useState(false);
   const [uploadingMasterCsv, setUploadingMasterCsv] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('master');
-  const [employeeRecords, setEmployeeRecords] = useState<any[]>([]);
-  const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [importingEmployees, setImportingEmployees] = useState(false);
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
@@ -179,11 +191,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     bankAccount: '', bankCode: '', department: '', jobTitle: '',
     employmentType: 'Permanent', employmentStatus: 'Active',
     dateJoined: '', dateLeft: '', basicPay: 0,
-    role: 'employee', departmentId: null,
+    role: 'employee', departmentId: null, standardCheckOut: '17:00',
+    portalPassword: '',
   });
 
-  const [leaveRecords, setLeaveRecords] = useState<any[]>([]);
-  const [loadingLeave, setLoadingLeave] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [editingLeave, setEditingLeave] = useState<any>(null);
   const [leaveForm, setLeaveForm] = useState<any>({
@@ -202,19 +213,17 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     status: 'Approved', disbursedAt: '', notes: '',
   });
 
-  const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
-  const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [editingAttendance, setEditingAttendance] = useState<any>(null);
   const [attendanceForm, setAttendanceForm] = useState<any>({
     employeeId: '', employeeName: '', kraPin: '', date: '',
     checkIn: '', checkOut: '', status: 'Present', notes: '',
   });
-  const [attendanceDateFilter, setAttendanceDateFilter] = useState('');
 
   const [reportData, setReportData] = useState<any>(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [kpiData, setKpiData] = useState<any>(null);
   const [emailHistory, setEmailHistory] = useState<any[]>([]);
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -232,7 +241,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [portalLoanForm, setPortalLoanForm] = useState({ loanType: 'Salary Advance', principal: 0, installments: 1, interestRate: 0, notes: '' });
   const [portalSubmitting, setPortalSubmitting] = useState(false);
   const [showPortalPasswordModal, setShowPortalPasswordModal] = useState(false);
-  const [portalPasswordTarget, setPortalPasswordTarget] = useState<{ id: number; name: string; kraPin: string } | null>(null);
+  const [portalPasswordTarget, _setPortalPasswordTarget] = useState<{ id: number; name: string; kraPin: string } | null>(null);
   const [portalPasswordValue, setPortalPasswordValue] = useState('');
   const [portalDocuments, setPortalDocuments] = useState<any[]>([]);
 
@@ -242,12 +251,24 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [selectedRun, setSelectedRun] = useState<any>(null);
   const [runEntries, setRunEntries] = useState<any[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
-  const [newRunPeriod, setNewRunPeriod] = useState('');
+  const [newRunPeriod, setNewRunPeriod] = useState(getCurrentFilingPeriod().period);
   const [newRunNotes, setNewRunNotes] = useState('');
   const [generatingRun, setGeneratingRun] = useState(false);
   const [runDetailView, setRunDetailView] = useState<'list' | 'detail'>('list');
-  const [overtimeData, setOvertimeData] = useState<Record<number, { hours: number; rate: number; multiplier: number }>>({});
   const [savingOvertime, setSavingOvertime] = useState(false);
+
+  // Overtime tab state
+  const [attendanceOvertimePeriod, setAttendanceOvertimePeriod] = useState(() => {
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [attendanceOvertimeEmployees, setAttendanceOvertimeEmployees] = useState<any[]>([]);
+  const [timeLeaveRecords, setTimeLeaveRecords] = useState<any[]>([]);
+
+  // Compliance generation state
+  const [generatingCompliance, setGeneratingCompliance] = useState(false);
+  const [complianceResult, setComplianceResult] = useState<any>(null);
 
   // Employee Documents modal state
   const [showDocModal, setShowDocModal] = useState(false);
@@ -523,39 +544,29 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     if (url) window.open(url, '_blank');
   };
 
-  const fetchEmployees = useCallback(async () => {
-    setLoadingEmployees(true);
+  const handleDownloadPayslip = async (kraPin: string) => {
     try {
-      const res = await apiFetch(`/clients/${client.id}/employees`);
+      const res = await apiFetch(`/clients/${client.id}/payslip/${kraPin}`);
       if (res.ok) {
-        const data = await res.json();
-        setEmployeeRecords(data);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingEmployees(false);
-    }
-  }, [client.id]);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `Payslip_${kraPin}.pdf`;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      } else setError('Failed to generate payslip');
+    } catch { setError('Network error'); }
+  };
 
-  useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
-
-  const fetchLeave = useCallback(async () => {
-    setLoadingLeave(true);
+  const handleDownloadP9 = async (kraPin: string) => {
     try {
-      const res = await apiFetch(`/clients/${client.id}/leave`);
+      const res = await apiFetch(`/clients/${client.id}/p9/${kraPin}`);
       if (res.ok) {
-        const data = await res.json();
-        setLeaveRecords(data);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingLeave(false);
-    }
-  }, [client.id]);
-
-  useEffect(() => { fetchLeave(); }, [fetchLeave]);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = `P9_${kraPin}.pdf`;
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      } else setError('Failed to generate P9');
+    } catch { setError('Network error'); }
+  };
 
   const fetchLoans = useCallback(async () => {
     setLoadingLoans(true);
@@ -574,25 +585,46 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { fetchLoans(); }, [fetchLoans]);
 
-  const fetchAttendance = useCallback(async () => {
-    setLoadingAttendance(true);
+  const fetchOvertimeForAttendance = useCallback(async (period: string) => {
     try {
-      const params = new URLSearchParams();
-      if (attendanceDateFilter) params.set('dateFrom', attendanceDateFilter);
-      const qs = params.toString();
-      const res = await apiFetch(`/clients/${client.id}/attendance${qs ? '?' + qs : ''}`);
-      if (res.ok) {
-        const data = await res.json();
-        setAttendanceRecords(data);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingAttendance(false);
-    }
-  }, [client.id, attendanceDateFilter]);
+      const [y, m] = period.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const mm = String(m).padStart(2, '0');
+      const yyyy = String(y);
+      const [empRes, otRes, attRes, lvRes] = await Promise.all([
+        apiFetch(`/clients/${client.id}/employees`),
+        apiFetch(`/clients/${client.id}/overtime-by-period?period=${period}`),
+        apiFetch(`/clients/${client.id}/attendance?dateFrom=${yyyy}-${mm}-01&dateTo=${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`),
+        apiFetch(`/clients/${client.id}/leave`),
+      ]);
+      let employees: any[] = [];
+      let otRecords: any[] = [];
+      let attRecords: any[] = [];
+      let lvRecords: any[] = [];
+      if (empRes.ok) employees = await empRes.json();
+      if (otRes.ok) otRecords = await otRes.json();
+      if (attRes.ok) attRecords = await attRes.json();
+      if (lvRes.ok) lvRecords = await lvRes.json();
 
-  useEffect(() => { fetchAttendance(); }, [fetchAttendance]);
+      const otMap = new Map<number, { hours: number; rate: number; multiplier: number }>();
+      for (const ot of otRecords) otMap.set(ot.employeeId, { hours: ot.hours || 0, rate: ot.rate || 0, multiplier: ot.multiplier || 1 });
+
+      const attMap = new Map<number, Map<string, string>>();
+      for (const a of attRecords) {
+        if (!attMap.has(a.employeeId)) attMap.set(a.employeeId, new Map());
+        attMap.get(a.employeeId)!.set(a.date, a.status || 'Present');
+      }
+
+      setTimeLeaveRecords(lvRecords);
+
+      const merged = employees.filter((e: any) => e.employmentStatus === 'Active').map((e: any) => ({
+        ...e,
+        ot: otMap.get(e.id) || { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 },
+        _att: attMap.get(e.id) || new Map(),
+      }));
+      setAttendanceOvertimeEmployees(merged);
+    } catch { /* ignore */ }
+  }, [client.id]);
 
   const fetchReport = useCallback(async () => {
     setLoadingReport(true);
@@ -608,7 +640,14 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     }
   }, [client.id]);
 
-  useEffect(() => { if (activeTab === 'reports') fetchReport(); }, [fetchReport, activeTab]);
+  useEffect(() => { if (activeTab === 'reports') { fetchReport(); fetchKpiData(); } }, [fetchReport, activeTab]);
+
+  const fetchKpiData = useCallback(async () => {
+    try {
+      const r = await apiFetch(`/clients/${client.id}/kpi`);
+      if (r.ok) setKpiData(await r.json());
+    } catch { /* ignore */ }
+  }, [client.id]);
 
   const handleDownloadReport = () => {
     if (!reportData) return;
@@ -699,33 +738,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const fetchRunEntries = useCallback(async (runId: number) => {
     setLoadingEntries(true);
     try {
-      const [entriesRes, overtimeRes] = await Promise.all([
-        apiFetch(`/clients/${client.id}/payroll-runs/${runId}/entries`),
-        apiFetch(`/clients/${client.id}/payroll-runs/${runId}/overtime`),
-      ]);
-      if (entriesRes.ok) {
-        const entries = await entriesRes.json();
-        setRunEntries(entries);
-        if (overtimeRes.ok) {
-          const otRecords = await overtimeRes.json();
-          const otMap: Record<number, { hours: number; rate: number; multiplier: number }> = {};
-          for (const ot of otRecords) {
-            otMap[ot.employeeId] = { hours: ot.hours, rate: ot.rate, multiplier: ot.multiplier };
-          }
-          for (const entry of entries) {
-            if (!otMap[entry.employeeId]) {
-              otMap[entry.employeeId] = { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
-            }
-          }
-          setOvertimeData(otMap);
-        } else {
-          const otMap: Record<number, { hours: number; rate: number; multiplier: number }> = {};
-          for (const entry of entries) {
-            otMap[entry.employeeId] = { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
-          }
-          setOvertimeData(otMap);
-        }
-      }
+      const entriesRes = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/entries`);
+      if (entriesRes.ok) setRunEntries(await entriesRes.json());
     } catch { /* ignore */ } finally { setLoadingEntries(false); }
   }, [client.id]);
 
@@ -785,7 +799,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       if (res.ok) {
         const data = await res.json();
         setStatusMessage(`Imported ${data.imported} employees (total: ${data.total})`);
-        await fetchEmployees();
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Import failed');
@@ -794,21 +807,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       setError('Network error importing employees');
     } finally {
       setImportingEmployees(false);
-    }
-  };
-
-  const handleDeleteEmployee = async (id: number) => {
-    if (!window.confirm('Delete this employee record?')) return;
-    try {
-      const res = await apiFetch(`/clients/${client.id}/employees/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setStatusMessage('Employee deleted');
-        await fetchEmployees();
-      } else {
-        setError('Failed to delete employee');
-      }
-    } catch {
-      setError('Network error deleting employee');
     }
   };
 
@@ -824,10 +822,16 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         body: JSON.stringify(employeeForm),
       });
       if (res.ok) {
+        if (employeeForm.portalPassword && employeeForm.portalPassword.length >= 6) {
+          await fetch('/api/auth/employee/set-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kraPin: employeeForm.kraPin, password: employeeForm.portalPassword }),
+          });
+        }
         setStatusMessage(editingEmployee ? 'Employee updated' : 'Employee created');
         setShowEmployeeModal(false);
         setEditingEmployee(null);
-        await fetchEmployees();
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Save failed');
@@ -876,48 +880,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     setShowEmployeeModal(true);
   };
 
-  const handleDownloadPayslip = async (kraPin: string) => {
-    try {
-      const res = await apiFetch(`/clients/${client.id}/payslip/${kraPin}`);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `Payslip_${kraPin}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } else {
-        setError('Failed to generate payslip');
-      }
-    } catch {
-      setError('Network error generating payslip');
-    }
-  };
-
-  const handleDownloadP9 = async (kraPin: string) => {
-    try {
-      const res = await apiFetch(`/clients/${client.id}/p9/${kraPin}`);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `P9_${kraPin}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      } else {
-        setError('Failed to generate P9');
-      }
-    } catch {
-      setError('Network error generating P9');
-    }
-  };
-
   const handleSaveLeave = async () => {
     try {
       const url = editingLeave
@@ -933,28 +895,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         setStatusMessage(editingLeave ? 'Leave request updated' : 'Leave request created');
         setShowLeaveModal(false);
         setEditingLeave(null);
-        await fetchLeave();
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Save failed');
       }
     } catch {
       setError('Network error saving leave request');
-    }
-  };
-
-  const handleDeleteLeave = async (id: number) => {
-    if (!window.confirm('Delete this leave request?')) return;
-    try {
-      const res = await apiFetch(`/clients/${client.id}/leave/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setStatusMessage('Leave request deleted');
-        await fetchLeave();
-      } else {
-        setError('Failed to delete leave request');
-      }
-    } catch {
-      setError('Network error deleting leave request');
     }
   };
 
@@ -1073,28 +1019,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         setStatusMessage(editingAttendance ? 'Attendance record updated' : 'Attendance record created');
         setShowAttendanceModal(false);
         setEditingAttendance(null);
-        await fetchAttendance();
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Save failed');
       }
     } catch {
       setError('Network error saving attendance record');
-    }
-  };
-
-  const handleDeleteAttendance = async (id: number) => {
-    if (!window.confirm('Delete this attendance record?')) return;
-    try {
-      const res = await apiFetch(`/clients/${client.id}/attendance/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setStatusMessage('Attendance record deleted');
-        await fetchAttendance();
-      } else {
-        setError('Failed to delete attendance record');
-      }
-    } catch {
-      setError('Network error deleting attendance record');
     }
   };
 
@@ -1172,14 +1102,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
             >
               {img ? (
                 <img src={img} alt={label} className="h-10 w-10 object-contain" />
-              ) : id === 'employees' ? (
-                <Users className="h-5 w-5" />
-              ) : id === 'leave' ? (
-                <Calendar className="h-5 w-5" />
+              ) : id === 'time' ? (
+                <CalendarCheck className="h-5 w-5" />
               ) : id === 'loans' ? (
                 <Banknote className="h-5 w-5" />
-              ) : id === 'attendance' ? (
-                <CalendarCheck className="h-5 w-5" />
               ) : id === 'reports' ? (
                 <BarChart3 className="h-5 w-5" />
               ) : id === 'email' ? (
@@ -1442,13 +1368,57 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           );
                         })}
                         <td className="px-3 py-1.5">
-                          <button
-                            onClick={() => removeRow(rowIdx)}
-                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                            title="Remove employee"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
+                                if (kraPin) handleDownloadPayslip(kraPin);
+                              }}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                              title="Download Payslip"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
+                                if (kraPin) handleDownloadP9(kraPin);
+                              }}
+                              className="rounded-lg px-1.5 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
+                              title="Download P9"
+                            >
+                              P9
+                            </button>
+                            <button
+                              onClick={() => {
+                                const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
+                                const e = attendanceOvertimeEmployees.find(x => x.kraPin === kraPin);
+                                if (e) { setDocModalEmployee(e); fetchEmpDocuments(e.id); setShowDocModal(true); }
+                              }}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                              title="Documents"
+                            >
+                              <FolderOpen className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
+                                const e = attendanceOvertimeEmployees.find(x => x.kraPin === kraPin);
+                                if (e) openEmployeeModal(e);
+                              }}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
+                              title="Edit Profile"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={() => removeRow(rowIdx)}
+                              className="inline-flex items-center justify-center rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+                              title="Remove employee"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1469,234 +1439,239 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 </span>
               </div>
             </>
-          )}
-        </>
+              )}
+            </>
       )}
 
-      {/* ───── Employees Tab ───── */}
-      {activeTab === 'employees' && (
+      {/* ───── Time & Attendance Tab ───── */}
+      {activeTab === 'time' && (
         <div>
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Employee Profiles
+              Time & Attendance
             </span>
             <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={attendanceOvertimePeriod}
+                onChange={e => { setAttendanceOvertimePeriod(e.target.value); }}
+                placeholder="YYYY-MM"
+                className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+              />
+              {isPastDeadline(attendanceOvertimePeriod) && (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 whitespace-nowrap">
+                  <AlertCircle className="h-3 w-3" /> Past deadline
+                </span>
+              )}
               <button
-                onClick={handleImportFromMasterCsv}
-                disabled={importingEmployees}
-                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                onClick={() => fetchOvertimeForAttendance(attendanceOvertimePeriod)}
+                className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
               >
-                {importingEmployees ? (
-                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Importing...</>
-                ) : (
-                  <><Cloud className="h-3.5 w-3.5" /> Import from Master CSV</>
-                )}
-              </button>
-              <button
-                onClick={() => openEmployeeModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add Employee
+                Load Month
               </button>
             </div>
           </div>
 
-          {loadingEmployees ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
-            </div>
-          ) : employeeRecords.length === 0 ? (
+          {attendanceOvertimeEmployees.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-              <Users className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">No employee profiles</p>
-              <p className="mt-2 text-xs text-slate-400">
-                Import from Master CSV or add employees manually.
-              </p>
+              <CalendarCheck className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+              <p className="text-sm font-semibold text-slate-500">Select a period and click Load Month</p>
+              <p className="mt-2 text-xs text-slate-400">View attendance, overtime, and leave in a unified calendar.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Name</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">KRA PIN</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">ID No.</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">NSSF</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">SHA</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Status</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Basic Pay</th>
-                    <th className="px-3 py-2.5 w-24" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {employeeRecords.map((emp: any) => (
-                    <tr key={emp.id} className="hover:bg-slate-50/50 transition">
-                      <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{emp.kraPin}</td>
-                      <td className="px-3 py-2 text-slate-700">{emp.idNumber}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{emp.nssfNo}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{emp.shaNo}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          emp.employmentStatus === 'Active'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {emp.employmentStatus}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-900">
-                        {Number(emp.basicPay).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleDownloadPayslip(emp.kraPin)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Download Payslip"
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDownloadP9(emp.kraPin)}
-                            className="rounded-lg px-1.5 py-1 text-[10px] font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition"
-                            title="Download P9 Annual Tax Card"
-                          >
-                            P9
-                          </button>
-                          <button
-                            onClick={() => { setDocModalEmployee(emp); fetchEmpDocuments(emp.id); setShowDocModal(true); }}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Documents"
-                          >
-                            <FolderOpen className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => { setPortalPasswordTarget({ id: emp.id, name: emp.employeeName, kraPin: emp.kraPin }); setPortalPasswordValue(''); setShowPortalPasswordModal(true); }}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Set Portal Password"
-                          >
-                            <Globe className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => openEmployeeModal(emp)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteEmployee(emp.id)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
+            <>
+              {/* Calendar Grid */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm mb-4">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap border-r border-slate-200">Employee</th>
+                      {Array.from({ length: 31 }, (_, i) => (
+                        <th key={i} className="w-8 px-1 py-2 text-center font-semibold uppercase tracking-wider text-slate-500">{i + 1}</th>
+                      ))}
+                      <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right whitespace-nowrap">OT (hrs)</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-                {employeeRecords.length} employee{employeeRecords.length !== 1 ? 's' : ''}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {attendanceOvertimeEmployees.map((emp: any) => (
+                      <tr key={emp.id} className="hover:bg-slate-50/50 transition">
+                        <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-slate-900 whitespace-nowrap border-r border-slate-200">
+                          {emp.employeeName}
+                        </td>
+                        {Array.from({ length: 31 }, (_, i) => {
+                          const day = i + 1;
+                          const dateKey = `${attendanceOvertimePeriod}-${String(day).padStart(2, '0')}`;
+                          const status = emp._att?.get(dateKey) || '';
+                          const color = status === 'Present' ? 'bg-emerald-50 text-emerald-700' :
+                                        status === 'Absent' ? 'bg-red-50 text-red-700' :
+                                        status === 'Late' ? 'bg-amber-50 text-amber-700' :
+                                        status === 'Half-Day' ? 'bg-orange-50 text-orange-700' :
+                                        status === 'Leave' ? 'bg-blue-50 text-blue-700' : 'text-slate-300';
+                          const label = status === 'Present' ? 'P' :
+                                        status === 'Absent' ? 'A' :
+                                        status === 'Late' ? 'L' :
+                                        status === 'Half-Day' ? 'H' :
+                                        status === 'Leave' ? 'Lv' : '·';
+                          return (
+                            <td key={i} className="w-8 px-0 py-1.5 text-center">
+                              <button
+                                onClick={() => {
+                                  setAttendanceForm({
+                                    employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
+                                    date: dateKey, checkIn: '', checkOut: '', status: status || 'Present', notes: '',
+                                  });
+                                  setEditingAttendance(null);
+                                  setShowAttendanceModal(true);
+                                }}
+                                className={`inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold transition ${color} hover:ring-1 hover:ring-slate-400`}
+                                title={`${emp.employeeName} — ${dateKey}${status ? ': ' + status : ''}`}
+                              >
+                                {label}
+                              </button>
+                            </td>
+                          );
+                        })}
+                        <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700 whitespace-nowrap">
+                          {emp.ot.hours > 0 ? `${emp.ot.hours}h` : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
-          )}
-        </div>
-      )}
 
-      {/* ───── Leave Tab ───── */}
-      {activeTab === 'leave' && (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Leave Requests
-            </span>
-            <button
-              onClick={() => openLeaveModal()}
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Leave Request
-            </button>
-          </div>
-
-          {loadingLeave ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
-            </div>
-          ) : leaveRecords.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-              <Calendar className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">No leave requests</p>
-              <p className="mt-2 text-xs text-slate-400">
-                Add leave requests for your employees.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Employee Name</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">KRA PIN</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Leave Type</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Start Date</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">End Date</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Days</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Status</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Reason</th>
-                    <th className="px-3 py-2.5 w-20" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {leaveRecords.map((rec: any) => (
-                    <tr key={rec.id} className="hover:bg-slate-50/50 transition">
-                      <td className="px-3 py-2 font-medium text-slate-900">{rec.employeeName}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{rec.kraPin}</td>
-                      <td className="px-3 py-2 text-slate-700">{rec.leaveType}</td>
-                      <td className="px-3 py-2 text-slate-700">{rec.startDate}</td>
-                      <td className="px-3 py-2 text-slate-700">{rec.endDate}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-900">{rec.daysCount}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          rec.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
-                          rec.status === 'Rejected' ? 'bg-red-50 text-red-700' :
-                          rec.status === 'Cancelled' ? 'bg-slate-100 text-slate-500' :
-                          'bg-amber-50 text-amber-700'
-                        }`}>
-                          {rec.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-slate-500 max-w-[150px] truncate">{rec.reason}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => openLeaveModal(rec)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteLeave(rec.id)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-                {leaveRecords.length} leave request{leaveRecords.length !== 1 ? 's' : ''}
+              {/* Quick Actions Row */}
+              <div className="flex items-center gap-2 mb-4">
+                <button onClick={() => openAttendanceModal()} className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition">
+                  <Plus className="h-3.5 w-3.5" /> Add Attendance Record
+                </button>
+                <button onClick={() => openLeaveModal()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+                  <Calendar className="h-3.5 w-3.5" /> Request Leave
+                </button>
+                <button
+                  disabled={savingOvertime}
+                  onClick={async () => {
+                    setSavingOvertime(true);
+                    try {
+                      for (const emp of attendanceOvertimeEmployees) {
+                        const ot = emp.ot;
+                        const amount = ot.hours * (ot.rate || 0) * (ot.multiplier || 1);
+                        await apiFetch(`/clients/${client.id}/employees/${emp.id}/overtime`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ period: attendanceOvertimePeriod, hours: ot.hours, rate: ot.rate || 0, multiplier: ot.multiplier || 1, amount }),
+                        });
+                      }
+                      setStatusMessage('Overtime saved. Regenerate payroll entries to apply.');
+                    } catch { setError('Failed to save overtime'); }
+                    finally { setSavingOvertime(false); }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  {savingOvertime ? 'Saving...' : 'Save Overtime'}
+                </button>
               </div>
-            </div>
+
+              {/* Overtime Summary Table */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Overtime Details</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Hours</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Rate (KES/hr)</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Multiplier</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Amount (KES)</th>
+                        <th className="px-3 py-2 w-12" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {attendanceOvertimeEmployees.filter((e: any) => e.ot.hours > 0 || (e.employeeName || '')).map((emp: any) => (
+                        <tr key={emp.id} className="hover:bg-slate-50/50 transition">
+                          <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
+                          <td className="px-3 py-2">
+                            <input type="number" value={emp.ot.hours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, hours: val } } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" value={emp.ot.rate} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, rate: val } } : e)); }} className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" value={emp.ot.multiplier} step="0.5" onChange={e => { const val = parseFloat(e.target.value) || 1; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, multiplier: val } } : e)); }} className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                            {(emp.ot.hours * emp.ot.rate * emp.ot.multiplier).toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm(`Delete overtime for ${emp.employeeName}?`)) return;
+                                try {
+                                  await apiFetch(`/clients/${client.id}/employees/${emp.id}/overtime?period=${attendanceOvertimePeriod}`, { method: 'DELETE' });
+                                  setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 } } : e));
+                                  setStatusMessage('Overtime record deleted.');
+                                } catch { setError('Failed to delete overtime.'); }
+                              }}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Leave Requests Section */}
+              {timeLeaveRecords.length > 0 && (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Leave Requests</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Leave Type</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Start Date</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">End Date</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Days</th>
+                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Status</th>
+                          <th className="px-3 py-2 w-24" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {timeLeaveRecords.map((rec: any) => (
+                          <tr key={rec.id} className="hover:bg-slate-50/50 transition">
+                            <td className="px-3 py-2 font-medium text-slate-900">{rec.employeeName}</td>
+                            <td className="px-3 py-2 text-slate-700">{rec.leaveType}</td>
+                            <td className="px-3 py-2 font-mono text-slate-700">{rec.startDate}</td>
+                            <td className="px-3 py-2 font-mono text-slate-700">{rec.endDate}</td>
+                            <td className="px-3 py-2 text-right font-mono text-slate-900">{rec.daysCount}</td>
+                            <td className="px-3 py-2">
+                              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                rec.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
+                                rec.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
+                                rec.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                'bg-slate-100 text-slate-500'
+                              }`}>{rec.status}</span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <button onClick={() => openLeaveModal(rec)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition" title="Edit">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -1796,124 +1771,43 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         </div>
       )}
 
-      {/* ───── Attendance Tab ───── */}
-      {activeTab === 'attendance' && (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Attendance Records
-            </span>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={attendanceDateFilter}
-                onChange={e => setAttendanceDateFilter(e.target.value)}
-                placeholder="Filter by date (YYYY-MM-DD)"
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-              />
-              <button
-                onClick={() => openAttendanceModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add Record
-              </button>
-            </div>
-          </div>
-
-          {loadingAttendance ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
-            </div>
-          ) : attendanceRecords.length === 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-              <CalendarCheck className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">No attendance records</p>
-              <p className="mt-2 text-xs text-slate-400">
-                Add attendance records for your employees.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Employee Name</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">KRA PIN</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Date</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Check In</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Check Out</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Status</th>
-                    <th className="px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500">Notes</th>
-                    <th className="px-3 py-2.5 w-20" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {attendanceRecords.map((rec: any) => (
-                    <tr key={rec.id} className="hover:bg-slate-50/50 transition">
-                      <td className="px-3 py-2 font-medium text-slate-900">{rec.employeeName}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{rec.kraPin}</td>
-                      <td className="px-3 py-2 text-slate-700">{rec.date}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{rec.checkIn}</td>
-                      <td className="px-3 py-2 font-mono text-slate-700">{rec.checkOut}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          rec.status === 'Present' ? 'bg-emerald-50 text-emerald-700' :
-                          rec.status === 'Absent' ? 'bg-red-50 text-red-700' :
-                          rec.status === 'Late' ? 'bg-amber-50 text-amber-700' :
-                          rec.status === 'Half-Day' ? 'bg-orange-50 text-orange-700' :
-                          rec.status === 'Leave' ? 'bg-blue-50 text-blue-700' :
-                          'bg-slate-100 text-slate-500'
-                        }`}>
-                          {rec.status}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-slate-500 max-w-[150px] truncate">{rec.notes}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => openAttendanceModal(rec)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                            title="Edit"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteAttendance(rec.id)}
-                            className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-                {attendanceRecords.length} record{attendanceRecords.length !== 1 ? 's' : ''}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ───── Reports Tab ───── */}
+      {/* ───── Reports & KPIs Tab ───── */}
       {activeTab === 'reports' && (
         <div>
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Payroll Reports
+              Reports & KPIs
             </span>
-            <button
-              onClick={handleDownloadReport}
-              disabled={!reportData}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Download CSV
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { fetchReport(); fetchKpiData(); }}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </button>
+              <button
+                onClick={handleDownloadReport}
+                disabled={!reportData}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download CSV
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const r = await apiFetch(`/clients/${client.id}/reports/summary/pdf`);
+                    if (r.ok) { const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `Report_${client.name || 'Client'}.pdf`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+                    else setError('Failed to download PDF');
+                  } catch { setError('Network error'); }
+                }}
+                disabled={!reportData}
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Download PDF
+              </button>
+            </div>
           </div>
 
           {loadingReport && (
@@ -1968,6 +1862,65 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* KPI Dashboard */}
+              {kpiData && (
+                <div className="mb-6 space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                    <KpiCard icon={Users} label="Total Employees" value={kpiData.employeeCount} sub={`${kpiData.activeEmployees} active`} color="bg-blue-600" />
+                    <KpiCard icon={Briefcase} label="Departments" value={kpiData.departmentCount} color="bg-purple-600" />
+                    <KpiCard icon={Banknote} label="Loan Deductions" value={`KES ${(kpiData.totalMonthlyLoanDeductions || 0).toLocaleString()}`} sub="monthly total" color="bg-amber-600" />
+                    <KpiCard icon={CalendarCheck} label="Pending Leave" value={kpiData.pendingLeaveRequests} sub={`${kpiData.approvedLeaveThisMonth || 0} approved`} color="bg-emerald-600" />
+                    <KpiCard icon={FileText} label="Documents" value={kpiData.documentCount || 0} color="bg-slate-600" />
+                    <KpiCard icon={TrendingUp} label="Payroll Runs" value={kpiData.payrollRunCount || 0} sub={kpiData.latestRunPeriod ? `Latest: ${kpiData.latestRunPeriod}` : 'No runs'} color="bg-red-600" />
+                  </div>
+                  {kpiData.recentRunData?.length > 0 && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <h4 className="text-xs font-bold text-slate-700 mb-3">Payroll Trend (Gross Pay per Period)</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <BarChart data={kpiData.recentRunData}>
+                            <XAxis dataKey="period" tick={{ fontSize: 10 }} />
+                            <YAxis tick={{ fontSize: 10 }} />
+                            <Tooltip contentStyle={{ fontSize: 12 }} />
+                            <Bar dataKey="totalGross" fill="#ff0613" radius={[4, 4, 0, 0]} name="Gross Pay" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-white p-4">
+                        <h4 className="text-xs font-bold text-slate-700 mb-3">Employee Status</h4>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <PieChart>
+                            <Pie data={[{ name: 'Active', value: kpiData.activeEmployees || 0 }, { name: 'Inactive', value: (kpiData.employeeCount || 0) - (kpiData.activeEmployees || 0) }].filter(d => d.value > 0)} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, value }) => `${name}: ${value}`}>
+                              {[{ name: 'Active', value: kpiData.activeEmployees || 0 }, { name: 'Inactive', value: (kpiData.employeeCount || 0) - (kpiData.activeEmployees || 0) }].filter(d => d.value > 0).map((_, idx) => <Cell key={idx} fill={['#10b981', '#94a3b8'][idx % 2]} />)}
+                            </Pie>
+                            <Tooltip />
+                            <Legend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Report Filter */}
+              <div className="mb-4 flex items-center gap-3 flex-wrap">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Filter:</span>
+                <input
+                  type="text"
+                  value={attendanceOvertimePeriod}
+                  onChange={e => { setAttendanceOvertimePeriod(e.target.value); }}
+                  placeholder="Period (YYYY-MM)"
+                  className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                />
+                <button
+                  onClick={() => { fetchReport(); fetchKpiData(); }}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                >
+                  Apply
+                </button>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 mb-6">
@@ -2691,11 +2644,24 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                                     className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition"
                                   >
                                     Download
-                                  </button>
-                                </div>
+                  </button>
+                  <button
+                    onClick={handleImportFromMasterCsv}
+                    disabled={importingEmployees}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                  >
+                    {importingEmployees ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Importing...</> : <><Cloud className="h-3.5 w-3.5" /> Import to DB</>}
+                  </button>
+                  <button
+                    onClick={() => openEmployeeModal()}
+                    className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-900 transition"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add Employee
+                  </button>
+                </div>
                               ))}
-                            </div>
-                          </div>
+              </div>
+            </div>
                         )}
                       </div>
                     </div>
@@ -3309,6 +3275,11 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     placeholder="YYYY-MM"
                     className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                   />
+                  {isPastDeadline(newRunPeriod) && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 whitespace-nowrap">
+                      <AlertCircle className="h-3 w-3" /> Past deadline — penalty may apply
+                    </span>
+                  )}
                   <input
                     type="text"
                     value={newRunNotes}
@@ -3391,7 +3362,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           <td className="px-3 py-2">
                             <div className="flex items-center justify-end gap-1">
                               <button
-                                onClick={() => { setSelectedRun(run); fetchRunEntries(run.id); setRunDetailView('detail'); }}
+                                onClick={() => { setSelectedRun(run); fetchRunEntries(run.id); setRunDetailView('detail'); if (client.payeZipUrl) { setComplianceResult({ payeZipUrl: client.payeZipUrl, payeZipLabel: client.payeZipLabel, nssfFileUrl: client.nssfFileUrl, nssfFileLabel: client.nssfFileLabel, shaFileUrl: client.shaFileUrl, shaFileLabel: client.shaFileLabel, summaryAmounts: { payeAmount: client.payeAmount || 0, nitaAmount: client.nitaAmount || 0, housingLevyAmount: client.housingLevyAmount || 0, nssfAmount: client.nssfAmount || 0, shaAmount: client.shaAmount || 0 } }); } }}
                                 className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
                                 title="View"
                               ><FileText className="h-3.5 w-3.5" /></button>
@@ -3458,97 +3429,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 </span>
               </div>
 
-              {/* Overtime Entry Section */}
-              {runEntries.length > 0 && (
-                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Overtime Entry</h4>
-                    <button
-                      disabled={savingOvertime}
-                      onClick={async () => {
-                        setSavingOvertime(true);
-                        try {
-                          for (const [empId, ot] of Object.entries(overtimeData)) {
-                            const data = ot as { hours: number; rate: number; multiplier: number };
-                            if (data.hours > 0) {
-                              const amount = data.hours * (data.rate || 0) * (data.multiplier || 1);
-                              await apiFetch(`/clients/${client.id}/employees/${empId}/overtime`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  period: selectedRun?.period,
-                                  hours: data.hours,
-                                  rate: data.rate || 0,
-                                  multiplier: data.multiplier || 1,
-                                  amount,
-                                }),
-                              });
-                            }
-                          }
-                          setStatusMessage('Overtime saved. Regenerate entries to apply.');
-                        } catch { setError('Failed to save overtime'); }
-                        finally { setSavingOvertime(false); }
-                      }}
-                      className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
-                    >
-                      {savingOvertime ? 'Saving...' : 'Save Overtime'}
-                    </button>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50">
-                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
-                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Hours</th>
-                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Rate (KES/hr)</th>
-                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Multiplier</th>
-                          <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Amount (KES)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {runEntries.map((entry: any) => {
-                          const ot = overtimeData[entry.employeeId] || { hours: 0, rate: Math.round(entry.basicPay / 240), multiplier: 1.5 };
-                          return (
-                            <tr key={entry.employeeId} className="hover:bg-slate-50/50 transition">
-                              <td className="px-3 py-2 font-medium text-slate-900">{entry.employeeName}</td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  value={ot.hours}
-                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { rate: Math.round(entry.basicPay / 240), multiplier: 1.5 }, hours: parseFloat(e.target.value) || 0 } }))}
-                                  className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
-                                />
-                              </td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  value={ot.rate}
-                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { hours: 0, multiplier: 1.5 }, rate: parseFloat(e.target.value) || 0 } }))}
-                                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
-                                />
-                              </td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  value={ot.multiplier}
-                                  step="0.5"
-                                  onChange={e => setOvertimeData(prev => ({ ...prev, [entry.employeeId]: { ...prev[entry.employeeId] || { hours: 0, rate: Math.round(entry.basicPay / 240) }, multiplier: parseFloat(e.target.value) || 1 } }))}
-                                  className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900"
-                                />
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
-                                {(ot.hours * ot.rate * ot.multiplier).toFixed(2)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <p className="mt-2 text-[10px] text-slate-400">After saving overtime, click <strong>Regenerate</strong> from the runs list to recompute entries with overtime included.</p>
-                  </div>
-                </div>
-              )}
-
               {loadingEntries ? (
                 <div className="flex items-center justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>
               ) : runEntries.length === 0 ? (
@@ -3603,6 +3483,97 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       Total Net: KES {runEntries.reduce((s: number, e: any) => s + Number(e.netPay), 0).toLocaleString()}
                     </span>
                   </div>
+                </div>
+              )}
+
+              {/* Compliance File Generation */}
+              {runEntries.length > 0 && (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Compliance Files</h4>
+                    <button
+                      disabled={generatingCompliance}
+                      onClick={async () => {
+                        if (!selectedRun) return;
+                        setGeneratingCompliance(true);
+                        setError(null);
+                        try {
+                          const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/generate-compliance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }) });
+                          const data = await r.json();
+                          if (r.ok) { setComplianceResult(data); setStatusMessage('Compliance files generated'); onGenerateCompliance?.(client, data); }
+                          else setError(data.message || 'Failed');
+                        } catch { setError('Network error'); }
+                        finally { setGeneratingCompliance(false); }
+                      }}
+                      className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                    >
+                      {generatingCompliance ? 'Generating...' : 'Generate Compliance Files'}
+                    </button>
+                  </div>
+                  {complianceResult && (
+                    <div className="space-y-2">
+                      {complianceResult.payeZipUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs">
+                            <FileText className="h-3.5 w-3.5 text-slate-400" />
+                            <span className="font-medium text-slate-900">PAYE ZIP</span>
+                            <span className="text-slate-400">{complianceResult.payeZipLabel}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.payeZipUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button onClick={async () => {
+                              try {
+                                const parts = selectedRun?.period?.split('-') || [];
+                                const y = parseInt(parts[0], 10); const m = parseInt(parts[1], 10);
+                                const mm = String(isNaN(m) ? new Date().getMonth() + 1 : m).padStart(2, '0');
+                                const yyyy = String(isNaN(y) ? new Date().getFullYear() : y);
+                                const lastDay = new Date(isNaN(y) ? new Date().getFullYear() : y, isNaN(m) ? new Date().getMonth() + 1 : m, 0).getDate();
+                                const payload = { kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '1234', periodFrom: `${yyyy}-${mm}-01`, periodTo: `${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`, taxObligationType: 'paye', payeZipUrl: complianceResult.payeZipUrl, ownsRentalProperty: false };
+                                const r = await apiFetch('/tax/file-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                const d = await r.json();
+                                if (r.ok) setStatusMessage('PAYE filing job queued.');
+                                else setError(d.message || 'Failed');
+                              } catch { setError('Network error'); }
+                            }} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700 transition"><Globe className="h-3 w-3" /> File PAYE</button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.nssfFileUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">NSSF XLSX</span><span className="text-slate-400">{complianceResult.nssfFileLabel}</span></div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.nssfFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button onClick={async () => {
+                              try {
+                                const parts = selectedRun?.period?.split('-') || [];
+                                const mVal = parseInt(parts[1], 10) || (new Date().getMonth() + 1);
+                                const yVal = parseInt(parts[0], 10) || new Date().getFullYear();
+                                const period = `${String(mVal).padStart(2, '0')}/${yVal}`;
+                                const r = await apiFetch('/tax/file-nssf-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nssfFileUrl: complianceResult.nssfFileUrl, masterFileUrl: client.masterFileUrl, period }) });
+                                const d = await r.json();
+                                if (r.ok) setStatusMessage('NSSF filing job queued.');
+                                else setError(d.message || 'Failed');
+                              } catch { setError('Network error'); }
+                            }} className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-blue-700 transition"><Globe className="h-3 w-3" /> File NSSF</button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.shaFileUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">SHA XLSX</span><span className="text-slate-400">{complianceResult.shaFileLabel}</span></div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.shaFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button onClick={() => setStatusMessage('SHA auto-filing will be available in a future update.')} className="inline-flex items-center gap-1 rounded bg-purple-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-purple-700 transition"><Globe className="h-3 w-3" /> File SHA</button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.summaryAmounts && (
+                        <div className="mt-2 rounded-lg bg-slate-100 px-3 py-1.5 text-[10px] text-slate-600">
+                          Summary: PAYE {Number(complianceResult.summaryAmounts.payeAmount).toLocaleString()} | NITA {Number(complianceResult.summaryAmounts.nitaAmount).toLocaleString()} | AHL {Number(complianceResult.summaryAmounts.housingLevyAmount).toLocaleString()} | NSSF {Number(complianceResult.summaryAmounts.nssfAmount).toLocaleString()} | SHA {Number(complianceResult.summaryAmounts.shaAmount).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -3764,13 +3735,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       {/* ───── Audit Trail Tab ───── */}
       {activeTab === 'audit' && (
         <AuditView client={client} />
-      )}
-
-      {/* ───── Dashboard KPIs Tab ───── */}
-      {activeTab === 'kpi' && (
-        <div className="p-6">
-          <KpiCharts clientId={client.id} />
-        </div>
       )}
 
       {/* ───── Employee Documents Modal ───── */}
@@ -4018,6 +3982,16 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     <option value="manager">Manager</option>
                     <option value="admin">Admin</option>
                   </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Portal Password</label>
+                  <input
+                    type="password"
+                    value={employeeForm.portalPassword || ''}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, portalPassword: e.target.value }))}
+                    placeholder="Set to update portal login"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
                 </div>
               </div>
             </div>

@@ -10,8 +10,8 @@ const pricingData = {
         {
             name: 'Starter',
             description: 'For independent accountants starting their practice.',
-            monthlyPrice: 5000,
-            annualPrice: 4000,
+            monthlyPrice: 2500,
+            annualPrice: 1250,
             features: [
                 'Up to 10 Client PINs',
                 'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
@@ -23,10 +23,11 @@ const pricingData = {
         {
             name: 'Growth',
             description: 'For mid-sized firms managing multiple clients.',
-            monthlyPrice: 10000,
-            annualPrice: 8000,
+            monthlyPrice: 4500,
+            annualPrice: 3000,
             features: [
                 'Up to 50 Client PINs',
+                'Payroll Management',
                 'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
                 'Pack Generation & automatic filing',
                 'Client Dashboard',
@@ -39,10 +40,11 @@ const pricingData = {
         {
             name: 'Premium',
             description: 'Designed for large auditing and accounting firms.',
-            monthlyPrice: 19000,
-            annualPrice: 15200,
+            monthlyPrice: 7500,
+            annualPrice: 4167,
             features: [
                 'Unlimited Client PINs',
+                'Payroll Management',
                 'KRA, NSSF, SHA, HELB, Tourism E-levy & More',
                 'Pack Generation & automatic filing',
                 'Client Dashboard',

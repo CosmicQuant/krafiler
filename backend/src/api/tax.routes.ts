@@ -145,6 +145,7 @@ type FilingGuardInput = {
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
     vatPreviousCredit?: number;
+    sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;
 };
 
@@ -169,6 +170,7 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         vatZipUrl: input.vatZipUrl?.trim() ?? '',
         prepareVatOnly: Boolean(input.prepareVatOnly),
         vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
+        sectionBWithoutPinSales: normaliseOptionalNumber(input.sectionBWithoutPinSales),
         printPrnOnly: Boolean(input.printPrnOnly),
     });
 }
@@ -398,6 +400,24 @@ const validateFilingRequest = [
 
             return true;
         }),
+
+    body('sectionBWithoutPinSales')
+        .custom((value: unknown, { req }) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+
+            if (req.body.taxObligationType !== 'vat') {
+                throw new Error('sectionBWithoutPinSales is only supported for VAT filings');
+            }
+
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                throw new Error('sectionBWithoutPinSales must be a non-negative number');
+            }
+
+            return true;
+        }),
 ];
 
 // ─── POST /api/tax/file-return (+ legacy alias) ─────────────────────────────
@@ -421,7 +441,7 @@ router.post(
             return;
         }
 
-        const { kraPin, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, printPrnOnly } =
+        const { kraPin, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -457,6 +477,11 @@ router.post(
                     ? vatPreviousCredit
                     : vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
                         ? Number(vatPreviousCredit)
+                        : undefined,
+                sectionBWithoutPinSales: typeof sectionBWithoutPinSales === 'number'
+                    ? sectionBWithoutPinSales
+                    : sectionBWithoutPinSales !== undefined && sectionBWithoutPinSales !== null && sectionBWithoutPinSales !== ''
+                        ? Number(sectionBWithoutPinSales)
                         : undefined,
                 printPrnOnly: Boolean(req.body.printPrnOnly),
             });
@@ -505,6 +530,9 @@ router.post(
                     ...(prepareVatOnly === true && { prepareVatOnly: true }),
                     ...(vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
                         ? { vatPreviousCredit: Number(vatPreviousCredit) }
+                        : {}),
+                    ...(sectionBWithoutPinSales !== undefined && sectionBWithoutPinSales !== null && sectionBWithoutPinSales !== ''
+                        ? { sectionBWithoutPinSales: Number(sectionBWithoutPinSales) }
                         : {}),
                 },
                 createdAt: new Date().toISOString(),
@@ -754,16 +782,25 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
 
         const jobId = uuidv4();
         
+        const effectivePeriod = typeof period === 'string' ? period : (() => {
+            const now = new Date();
+            const year = now.getFullYear();
+            let month = now.getMonth() + 1;
+            if (now.getDate() <= 9) { month = month - 1; if (month === 0) month = 12; }
+            return `${String(month).padStart(2, '0')}/${year}`;
+        })();
+
         const payload: NilReturnPayload = {
             kraPin: nssfUsername,
             kraPassword: nssfPassword,
-            periodFrom: new Date().toISOString(), // Mock periods for compatibility
+            periodFrom: new Date().toISOString(),
             periodTo: new Date().toISOString(),
             taxObligationType: 'nssf',
             ownsRentalProperty: false,
             nssfFileUrl: localNssfPath,
-            masterFileUrl: localMasterPath
-        };
+            masterFileUrl: localMasterPath,
+            nssfPeriod: effectivePeriod,
+        } as any;
 
         const job = await kraFilingQueue.add(
             'nssf-return',

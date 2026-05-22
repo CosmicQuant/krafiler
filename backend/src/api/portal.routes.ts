@@ -4,8 +4,13 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { logAudit } from '../services/auditService';
 import path from 'path';
 import fs from 'fs';
+import PDFDocument from 'pdfkit';
 
 const router = Router();
+
+function formatMoney(n: number): string {
+    return (typeof n === 'number' ? n.toFixed(2) : '0.00');
+}
 
 // All portal routes require authentication
 router.use(authMiddleware);
@@ -360,101 +365,147 @@ router.get('/payslip', async (req: AuthRequest, res) => {
     try {
         const kraPin = req.employee!.kraPin;
         const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id;
 
-        // Fetch the payroll data for this employee to generate payslip
-        const employee = await db
-            .selectFrom('employees')
-            .selectAll()
-            .where('id', '=', req.employee!.id)
-            .executeTakeFirst();
+        const employee = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).executeTakeFirst();
+        if (!employee) { res.status(404).json({ message: 'Employee not found' }); return; }
 
-        if (!employee) {
-            res.status(404).json({ message: 'Employee not found' });
-            return;
-        }
+        const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
 
-        // Fetch the client for company details
-        const client = await db
-            .selectFrom('clients')
-            .selectAll()
-            .where('id', '=', clientId)
-            .executeTakeFirst();
+        // Fetch latest payroll entry for actual computed data
+        const entry = await db.selectFrom('payroll_entries').selectAll()
+            .where('employeeId', '=', employeeId).where('clientId', '=', clientId)
+            .orderBy('createdAt', 'desc').executeTakeFirst();
 
-        // Generate payslip PDF using PDFKit
-        const PDFDocument = require('pdfkit');
         const doc = new PDFDocument({ size: 'A4', margin: 40 });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=Payslip_${kraPin}.pdf`);
         doc.pipe(res);
 
-        // Company header
-        doc.fontSize(16).font('Helvetica-Bold').text(client?.name || 'Company', { align: 'center' });
-        doc.fontSize(8).font('Helvetica').text(`KRA PIN: ${client?.pin || ''}`, { align: 'center' });
-        doc.moveDown(0.5);
-
-        // Employee details
-        doc.fontSize(10).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
-        doc.moveDown(0.5);
-
         const leftX = 40;
-        const rightX = 300;
-        const colWidth = 250;
+        const rightX = 310;
+        const earningsAmountX = 240;
+        const deductionsAmountX = 550;
+        let y = 40;
+
+        // Logo
+        if (client?.logoUrl) {
+            try {
+                const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+                if (fs.existsSync(logoPath)) doc.image(logoPath, leftX, y, { width: 60 });
+            } catch { /* ignore */ }
+        }
+
+        doc.fontSize(14).font('Helvetica-Bold').text(client?.name || 'Company', { align: 'center' });
+        doc.fontSize(8).font('Helvetica').text(`KRA PIN: ${client?.pin || ''}`, { align: 'center' });
+        doc.moveDown(0.3);
+        doc.fontSize(10).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
+        doc.moveDown(0.3);
 
         doc.fontSize(8).font('Helvetica');
-        doc.text(`Employee Name: ${employee.employeeName}`, leftX, undefined, { width: colWidth });
-        doc.text(`KRA PIN: ${employee.kraPin}`, rightX, undefined, { width: colWidth });
+        doc.text(`Employee: ${employee.employeeName}`, leftX, doc.y);
+        doc.text(`KRA PIN: ${employee.kraPin}`, rightX, doc.y);
         doc.moveDown(0.3);
-        doc.text(`ID Number: ${employee.idNumber}`, leftX, undefined, { width: colWidth });
-        doc.text(`Department: ${employee.department}`, rightX, undefined, { width: colWidth });
-        doc.text(`Payroll No: ${employee.payrollNumber}`, leftX, undefined, { width: colWidth });
-        doc.text(`Basic Pay: KES ${Number(employee.basicPay).toLocaleString()}`, rightX, undefined, { width: colWidth });
-        doc.moveDown(0.5);
+        doc.text(`ID Number: ${employee.idNumber}`, leftX, doc.y);
+        doc.text(`Department: ${employee.department || ''}`, rightX, doc.y);
+        doc.text(`Payroll No: ${employee.payrollNumber || ''}`, leftX, doc.y);
+        if (entry) doc.text(`Period: Current`, rightX, doc.y);
+        doc.moveDown(0.8);
 
-        // Earnings & Deductions table
-        const tableTop = doc.y;
-        doc.fontSize(8).font('Helvetica-Bold');
-        doc.text('Earnings', leftX, tableTop);
-        doc.text('Amount (KES)', leftX + 150, tableTop);
-        doc.text('Deductions', rightX, tableTop);
-        doc.text('Amount (KES)', rightX + 150, tableTop);
-        doc.moveDown(0.3);
+        const e = entry || {} as any;
+        const basicPay = e.basicPay || employee.basicPay || 0;
+        const benefits = e.benefits || 0;
+        const overtimePay = e.overtimePay || 0;
+        const bonusPay = (e.bonusPay || 0) + (e.nonTaxableBonus || 0);
+        const grossPay = e.grossPay || (basicPay + benefits + overtimePay + bonusPay);
+        const unpaidLeaveDays = e.unpaidLeaveDays || 0;
+        const unpaidLeaveDeduction = unpaidLeaveDays > 0 ? Math.round((basicPay / 30) * unpaidLeaveDays * 100) / 100 : 0;
+        const absentDays = e.absentDays || 0;
+        const lateDays = e.lateDays || 0;
+        const dailyRate = basicPay / 30;
+        const hourlyRate = dailyRate / 8;
+        const absentDeduction = absentDays * dailyRate;
+        const lateDeduction = lateDays * hourlyRate;
+        const loanDeduction = e.loanDeduction || 0;
+        const shaDeduction = e.shaDeduction || Math.round(grossPay * 0.0275 * 100) / 100;
+        const nssfDeduction = e.nssfDeduction || Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
+        const ahlDeduction = e.ahlDeduction || Math.round(grossPay * 0.015 * 100) / 100;
+        const payeTax = e.payeTax || 0;
+        const otherDeductions = e.otherDeductions || 0;
+        const netPay = e.netPay || (grossPay - shaDeduction - nssfDeduction - ahlDeduction - loanDeduction - otherDeductions - payeTax);
+        const daysWorked = e.daysWorked || 30;
 
-        const grossPay = employee.basicPay;
-        const shaDeduction = Math.round(grossPay * 0.0275 * 100) / 100;
-        const nssfDeduction = Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
-        const ahlDeduction = Math.round(grossPay * 0.015 * 100) / 100;
-        const taxablePay = Math.max(0, grossPay - shaDeduction - nssfDeduction - ahlDeduction);
-        const payeTax = Math.round(Math.max(0,
-            taxablePay * 0.1 + Math.max(0, (taxablePay - 24000) * 0.05)
-        ) * 100) / 100;
-        const netPay = grossPay - shaDeduction - nssfDeduction - ahlDeduction - payeTax;
-
-        doc.fontSize(8).font('Helvetica');
-        doc.text('Basic Salary', leftX, doc.y);
-        doc.text(grossPay.toFixed(2), leftX + 150, doc.y - 8);
-        doc.text('PAYE Tax', rightX, doc.y - 8);
-        doc.text(payeTax.toFixed(2), rightX + 150, doc.y - 8);
-        doc.moveDown(0.3);
-        doc.text('', leftX, doc.y);
-        doc.text('SHA', rightX, doc.y - 8);
-        doc.text(shaDeduction.toFixed(2), rightX + 150, doc.y - 8);
-        doc.moveDown(0.3);
-        doc.text('', leftX, doc.y);
-        doc.text('NSSF', rightX, doc.y - 8);
-        doc.text(nssfDeduction.toFixed(2), rightX + 150, doc.y - 8);
-        doc.moveDown(0.3);
-        doc.text('', leftX, doc.y);
-        doc.text('AHL', rightX, doc.y - 8);
-        doc.text(ahlDeduction.toFixed(2), rightX + 150, doc.y - 8);
-
-        doc.moveDown(0.5);
+        // ── Column Headers ──
+        const colY = doc.y;
         doc.fontSize(9).font('Helvetica-Bold');
-        doc.text(`Gross Pay: KES ${grossPay.toFixed(2)}`, leftX, doc.y);
-        doc.text(`Net Pay: KES ${netPay.toFixed(2)}`, rightX, doc.y - 8);
+        doc.text('EARNINGS', leftX, colY);
+        doc.text('Amount (KES)', earningsAmountX, colY);
+        doc.text('DEDUCTIONS', rightX, colY);
+        doc.text('Amount (KES)', deductionsAmountX, colY);
+        doc.moveDown(0.4);
 
-        doc.moveDown(1);
-        doc.fontSize(7).font('Helvetica').text(`Generated on ${new Date().toLocaleDateString()}`, { align: 'center' });
+        let earnY = doc.y;
+        let dedY = doc.y;
+        const rowH = 14;
 
+        // Earnings
+        doc.fontSize(8).font('Helvetica');
+        doc.text('Basic Pay', leftX, earnY); doc.text(basicPay.toFixed(2), earningsAmountX, earnY);
+        earnY += rowH;
+
+        if (benefits > 0) { doc.text('Benefits', leftX, earnY); doc.text(benefits.toFixed(2), earningsAmountX, earnY); earnY += rowH; }
+        if (overtimePay > 0) { doc.text('Overtime Pay', leftX, earnY); doc.text(overtimePay.toFixed(2), earningsAmountX, earnY); earnY += rowH; }
+        if (bonusPay > 0) { doc.text('Bonus Pay', leftX, earnY); doc.text(bonusPay.toFixed(2), earningsAmountX, earnY); earnY += rowH; }
+
+        // Gross separator
+        earnY += 4;
+        doc.rect(leftX, earnY, 200, 1).fill('#ddd');
+        earnY += 6;
+        doc.font('Helvetica-Bold').text('Gross Pay', leftX, earnY);
+        doc.text(grossPay.toFixed(2), earningsAmountX, earnY);
+        earnY += rowH;
+
+        // Deductions
+        doc.font('Helvetica');
+        doc.text('PAYE Tax', rightX, dedY); doc.text(payeTax.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        doc.text('SHA', rightX, dedY); doc.text(shaDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        doc.text('NSSF', rightX, dedY); doc.text(nssfDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        doc.text('AHL', rightX, dedY); doc.text(ahlDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+
+        if (unpaidLeaveDays > 0) {
+            doc.text(`Unpaid Leave (${unpaidLeaveDays} days)`, rightX, dedY);
+            doc.text(unpaidLeaveDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        }
+        if (absentDays > 0) {
+            doc.text(`Absenteeism (${absentDays} days)`, rightX, dedY);
+            doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        }
+        if (lateDays > 0) {
+            doc.text(`Lateness (${lateDays} hrs)`, rightX, dedY);
+            doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        }
+        if (loanDeduction > 0) { doc.text('Loan Deduction', rightX, dedY); doc.text(loanDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
+        if (otherDeductions > 0) { doc.text('Other Deductions', rightX, dedY); doc.text(otherDeductions.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
+
+        // Deductions separator
+        dedY += 4;
+        doc.rect(rightX, dedY, 200, 1).fill('#ddd');
+        dedY += 6;
+        const totalDed = shaDeduction + nssfDeduction + ahlDeduction + loanDeduction + otherDeductions + payeTax + unpaidLeaveDeduction + absentDeduction + lateDeduction;
+        doc.font('Helvetica-Bold').text('Total Deductions', rightX, dedY);
+        doc.text(totalDed.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
+
+        // Net Pay bar
+        const finalY = Math.max(earnY, dedY) + 20;
+        doc.rect(leftX, finalY, 510, 24).fill('#1e293b');
+        doc.fontSize(11).font('Helvetica-Bold').fillColor('#ffffff');
+        doc.text('NET PAY', leftX + 8, finalY + 6);
+        doc.text(`KES ${netPay.toFixed(2)}`, deductionsAmountX - 30, finalY + 6);
+        doc.fillColor('#000');
+
+        doc.moveDown(2);
+        doc.fontSize(7).font('Helvetica').text(`Days Worked: ${daysWorked}  |  Generated on ${new Date().toLocaleDateString()}`, { align: 'center' });
         doc.end();
     } catch (err) {
         console.error('Error generating portal payslip:', err);
@@ -467,89 +518,220 @@ router.get('/p9', async (req: AuthRequest, res) => {
     try {
         const kraPin = req.employee!.kraPin;
         const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id;
 
-        const employee = await db
-            .selectFrom('employees')
-            .selectAll()
-            .where('id', '=', req.employee!.id)
-            .executeTakeFirst();
+        const employee = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).executeTakeFirst();
+        if (!employee) { res.status(404).json({ message: 'Employee not found' }); return; }
 
-        if (!employee) {
-            res.status(404).json({ message: 'Employee not found' });
-            return;
-        }
+        const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
 
-        const client = await db
-            .selectFrom('clients')
-            .selectAll()
-            .where('id', '=', clientId)
-            .executeTakeFirst();
+        // Fetch latest payroll entry for actual computed data
+        const entry = await db.selectFrom('payroll_entries').selectAll()
+            .where('employeeId', '=', employeeId).where('clientId', '=', clientId)
+            .orderBy('createdAt', 'desc').executeTakeFirst();
 
-        const PDFDocument = require('pdfkit');
-        const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        const e = entry || {} as any;
+        const basicPay = e.basicPay || employee.basicPay || 0;
+        const benefits = e.benefits || 0;
+        const overtimePay = e.overtimePay || 0;
+        const bonusPay = (e.bonusPay || 0) + (e.nonTaxableBonus || 0);
+        const grossPay = e.grossPay || (basicPay + benefits + overtimePay + bonusPay);
+        const shaDed = e.shaDeduction || Math.round(grossPay * 0.0275 * 100) / 100;
+        const nssfDed = e.nssfDeduction || Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
+        const ahl = e.ahlDeduction || Math.round(grossPay * 0.015 * 100) / 100;
+        const payeTax = e.payeTax || 0;
+        const loanDed = e.loanDeduction || 0;
+        const otherDed = e.otherDeductions || 0;
+        const netPay = e.netPay || Math.max(0, grossPay - shaDed - nssfDed - ahl - loanDed - otherDed - payeTax);
+        const personalRelief = 2400;
+        const insuranceRelief = 0;
+        const taxYear = new Date().getFullYear().toString();
+        const monthNum = new Date().getMonth() + 1;
+
+        // Other values for P9
+        const totalCashPay = basicPay || 0;
+        const carBenefit = employee.carBenefit || 0;
+        const meals = employee.mealsBenefit || 0;
+        const nonCash = employee.nonCashBenefits || 0;
+        const housingBenefit = employee.housingBenefit || 0;
+        const otherBenefits = employee.otherBenefits || 0;
+        const otherPension = employee.otherPension || 0;
+        const postRetMedical = employee.postRetMedical || 0;
+        const mortgage = employee.mortgageInterest || 0;
+        const taxablePay = e.taxablePay || (grossPay - (shaDed + nssfDed + ahl + otherPension + postRetMedical + mortgage));
+
+        const doc = new PDFDocument({ size: 'A4', margin: 25 });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=P9_${kraPin}.pdf`);
         doc.pipe(res);
 
-        doc.fontSize(14).font('Helvetica-Bold').text('P9 ANNUAL TAX DEDUCTION CARD', { align: 'center' });
-        doc.moveDown(0.5);
+        const pageWidth = doc.page.width - 50;
+        const leftMargin = 25;
+        let y = leftMargin;
 
-        doc.fontSize(8).font('Helvetica');
-        doc.text(`Employer: ${client?.name || 'Company'}`, 40, doc.y);
-        doc.text(`Employer PIN: ${client?.pin || ''}`, 40, doc.y);
-        doc.text(`Employee: ${employee.employeeName}`, 40, doc.y);
-        doc.text(`KRA PIN: ${employee.kraPin}`, 40, doc.y);
-        doc.text(`ID Number: ${employee.idNumber}`, 40, doc.y);
-        doc.moveDown(0.5);
+        // ── Logos Row (Company + KRA) ──
+        if (client?.logoUrl) {
+            try {
+                const companyLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+                if (fs.existsSync(companyLogoPath)) doc.image(companyLogoPath, leftMargin, y, { width: 50 });
+            } catch { /* ignore */ }
+        }
+        try {
+            const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
+            if (fs.existsSync(kraLogoPath)) doc.image(kraLogoPath, leftMargin + pageWidth - 60, y, { width: 55 });
+        } catch { /* ignore */ }
+        y += 60;
 
-        // Calculate annual figures (simplified: basicPay * 12)
-        const monthlyGross = employee.basicPay;
-        const annualGross = monthlyGross * 12;
-        const monthlySha = Math.round(monthlyGross * 0.0275 * 100) / 100;
-        const annualSha = monthlySha * 12;
-        const monthlyNssf = Math.round(Math.min(monthlyGross * 0.06, 6480) * 100) / 100;
-        const annualNssf = monthlyNssf * 12;
-        const monthlyAhl = Math.round(monthlyGross * 0.015 * 100) / 100;
-        const annualAhl = monthlyAhl * 12;
+        // ── KRA Header ──
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+        doc.text('KENYA REVENUE AUTHORITY', leftMargin, y, { align: 'center', width: pageWidth });
+        y += 11;
+        doc.fontSize(7).font('Helvetica').fillColor('#333');
+        doc.text('DOMESTIC TAXES DEPARTMENT  |  TAX DEDUCTION CARD YEAR ' + taxYear, leftMargin, y, { align: 'center', width: pageWidth });
+        y += 14;
 
-        // Tax calculation (simplified annual)
-        const annualDeductions = annualSha + annualNssf + annualAhl;
-        const annualTaxablePay = Math.max(0, annualGross - annualDeductions);
-        const annualPersonalRelief = 2400 * 12;
-        const annualInsuranceRelief = 0;
-        const annualPaye = Math.max(0,
-            Math.max(0, annualTaxablePay * 0.1)
-            + Math.max(0, (annualTaxablePay - 288000) * 0.15)
-            + Math.max(0, (annualTaxablePay - 388000) * 0.05)
-            + Math.max(0, (annualTaxablePay - 6000000) * 0.025)
-            + Math.max(0, (annualTaxablePay - 9600000) * 0.025)
-            - annualPersonalRelief
-            - annualInsuranceRelief
-        );
+        // ── Employer / Employee Top Fields ──
+        doc.fontSize(7).font('Helvetica-Bold').fillColor('#000');
+        doc.text('Employers Name', leftMargin, y);
+        doc.text(client?.name || '', leftMargin + 90, y, { width: 200 });
+        doc.text("Employer's PIN", leftMargin + 320, y);
+        doc.text(client?.pin || '', leftMargin + 390, y, { width: 120 });
+        y += 11;
+        doc.text("Employee's Main Name", leftMargin, y);
+        doc.text(employee.employeeName, leftMargin + 90, y, { width: 200 });
+        doc.text("Employee's PIN", leftMargin + 320, y);
+        doc.text(employee.kraPin, leftMargin + 390, y, { width: 120 });
+        y += 11;
+        doc.text("Employee's Other Names", leftMargin, y);
+        y += 14;
 
-        // Table
-        doc.fontSize(9).font('Helvetica-Bold').text('Annual Summary', 40, doc.y);
-        doc.moveDown(0.3);
+        // ── Monthly Table (KRA P9 with E1/E2/E3) ──
+        // 18 columns: Month | A | B | C | D | E1 | E2 | E3 | F | G | H | I | J | K | L | M | N | O
+        const colCount = 18;
+        const colWidth = Math.floor(pageWidth / colCount);
+        const colXs = Array.from({ length: colCount }, (_, i) => leftMargin + i * colWidth);
 
-        const items = [
-            ['Annual Gross Pay', annualGross.toFixed(2)],
-            ['Annual SHA Deduction', annualSha.toFixed(2)],
-            ['Annual NSSF Deduction', annualNssf.toFixed(2)],
-            ['Annual AHL Deduction', annualAhl.toFixed(2)],
-            ['Annual Taxable Pay', annualTaxablePay.toFixed(2)],
-            ['Annual Personal Relief', annualPersonalRelief.toFixed(2)],
-            ['Annual PAYE Tax', annualPaye.toFixed(2)],
-            ['Annual Net Pay', (annualGross - annualSha - annualNssf - annualAhl - annualPaye).toFixed(2)],
+        const headers = [
+            'MONTH', 'Basic\nSalary', 'Benefits-\nNonCash', 'Value of\nQuarters', 'Total Gross\nPay',
+            '30% of A\n(E1)', 'Actual\n(E2)', 'Lower of\nE1,E2(E3)', 'AHL', 'SHIF', 'PRMF',
+            'Owner-\nOccupied', 'Total\nDeductions', 'Chargeable\nPay (D-J)', 'Tax\nCharged',
+            'Personal\nRelief', 'Insurance\nRelief', 'PAYE Tax\n(L-M-N)'
         ];
+        const colLetters = ['', 'A', 'B', 'C', 'D', 'E1', 'E2', 'E3', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'];
 
-        doc.fontSize(8).font('Helvetica');
-        items.forEach(([label, value]) => {
-            doc.text(label, 40, doc.y, { continued: true });
-            doc.text(value, 350, doc.y - 8, { align: 'right' });
+        // Header background
+        doc.rect(leftMargin, y, pageWidth, 44).fill('#1e293b');
+
+        // Column letters
+        doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#fff');
+        colLetters.forEach((letter, i) => {
+            if (letter) doc.text(letter, colXs[i] + 1, y + 2, { width: colWidth - 2, align: 'center' });
         });
 
-        doc.moveDown(1);
-        doc.fontSize(7).font('Helvetica').text(`This is a computer-generated document. Generated on ${new Date().toLocaleDateString()}`, { align: 'center' });
+        // Header labels
+        doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#fff');
+        headers.forEach((h, i) => {
+            const lines = h.split('\n');
+            lines.forEach((line, li) => {
+                doc.text(line, colXs[i] + 1, y + 10 + (li * 6), { width: colWidth - 2, align: i === 0 ? 'left' : 'center' });
+            });
+        });
+
+        y += 44;
+
+        // Kshs. row
+        doc.rect(leftMargin, y, pageWidth, 9).fill('#e2e8f0');
+        doc.fontSize(4.5).font('Helvetica').fillColor('#333');
+        for (let i = 1; i < colCount; i++) {
+            if (i < 5 || i > 7) { doc.text('Kshs.', colXs[i] + 1, y + 1, { width: colWidth - 2, align: 'center' }); }
+        }
+        y += 9;
+
+        const benefitsNonCash = (carBenefit || 0) + (meals || 0) + (nonCash || 0);
+        const valueOfQuarters = housingBenefit || 0;
+        const e1_30PerA = totalCashPay * 0.30;
+        const e2_actual = (nssfDed || 0) + (otherPension || 0);
+        const e3_lower = Math.min(e1_30PerA, e2_actual);
+        const totalDeductionsColJ = e3_lower + (shaDed || 0) + (ahl || 0) + (otherPension || 0) + (postRetMedical || 0) + (mortgage || 0);
+        const taxCharged = (payeTax || 0) + (personalRelief || 0) + (insuranceRelief || 0);
+
+        const monthLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const currentMonthNum = monthNum || new Date().getMonth() + 1;
+
+        let rowY = y;
+        monthLabels.forEach((ml: string, mi: number) => {
+            const isCurrent = mi + 1 === currentMonthNum;
+            const bg = mi % 2 === 0 ? '#f8fafc' : '#ffffff';
+            doc.rect(leftMargin, rowY, pageWidth, 12).fill(bg);
+
+            doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#000');
+            doc.text(ml, colXs[0] + 2, rowY + 2, { width: colWidth - 2 });
+
+            if (isCurrent) {
+                const values = [
+                    totalCashPay, benefitsNonCash, valueOfQuarters, grossPay,
+                    e1_30PerA, e2_actual, e3_lower,
+                    ahl, shaDed, postRetMedical, mortgage, totalDeductionsColJ,
+                    taxablePay, taxCharged, personalRelief, insuranceRelief, payeTax
+                ];
+                doc.fontSize(4.5).font('Helvetica').fillColor('#000');
+                values.forEach((val, vi) => {
+                    doc.text(formatMoney(val), colXs[vi + 1] + 1, rowY + 2, { width: colWidth - 2, align: 'right' });
+                });
+            } else {
+                doc.fontSize(4.5).font('Helvetica').fillColor('#94a3b8');
+                for (let vi = 1; vi < colCount; vi++) {
+                    doc.text('0.00', colXs[vi] + 1, rowY + 2, { width: colWidth - 2, align: 'right' });
+                }
+            }
+            rowY += 12;
+        });
+
+        // TOTAL row
+        doc.rect(leftMargin, rowY, pageWidth, 13).fill('#1e293b');
+        doc.fontSize(5).font('Helvetica-Bold').fillColor('#fff');
+        doc.text('TOTAL', colXs[0] + 2, rowY + 2, { width: colWidth - 2 });
+        const totalValues = [
+            totalCashPay, benefitsNonCash, valueOfQuarters, grossPay,
+            e1_30PerA, e2_actual, e3_lower,
+            ahl, shaDed, postRetMedical, mortgage, totalDeductionsColJ,
+            taxablePay, taxCharged, personalRelief, insuranceRelief, payeTax
+        ];
+        totalValues.forEach((val, vi) => {
+            doc.text(formatMoney(val), colXs[vi + 1] + 1, rowY + 2, { width: colWidth - 2, align: 'right' });
+        });
+        rowY += 16;
+
+        // ── Bottom Section ──
+        doc.fontSize(7).font('Helvetica-Bold').fillColor('#000');
+        doc.text('TOTAL CHARGEABLE PAY (COL. K) Kshs.', leftMargin, rowY);
+        doc.text(formatMoney(taxablePay), leftMargin + 180, rowY, { width: 100, align: 'right' });
+        rowY += 14;
+        doc.text('TOTAL TAX (C ........................................................................)', leftMargin, rowY);
+        doc.text(formatMoney(payeTax), leftMargin + 180, rowY, { width: 100, align: 'right' });
+        rowY += 16;
+
+        doc.fontSize(6).font('Helvetica-Bold').fillColor('#000');
+        doc.text('IMPORTANT', leftMargin, rowY);
+        rowY += 9;
+        doc.fontSize(4.5).font('Helvetica').fillColor('#666');
+        const notes = [
+            '1. Use P9A',
+            '2. (a) Deductible interest in respect of any month prior to December 2024 must not exceed Kshs. 25,000/- and commencing December 2024 must not exceed 30,000/-',
+            '   (b) Where an employee is eligible to deduction on owner occupied interest.',
+            '   (c) Where an employee contributes to a post retirement medical fund.',
+            '   (d) Deductible contribution to the Social Health Insurance Fund (SHIF) and deductions made towards Affordable Housing Levy (AHL) are effective December 2024',
+            '   (e) Personal Relief is Kshs. 2,400 per Month or 28,800 per year',
+            '   (f) Insurance Relief is 15% of the Premium up to a Maximum of Kshs. 5,000 per month or Kshs. 60,000 per year',
+        ];
+        notes.forEach(note => {
+            doc.text(note, leftMargin, rowY, { width: pageWidth });
+            rowY += 7;
+        });
+
+        rowY += 4;
+        doc.fontSize(5).font('Helvetica').fillColor('#999');
+        doc.text('This is a computer-generated P9 form. No signature required.', leftMargin, rowY, { align: 'center', width: pageWidth });
 
         doc.end();
     } catch (err) {

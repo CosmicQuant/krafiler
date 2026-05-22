@@ -142,6 +142,8 @@ export interface EmployeesTable {
     bonusPay: number;
     passwordHash: string | null;
     passwordChangedAt: string | null;
+    workScheduleId: number | null;
+    offDay: string | null; // e.g. "Monday" for rotating/case-by-case
     createdAt: string;
     updatedAt: string;
 }
@@ -335,6 +337,29 @@ export interface AttendancePayrollApprovalsTable {
     createdAt: string;
 }
 
+export interface WorkSchedulesTable {
+    id: Generated<number>;
+    clientId: number;
+    name: string;
+    config: string; // JSON: { "Mon": 8, "Tue": 8, "Wed": 8, "Thu": 8, "Fri": 8, "Sat": 4, "Sun": 0 }
+    standardCheckIn: string;
+    standardCheckOut: string;
+    saturdayCheckOut: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface HolidaysTable {
+    id: Generated<number>;
+    clientId: number;
+    name: string;
+    date: string; // ISO date YYYY-MM-DD
+    isRecurring: number; // 1 = recurring annually, 0 = one-time
+    holidayType: string; // 'public', 'company'
+    createdAt: string;
+    updatedAt: string;
+}
+
 export interface Database {
     clients: ClientsTable;
     job_history: JobHistoryTable;
@@ -351,4 +376,6 @@ export interface Database {
     audit_log: AuditLogTable;
     overtime_records: OvertimeRecordsTable;
     attendance_payroll_approvals: AttendancePayrollApprovalsTable;
+    work_schedules: WorkSchedulesTable;
+    holidays: HolidaysTable;
 }

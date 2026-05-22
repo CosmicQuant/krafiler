@@ -40,6 +40,28 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
     const now = new Date().toISOString();
     const [periodYear, periodMonth] = run.period.split('-');
 
+    // Fetch work schedules and holidays for this client
+    const workSchedules = await db
+        .selectFrom('work_schedules')
+        .selectAll()
+        .where('clientId', '=', clientId)
+        .execute();
+    const scheduleMap = new Map<number, any>();
+    for (const ws of workSchedules) {
+        scheduleMap.set(ws.id, ws);
+    }
+
+    const [yearStr, monthStr] = run.period.split('-');
+    const holidays = await db
+        .selectFrom('holidays')
+        .selectAll()
+        .where('clientId', '=', clientId)
+        .where((eb) => eb.or([
+            eb('date', 'like', `${yearStr}-%`),
+            eb('isRecurring', '=', 1),
+        ]))
+        .execute();
+
     // Fetch active loans
     const allLoans = await db
         .selectFrom('loans')
@@ -176,6 +198,10 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
     // Compute entries
     const entries = employees.map(emp => {
         const payStructure = (emp.payStructure || (client?.payStructure as string) || 'fixed') as 'fixed' | 'prorated';
+        // Determine work schedule for this employee
+        const scheduleId = emp.workScheduleId || null;
+        const schedule = scheduleId ? scheduleMap.get(scheduleId) : null;
+        const scheduleConfig = schedule ? JSON.parse(schedule.config) : null;
         return computePayrollEntry(
             {
                 employeeId: emp.id,
@@ -202,7 +228,9 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
             },
             run.period,
             prorate,
-        )
+            scheduleConfig,
+            holidays,
+        );
     });
 
     // Insert entries
@@ -587,92 +615,155 @@ router.get('/:clientId/payroll-runs/:id/payslip/:employeeId', async (req, res) =
 });
 
 function generatePayslipPDF(doc: any, entry: any, client: any): void {
-    const pageWidth = doc.page.width - 80;
+    const leftX = 40;
+    const rightX = 310;
+    const earningsAmountX = 240;
+    const deductionsAmountX = 550;
+    let y = 40;
+
+    // ── Company Logo ──
     if (client?.logoUrl) {
         try {
             const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
             if (fs.existsSync(logoPath)) {
-                doc.image(logoPath, 40, 40, { width: 70 });
-                doc.y = 120;
-            } else {
-                console.warn('Payslip logo not found at:', logoPath);
+                doc.image(logoPath, leftX, y, { width: 60 });
+                y = 110;
             }
-        } catch (e: any) {
-            console.warn('Payslip logo error:', e.message);
-        }
+        } catch { /* ignore */ }
     }
-    doc.fontSize(14).font('Helvetica-Bold').text(client?.name || 'Company', { align: 'center' });
-    doc.fontSize(8).font('Helvetica').text(`KRA PIN: ${client?.pin || ''}`, { align: 'center' });
-    doc.moveDown(0.3);
-    doc.fontSize(10).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
-    doc.moveDown(0.3);
-    doc.fontSize(8).font('Helvetica');
-    doc.text(`Employee: ${entry.employeeName}`, 40, doc.y);
-    doc.text(`KRA PIN: ${entry.kraPin}`, 250, doc.y - 8);
-    doc.moveDown(0.3);
-    doc.text(`Payroll No: ${entry.payrollNumber}`, 40, doc.y);
-    doc.text(`Days Worked: ${entry.daysWorked}`, 250, doc.y - 8);
-    doc.moveDown(0.5);
 
-    doc.fontSize(9).font('Helvetica-Bold').text('Earnings', 40, doc.y);
-    doc.text('Amount (KES)', 180, doc.y - 8);
-    doc.text('Deductions', 320, doc.y - 8);
-    doc.text('Amount (KES)', 430, doc.y - 8);
-    doc.moveDown(0.3);
-
+    // ── Header ──
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000');
+    doc.text(client?.name || 'Company', leftX, y, { align: 'center', width: 510 });
+    y += 18;
+    doc.fontSize(8).font('Helvetica').fillColor('#666');
+    doc.text(`KRA PIN: ${client?.pin || ''}`, leftX, y, { align: 'center', width: 510 });
+    y += 14;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
+    doc.text('PAYSLIP', leftX, y, { align: 'center', width: 510 });
+    y += 20;
     doc.fontSize(8).font('Helvetica');
-    doc.text('Basic Pay', 40, doc.y);
-    doc.text(entry.basicPay.toFixed(2), 180, doc.y - 8);
-    doc.text('PAYE Tax', 320, doc.y - 8);
-    doc.text(entry.payeTax.toFixed(2), 430, doc.y - 8);
-    doc.moveDown(0.3);
+    doc.text(`Employee: ${entry.employeeName || ''}`, leftX, y);
+    doc.text(`KRA PIN: ${entry.kraPin || ''}`, rightX, y);
+    y += 14;
+    doc.text(`Payroll No: ${entry.payrollNumber || ''}`, leftX, y);
+    doc.text(`Days Worked: ${entry.daysWorked || 0}`, rightX, y);
+    y += 14;
+
+    const rowH = 13;
+
+    // ── Column Headers ──
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+    doc.text('EARNINGS', leftX, y);
+    doc.text('Amount (KES)', earningsAmountX, y);
+    doc.text('DEDUCTIONS', rightX, y);
+    doc.text('Amount (KES)', deductionsAmountX, y);
+    y += rowH;
+
+    // Track separately
+    let earnY = y;
+    let dedY = y;
+
+    // ── EARNINGS ──
+    doc.fontSize(8).font('Helvetica').fillColor('#333');
+    doc.text('Basic Pay', leftX, earnY); doc.text(entry.basicPay.toFixed(2), earningsAmountX, earnY);
+    earnY += rowH;
 
     if (entry.benefits > 0) {
-        doc.text('Benefits', 40, doc.y);
-        doc.text(entry.benefits.toFixed(2), 180, doc.y - 8);
-        doc.moveDown(0.3);
+        doc.text('Benefits', leftX, earnY); doc.text(entry.benefits.toFixed(2), earningsAmountX, earnY);
+        earnY += rowH;
     }
+
+    if ((entry.overtimePay || 0) > 0) {
+        doc.text('Overtime Pay', leftX, earnY); doc.text(entry.overtimePay.toFixed(2), earningsAmountX, earnY);
+        earnY += rowH;
+    }
+
+    const totalBonus = (entry.bonusPay || 0) + (entry.nonTaxableBonus || 0);
+    if (totalBonus > 0) {
+        doc.text('Bonus Pay', leftX, earnY); doc.text(totalBonus.toFixed(2), earningsAmountX, earnY);
+        earnY += rowH;
+    }
+
+    // Gross separator + total
+    earnY += 4;
+    doc.rect(leftX, earnY, 200, 1).fill('#ddd');
+    earnY += 8;
+    doc.font('Helvetica-Bold').fillColor('#000');
+    doc.text('Gross Pay', leftX, earnY);
+    doc.text(entry.grossPay.toFixed(2), earningsAmountX, earnY);
+    earnY += rowH;
+
+    // ── DEDUCTIONS ──
+    dedY = y;  // reset to match earnings starting position
+
+    doc.font('Helvetica').fillColor('#333');
+    doc.text('PAYE Tax', rightX, dedY); doc.text(entry.payeTax.toFixed(2), deductionsAmountX, dedY);
+    dedY += rowH;
+
+    doc.text('SHA', rightX, dedY); doc.text(entry.shaDeduction.toFixed(2), deductionsAmountX, dedY);
+    dedY += rowH;
+
+    doc.text('NSSF', rightX, dedY); doc.text(entry.nssfDeduction.toFixed(2), deductionsAmountX, dedY);
+    dedY += rowH;
+
+    doc.text('AHL', rightX, dedY); doc.text(entry.ahlDeduction.toFixed(2), deductionsAmountX, dedY);
+    dedY += rowH;
 
     if ((entry.unpaidLeaveDays || 0) > 0) {
-        doc.text(`Unpaid Leave (${entry.unpaidLeaveDays} days)`, 40, doc.y);
-        doc.text(`(${entry.unpaidLeaveDeduction.toFixed(2)})`, 180, doc.y - 8);
-        doc.moveDown(0.3);
+        const unpaidAmt = (entry.unpaidLeaveDeduction || 0) || (entry.basicPay / 30) * entry.unpaidLeaveDays;
+        doc.text(`Unpaid Leave (${entry.unpaidLeaveDays} days)`, rightX, dedY);
+        doc.text(unpaidAmt.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
     }
 
-    doc.text('', 40, doc.y);
-    doc.text('SHA', 320, doc.y - 8);
-    doc.text(entry.shaDeduction.toFixed(2), 430, doc.y - 8);
-    doc.moveDown(0.3);
-    doc.text('', 40, doc.y);
-    doc.text('NSSF', 320, doc.y - 8);
-    doc.text(entry.nssfDeduction.toFixed(2), 430, doc.y - 8);
-    doc.moveDown(0.3);
-    doc.text('', 40, doc.y);
-    doc.text('AHL', 320, doc.y - 8);
-    doc.text(entry.ahlDeduction.toFixed(2), 430, doc.y - 8);
-    doc.moveDown(0.3);
+    if ((entry.absentDays || 0) > 0) {
+        const dailyRate = entry.basicPay / 30;
+        const absentDeduction = entry.absentDays * dailyRate;
+        doc.text(`Absenteeism (${entry.absentDays} days)`, rightX, dedY);
+        doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
+    }
+
+    if ((entry.lateDays || 0) > 0) {
+        const dailyRate = entry.basicPay / 30;
+        const hourlyRate = dailyRate / 8;
+        const lateDeduction = entry.lateDays * hourlyRate;
+        doc.text(`Lateness (${entry.lateDays} hrs)`, rightX, dedY);
+        doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
+    }
 
     if ((entry.loanDeduction || 0) > 0) {
-        doc.text('', 40, doc.y);
-        doc.text('Loan', 320, doc.y - 8);
-        doc.text(entry.loanDeduction.toFixed(2), 430, doc.y - 8);
-        doc.moveDown(0.3);
+        doc.text('Loan', rightX, dedY); doc.text(entry.loanDeduction.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
     }
 
     if (entry.otherDeductions > 0) {
-        doc.text('', 40, doc.y);
-        doc.text('Other', 320, doc.y - 8);
-        doc.text(entry.otherDeductions.toFixed(2), 430, doc.y - 8);
-        doc.moveDown(0.3);
+        doc.text('Other', rightX, dedY); doc.text(entry.otherDeductions.toFixed(2), deductionsAmountX, dedY);
+        dedY += rowH;
     }
 
-    doc.moveDown(0.3);
-    doc.fontSize(9).font('Helvetica-Bold');
-    doc.text(`Gross Pay: KES ${entry.grossPay.toFixed(2)}`, 40, doc.y);
-    doc.text(`Net Pay: KES ${entry.netPay.toFixed(2)}`, 320, doc.y - 8);
+    // Total Deductions separator
+    dedY += 4;
+    doc.rect(rightX, dedY, 200, 1).fill('#ddd');
+    dedY += 8;
+    doc.font('Helvetica-Bold').fillColor('#000');
+    doc.text('Total Deductions', rightX, dedY);
+    doc.text(entry.totalDeductions.toFixed(2), deductionsAmountX, dedY);
+    dedY += rowH;
 
-    doc.moveDown(0.5);
-    doc.fontSize(7).font('Helvetica').text(`Generated on ${new Date().toLocaleDateString()}`, { align: 'center' });
+    // ── Net Pay ──
+    const finalY = Math.max(earnY, dedY) + 16;
+    doc.rect(leftX, finalY, 510, 24).fill('#1e293b');
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#ffffff');
+    doc.text('NET PAY', leftX + 8, finalY + 6);
+    doc.text(`KES ${entry.netPay.toFixed(2)}`, deductionsAmountX - 30, finalY + 6);
+    doc.fillColor('#000');
+
+    y = finalY + 28;
+    doc.fontSize(7).font('Helvetica').fillColor('#999');
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, leftX, y, { align: 'center', width: 510 });
 }
 
 // ─── Overtime Routes ──────────────────────────────────────────────────────────
@@ -1374,6 +1465,24 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
         }
 
         const now = new Date().toISOString();
+        const [periodYear, periodMonth] = period.split('-').map(Number);
+        const daysInMonth = new Date(periodYear, periodMonth, 0).getDate();
+
+        // Fetch employee + schedule info for per-day record creation
+        const empIds = [...new Set(employeeApprovals.map((ea: any) => ea.employeeId))];
+        const employees = await db.selectFrom('employees').selectAll().where('id', 'in', empIds).where('clientId', '=', clientId).execute();
+        const empMap2 = new Map(employees.map(e => [e.id, e]));
+        const schedules = await db.selectFrom('work_schedules').selectAll().where('clientId', '=', clientId).execute();
+        const scheduleMap2 = new Map(schedules.map(s => [s.id, s]));
+
+        // Existing individual attendance for the period (don't override)
+        const allExisting = await db
+            .selectFrom('attendance_records')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('date', '>=', `${period}-01`)
+            .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
+            .execute();
 
         // Delete existing approvals for this period
         await db
@@ -1404,7 +1513,93 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
                 .execute();
         }
 
-        res.json({ success: true, approved: employeeApprovals.length });
+        // Create per-day attendance records based on approved data (assume 100% Present, then mark absences)
+        const dayNames: Record<number, string> = {0:'Sunday',1:'Monday',2:'Tuesday',3:'Wednesday',4:'Thursday',5:'Friday',6:'Saturday'};
+
+        for (const ea of employeeApprovals) {
+            const emp = empMap2.get(ea.employeeId);
+            if (!emp) continue;
+
+            // Get schedule config
+            const ws = emp.workScheduleId ? scheduleMap2.get(emp.workScheduleId) : null;
+            const scheduleConfig = ws && ws.config ? JSON.parse(ws.config) : null;
+
+            // Find which days this employee works (based on schedule or default Mon-Fri)
+            const workDays: string[] = [];
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${period}-${String(d).padStart(2, '0')}`;
+                const dt = new Date(periodYear, periodMonth - 1, d);
+                const dayName = dayNames[dt.getDay()];
+                const shortName = dayName.substring(0, 3);
+
+                let isWorkDay = true;
+                if (scheduleConfig) {
+                    if (!scheduleConfig[shortName] || scheduleConfig[shortName] === 0) isWorkDay = false;
+                } else {
+                    // Default: Mon-Fri only
+                    if (dt.getDay() === 0 || dt.getDay() === 6) isWorkDay = false;
+                }
+
+                // Also check employee offDay rotation
+                if (emp.offDay && emp.offDay === dayName) isWorkDay = false;
+
+                if (isWorkDay) {
+                    workDays.push(dateStr);
+                }
+            }
+
+            // Mark absences: last N work days as Absent
+            const absentCount = ea.absentDays || 0;
+            const absentDays = workDays.slice(-absentCount);
+            const presentDays = workDays.slice(0, Math.max(0, workDays.length - absentCount));
+
+            // Insert/update per-day records (skip if existing individual record)
+            for (const dateStr of [...presentDays, ...absentDays]) {
+                // If employee already has a record for this day, skip (preserve manually entered data)
+                const existingRec = allExisting.find(r => r.employeeId === emp.id && r.date === dateStr);
+                const isAbsent = absentDays.includes(dateStr);
+                const status = isAbsent ? 'Absent' : 'Present';
+
+                if (!existingRec) {
+                    // No existing individual record → create
+                    await db.insertInto('attendance_records').values({
+                        clientId,
+                        employeeId: emp.id,
+                        employeeName: emp.employeeName || '',
+                        kraPin: emp.kraPin || '',
+                        date: dateStr,
+                        checkIn: scheduleConfig ? (ws?.standardCheckIn || '08:00') : '08:00',
+                        checkOut: isAbsent ? '' : (scheduleConfig ? (ws?.standardCheckOut || '17:00') : '17:00'),
+                        status,
+                        notes: isAbsent ? 'Marked absent from review' : 'Auto-marked present from review',
+                        createdAt: now,
+                        updatedAt: now,
+                    }).execute();
+                }
+            }
+
+            // Auto-calculate overtime for the period based on supplied OT hours
+            if ((ea.overtimeHours || 0) > 0) {
+                await db
+                    .deleteFrom('overtime_records')
+                    .where('clientId', '=', clientId)
+                    .where('employeeId', '=', ea.employeeId)
+                    .where('period', '=', period)
+                    .execute();
+
+                await db.insertInto('overtime_records').values({
+                    clientId,
+                    employeeId: ea.employeeId,
+                    period,
+                    hours: ea.overtimeHours,
+                    rate: ea.overtimeRate || 0,
+                    multiplier: ea.overtimeMultiplier || 1.5,
+                    amount: ea.overtimeAmount || 0,
+                    description: 'Auto-generated from review',
+                    createdAt: now,
+                }).execute();
+            }
+        }
     } catch (err) {
         console.error('Error approving attendance data:', err);
         res.status(500).json({ message: 'Internal server error' });

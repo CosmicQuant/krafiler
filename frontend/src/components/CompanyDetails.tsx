@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud, Calendar, Clock, Trash2, Edit, Plus } from 'lucide-react';
 import { ClientObligation } from '../types';
 
 interface CompanyDetailsProps {
@@ -38,6 +38,19 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
     const [isUploadingCSV, setIsUploadingCSV] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
+
+    const [workSchedules, setWorkSchedules] = useState<any[]>([]);
+    const [holidays, setHolidays] = useState<any[]>([]);
+    const [showScheduleForm, setShowScheduleForm] = useState(false);
+    const [showHolidayForm, setShowHolidayForm] = useState(false);
+    const [editingSchedule, setEditingSchedule] = useState<any>(null);
+    const [editingHoliday, setEditingHoliday] = useState<any>(null);
+    const [scheduleForm, setScheduleForm] = useState({ name: '', config: JSON.stringify({ Mon: 8, Tue: 8, Wed: 8, Thu: 8, Fri: 8, Sat: 0, Sun: 0 }), standardCheckIn: '08:00', standardCheckOut: '17:00', saturdayCheckOut: '' });
+    const [holidayForm, setHolidayForm] = useState({ name: '', date: '', isRecurring: false, holidayType: 'Public' });
+    const [seedingSchedules, setSeedingSchedules] = useState(false);
+    const [seedingHolidays, setSeedingHolidays] = useState(false);
+    const [scheduleError, setScheduleError] = useState<string | null>(null);
+    const [holidayError, setHolidayError] = useState<string | null>(null);
 
     const handleUploadCSV = async (file: File) => {
         setIsUploadingCSV(true);
@@ -97,6 +110,108 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
             }
             return [...prev, key];
         });
+    };
+
+    useEffect(() => {
+        fetch(`/api/clients/${client.id}/work-schedules`).then(r => r.ok && r.json()).then(d => { if (d) setWorkSchedules(d); }).catch(() => {});
+        fetch(`/api/clients/${client.id}/holidays`).then(r => r.ok && r.json()).then(d => { if (d) setHolidays(d); }).catch(() => {});
+    }, [client.id]);
+
+    const handleSaveSchedule = async () => {
+        setScheduleError(null);
+        const body = editingSchedule ? JSON.stringify({ ...scheduleForm }) : JSON.stringify({ ...scheduleForm });
+        const method = editingSchedule ? 'PUT' : 'POST';
+        const url = editingSchedule ? `/api/clients/${client.id}/work-schedules/${editingSchedule.id}` : `/api/clients/${client.id}/work-schedules`;
+        try {
+            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body });
+            if (!res.ok) { setScheduleError('Failed to save schedule'); return; }
+            const data = await res.json();
+            if (editingSchedule) { setWorkSchedules(prev => prev.map(s => s.id === editingSchedule.id ? data.schedule || data : s)); }
+            else { setWorkSchedules(prev => [...prev, data.schedule || data]); }
+            setShowScheduleForm(false); setEditingSchedule(null);
+            setScheduleForm({ name: '', config: JSON.stringify({ Mon: 8, Tue: 8, Wed: 8, Thu: 8, Fri: 8, Sat: 0, Sun: 0 }), standardCheckIn: '08:00', standardCheckOut: '17:00', saturdayCheckOut: '' });
+        } catch { setScheduleError('Network error'); }
+    };
+
+    const handleDeleteSchedule = async (id: number) => {
+        try {
+            const res = await fetch(`/api/clients/${client.id}/work-schedules/${id}`, { method: 'DELETE' });
+            if (res.ok) setWorkSchedules(prev => prev.filter(s => s.id !== id));
+        } catch { /* ignore */ }
+    };
+
+    const handleSeedSchedules = async () => {
+        setSeedingSchedules(true);
+        try {
+            const res = await fetch(`/api/clients/${client.id}/work-schedules/seed-defaults`, { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                const r = await fetch(`/api/clients/${client.id}/work-schedules`);
+                if (r.ok) setWorkSchedules(await r.json());
+                alert(`Seeded ${data.seeded} default work schedules`);
+            }
+        } catch { /* ignore */ }
+        setSeedingSchedules(false);
+    };
+
+    const handleSaveHoliday = async () => {
+        setHolidayError(null);
+        const body = JSON.stringify({ ...holidayForm, date: holidayForm.date + '-01' });
+        const method = editingHoliday ? 'PUT' : 'POST';
+        const url = editingHoliday ? `/api/clients/${client.id}/holidays/${editingHoliday.id}` : `/api/clients/${client.id}/holidays`;
+        try {
+            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body });
+            if (!res.ok) { setHolidayError('Failed to save holiday'); return; }
+            const data = await res.json();
+            if (editingHoliday) { setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? data.holiday || data : h)); }
+            else { setHolidays(prev => [...prev, data.holiday || data]); }
+            setShowHolidayForm(false); setEditingHoliday(null);
+            setHolidayForm({ name: '', date: '', isRecurring: false, holidayType: 'Public' });
+        } catch { setHolidayError('Network error'); }
+    };
+
+    const handleDeleteHoliday = async (id: number) => {
+        try {
+            const res = await fetch(`/api/clients/${client.id}/holidays/${id}`, { method: 'DELETE' });
+            if (res.ok) setHolidays(prev => prev.filter(h => h.id !== id));
+        } catch { /* ignore */ }
+    };
+
+    const handleSeedHolidays = async () => {
+        setSeedingHolidays(true);
+        try {
+            const res = await fetch(`/api/clients/${client.id}/holidays/seed-kenyan`, { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                const r = await fetch(`/api/clients/${client.id}/holidays`);
+                if (r.ok) setHolidays(await r.json());
+                alert(`Seeded ${data.seeded} Kenyan holidays`);
+            } else {
+                const e = await res.json().catch(() => ({}));
+                alert(e.message || 'Failed to seed holidays');
+            }
+        } catch { alert('Network error seeding holidays'); }
+        setSeedingHolidays(false);
+    };
+
+    const openEditSchedule = (s: any) => {
+        setEditingSchedule(s);
+        setScheduleForm({ name: s.name, config: s.config, standardCheckIn: s.standardCheckIn, standardCheckOut: s.standardCheckOut, saturdayCheckOut: s.saturdayCheckOut || '' });
+        setShowScheduleForm(true);
+    };
+
+    const openEditHoliday = (h: any) => {
+        setEditingHoliday(h);
+        const d = h.date ? h.date.substring(0, 7) : '';
+        setHolidayForm({ name: h.name, date: d, isRecurring: !!h.isRecurring, holidayType: h.holidayType || 'Public' });
+        setShowHolidayForm(true);
+    };
+
+    const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    const formatConfig = (config: any) => {
+        try { const c = typeof config === 'string' ? JSON.parse(config) : config; return daysOfWeek.map(d => `${d}:${c[d] || 0}h`).join(' '); }
+        catch { return ''; }
     };
 
     return (
@@ -242,6 +357,138 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                                 </label>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Work Schedules */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <Clock className="h-6 w-6 text-indigo-500" />
+                                <h2 className="text-xl font-bold text-slate-900">Work Schedules</h2>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => { setShowScheduleForm(true); setEditingSchedule(null); setScheduleForm({ name: '', config: JSON.stringify({ Mon: 8, Tue: 8, Wed: 8, Thu: 8, Fri: 8, Sat: 0, Sun: 0 }), standardCheckIn: '08:00', standardCheckOut: '17:00', saturdayCheckOut: '' }); setScheduleError(null); }} className="flex items-center gap-1 rounded-xl bg-indigo-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-600 transition">
+                                    <Plus className="h-3 w-3" /> Add
+                                </button>
+                                <button onClick={handleSeedSchedules} disabled={seedingSchedules} className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                                    {seedingSchedules ? 'Seeding...' : 'Seed Defaults'}
+                                </button>
+                            </div>
+                        </div>
+                        {workSchedules.length === 0 && !showScheduleForm && (
+                            <p className="text-xs text-slate-500 py-4 text-center">No work schedules yet. Add one or seed defaults.</p>
+                        )}
+                        {scheduleError && <div className="mb-3 rounded-xl border border-red-500/40 bg-red-50 px-3 py-2 text-xs text-red-700">{scheduleError}</div>}
+                        {workSchedules.map(s => (
+                            <div key={s.id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-3 mb-2 last:mb-0">
+                                <div className="flex flex-col gap-0.5 min-w-0">
+                                    <span className="text-sm font-bold text-slate-900 truncate">{s.name}</span>
+                                    <span className="text-[10px] text-slate-500 font-mono truncate">{formatConfig(s.config)}</span>
+                                    <span className="text-[10px] text-slate-400">{s.standardCheckIn}-{s.standardCheckOut}{s.saturdayCheckOut ? ` / Sat: ${s.standardCheckIn}-${s.saturdayCheckOut}` : ''}</span>
+                                </div>
+                                <div className="flex gap-1 shrink-0">
+                                    <button onClick={() => openEditSchedule(s)} className="rounded-lg p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"><Edit className="h-3.5 w-3.5" /></button>
+                                    <button onClick={() => handleDeleteSchedule(s.id)} className="rounded-lg p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-3.5 w-3.5" /></button>
+                                </div>
+                            </div>
+                        ))}
+                        {showScheduleForm && (
+                            <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-4 space-y-3">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Name</label>
+                                        <input type="text" value={scheduleForm.name} onChange={e => setScheduleForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Standard 5-Day" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Config JSON</label>
+                                        <input type="text" value={scheduleForm.config} onChange={e => setScheduleForm(p => ({ ...p, config: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-indigo-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Check-In</label>
+                                        <input type="time" value={scheduleForm.standardCheckIn} onChange={e => setScheduleForm(p => ({ ...p, standardCheckIn: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Check-Out</label>
+                                        <input type="time" value={scheduleForm.standardCheckOut} onChange={e => setScheduleForm(p => ({ ...p, standardCheckOut: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Sat Check-Out (optional)</label>
+                                        <input type="time" value={scheduleForm.saturdayCheckOut} onChange={e => setScheduleForm(p => ({ ...p, saturdayCheckOut: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-indigo-400 transition" />
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                    <button onClick={() => { setShowScheduleForm(false); setEditingSchedule(null); setScheduleError(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+                                    <button onClick={handleSaveSchedule} className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-600 transition">{editingSchedule ? 'Update' : 'Add'} Schedule</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Holidays */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <Calendar className="h-6 w-6 text-rose-500" />
+                                <h2 className="text-xl font-bold text-slate-900">Holidays</h2>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => { setShowHolidayForm(true); setEditingHoliday(null); setHolidayForm({ name: '', date: '', isRecurring: false, holidayType: 'Public' }); setHolidayError(null); }} className="flex items-center gap-1 rounded-xl bg-rose-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-600 transition">
+                                    <Plus className="h-3 w-3" /> Add
+                                </button>
+                                <button onClick={handleSeedHolidays} disabled={seedingHolidays} className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                                    {seedingHolidays ? 'Seeding...' : 'Seed Kenyan'}
+                                </button>
+                            </div>
+                        </div>
+                        {holidays.length === 0 && !showHolidayForm && (
+                            <p className="text-xs text-slate-500 py-4 text-center">No holidays added yet. Add one or seed Kenyan holidays.</p>
+                        )}
+                        {holidayError && <div className="mb-3 rounded-xl border border-red-500/40 bg-red-50 px-3 py-2 text-xs text-red-700">{holidayError}</div>}
+                        {holidays.map(h => (
+                            <div key={h.id} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-3 mb-2 last:mb-0">
+                                <div className="flex flex-col gap-0.5 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-bold text-slate-900 truncate">{h.name}</span>
+                                        {!!h.isRecurring && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700">Recurring</span>}
+                                        <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-semibold text-slate-600">{h.holidayType || 'Public'}</span>
+                                    </div>
+                                    <span className="text-[10px] text-slate-500">{h.date ? new Date(h.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }) : ''}</span>
+                                </div>
+                                <div className="flex gap-1 shrink-0">
+                                    <button onClick={() => openEditHoliday(h)} className="rounded-lg p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"><Edit className="h-3.5 w-3.5" /></button>
+                                    <button onClick={() => handleDeleteHoliday(h.id)} className="rounded-lg p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 transition"><Trash2 className="h-3.5 w-3.5" /></button>
+                                </div>
+                            </div>
+                        ))}
+                        {showHolidayForm && (
+                            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/50 p-4 space-y-3">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Holiday Name</label>
+                                        <input type="text" value={holidayForm.name} onChange={e => setHolidayForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Labour Day" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-rose-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Date (YYYY-MM)</label>
+                                        <input type="month" value={holidayForm.date} onChange={e => setHolidayForm(p => ({ ...p, date: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-rose-400 transition" />
+                                    </div>
+                                    <div>
+                                        <label className="mb-1 block text-[10px] font-bold text-slate-500">Type</label>
+                                        <select value={holidayForm.holidayType} onChange={e => setHolidayForm(p => ({ ...p, holidayType: e.target.value }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-rose-400 transition">
+                                            <option value="Public">Public</option>
+                                            <option value="Observed">Observed</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex items-center gap-2 pt-5">
+                                        <input type="checkbox" id="isRecurring" checked={holidayForm.isRecurring} onChange={e => setHolidayForm(p => ({ ...p, isRecurring: e.target.checked }))} className="rounded border-slate-300 text-rose-500 focus:ring-rose-400 h-4 w-4" />
+                                        <label htmlFor="isRecurring" className="text-xs font-semibold text-slate-600">Recurring yearly</label>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 justify-end">
+                                    <button onClick={() => { setShowHolidayForm(false); setEditingHoliday(null); setHolidayError(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">Cancel</button>
+                                    <button onClick={handleSaveHoliday} className="rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-600 transition">{editingHoliday ? 'Update' : 'Add'} Holiday</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Conditional Tax Sections based on Obligations */}

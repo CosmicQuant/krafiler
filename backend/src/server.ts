@@ -29,6 +29,8 @@ import departmentsRoutes from './api/departments.routes';
 import documentsRoutes from './api/documents.routes';
 import auditRoutes from './api/audit.routes';
 import kpiRoutes from './api/kpi.routes';
+import workScheduleRoutes from './api/work-schedules.routes';
+import holidaysRoutes from './api/holidays.routes';
 import { initDb } from './db/database';
 import { logger } from './logger';
 import pinoHttp from 'pino-http';
@@ -102,6 +104,8 @@ app.use('/api/clients', departmentsRoutes);
 app.use('/api/clients', documentsRoutes);
 app.use('/api/clients', auditRoutes);
 app.use('/api/clients', kpiRoutes);
+app.use('/api/clients', workScheduleRoutes);
+app.use('/api/clients', holidaysRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });

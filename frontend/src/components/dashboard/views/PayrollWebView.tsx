@@ -199,7 +199,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     employmentType: 'Permanent', employmentStatus: 'Active',
     dateJoined: '', dateLeft: '', basicPay: 0, bonusPay: 0,
     role: 'employee', departmentId: null, standardCheckOut: '17:00',
-    standardCheckIn: '08:00', portalPassword: '',
+    standardCheckIn: '08:00', portalPassword: '', workScheduleId: '',
+    offDay: '',
   });
 
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -210,6 +211,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     isPaid: true,
   });
   const [leaveTypes, setLeaveTypes] = useState<any[]>([]);
+  const [workSchedules, setWorkSchedules] = useState<any[]>([]);
 
   const [loanRecords, setLoanRecords] = useState<any[]>([]);
   const [loadingLoans, setLoadingLoans] = useState(false);
@@ -337,12 +339,15 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { if (statusMessage) console.log(statusMessage); }, [statusMessage]);
-  useEffect(() => {
-    apiFetch(`/clients/${client.id}/employees`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setDbEmployees(Array.isArray(data) ? data : []))
-      .catch(() => setDbEmployees([]));
+
+  const fetchEmployees = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/clients/${client.id}/employees`);
+      if (res.ok) setDbEmployees(await res.json());
+    } catch { setDbEmployees([]); }
   }, [client.id]);
+
+  useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
   const updateField = (empIndex: number, header: string, value: string) => {
     setEmployees(prev => {
@@ -647,7 +652,9 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   const handleDownloadP9 = async (kraPin: string) => {
     try {
-      const res = await apiFetch(`/clients/${client.id}/p9/${kraPin}`);
+      const [pYear, pMonth] = attendanceOvertimePeriod.split('-');
+      const period = `${pMonth}${pYear!.slice(2)}`; // MMYY format
+      const res = await apiFetch(`/clients/${client.id}/p9/${kraPin}?period=${period}`);
       if (res.ok) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -683,26 +690,41 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { fetchLeaveTypes(); }, [fetchLeaveTypes]);
 
+  const fetchWorkSchedules = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/clients/${client.id}/work-schedules`);
+      if (res.ok) setWorkSchedules(await res.json());
+    } catch { /* ignore */ }
+  }, [client.id]);
+
+  useEffect(() => { fetchWorkSchedules(); }, [fetchWorkSchedules]);
+
   const fetchOvertimeForAttendance = useCallback(async (period: string) => {
     try {
       const [y, m] = period.split('-').map(Number);
       const lastDay = new Date(y, m, 0).getDate();
       const mm = String(m).padStart(2, '0');
       const yyyy = String(y);
-      const [empRes, otRes, attRes, lvRes] = await Promise.all([
+      const [empRes, otRes, attRes, lvRes, holRes, wsRes] = await Promise.all([
         apiFetch(`/clients/${client.id}/employees`),
         apiFetch(`/clients/${client.id}/overtime-by-period?period=${period}`),
         apiFetch(`/clients/${client.id}/attendance?dateFrom=${yyyy}-${mm}-01&dateTo=${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`),
         apiFetch(`/clients/${client.id}/leave`),
+        apiFetch(`/clients/${client.id}/holidays`),
+        apiFetch(`/clients/${client.id}/work-schedules`),
       ]);
       let employees: any[] = [];
       let otRecords: any[] = [];
       let attRecords: any[] = [];
       let lvRecords: any[] = [];
+      let holidayRecords: any[] = [];
+      let scheduleRecords: any[] = [];
       if (empRes.ok) employees = await empRes.json();
       if (otRes.ok) otRecords = await otRes.json();
       if (attRes.ok) attRecords = await attRes.json();
       if (lvRes.ok) lvRecords = await lvRes.json();
+      if (holRes.ok) holidayRecords = await holRes.json();
+      if (wsRes.ok) scheduleRecords = await wsRes.json();
 
       const otMap = new Map<number, { hours: number; rate: number; multiplier: number }>();
       for (const ot of otRecords) otMap.set(ot.employeeId, { hours: ot.hours || 0, rate: ot.rate || 0, multiplier: ot.multiplier || 1 });
@@ -713,13 +735,78 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         attMap.get(a.employeeId)!.set(a.date, a.status || 'Present');
       }
 
+      // Build holidays set: date strings for the month
+      const holidayDates = new Set<string>();
+      const holidayNames = new Map<string, string>();
+      for (const h of holidayRecords) {
+        if (h.date) {
+          const hDate = h.date.substring(0, 10);
+          // Include if in this month
+          if (hDate.startsWith(period)) {
+            holidayDates.add(hDate);
+            holidayNames.set(hDate, h.name || '');
+          } else if (h.isRecurring) {
+            // For recurring holidays, match only if month AND day align
+            const holidayMonth = h.date.substring(5, 7);
+            const holidayDay = h.date.substring(8, 10);
+            const currentMonth = period.split('-')[1];
+            if (holidayMonth === currentMonth) {
+              const d = `${period}-${holidayDay}`;
+              holidayDates.add(d);
+              holidayNames.set(d, h.name || '');
+            }
+          }
+        }
+      }
+
+      // Build schedule lookup
+      const scheduleMap = new Map<number, any>();
+      for (const ws of scheduleRecords) {
+        scheduleMap.set(ws.id, ws);
+      }
+
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
       setTimeLeaveRecords(lvRecords);
 
-      const merged = employees.filter((e: any) => e.employmentStatus === 'Active').map((e: any) => ({
-        ...e,
-        ot: otMap.get(e.id) || { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 },
-        _att: attMap.get(e.id) || new Map(),
-      }));
+      const merged = employees.filter((e: any) => e.employmentStatus === 'Active').map((e: any) => {
+        const offDayName = e.offDay || '';
+        const schedule = e.workScheduleId ? scheduleMap.get(e.workScheduleId) : null;
+        const scheduleConfig = schedule ? (typeof schedule.config === 'string' ? JSON.parse(schedule.config) : schedule.config) : null;
+
+        // Compute off-days and holidays for this employee
+        const offDaySet = new Set<string>();
+        const holidaySet = new Set<string>();
+        for (let d = 1; d <= lastDay; d++) {
+          const dateStr = `${period}-${String(d).padStart(2, '0')}`;
+          const dt = new Date(y, m - 1, d);
+          const dayName = dayNames[dt.getDay()];
+
+          // Check if holiday
+          if (holidayDates.has(dateStr)) {
+            holidaySet.add(dateStr);
+            continue;
+          }
+
+          // Check if off-day (offDay field or schedule says 0 hours)
+          if (offDayName && dayName === offDayName) {
+            offDaySet.add(dateStr);
+          } else if (scheduleConfig) {
+            const shortName = dayName.substring(0, 3);
+            if (!scheduleConfig[shortName] || scheduleConfig[shortName] === 0) {
+              offDaySet.add(dateStr);
+            }
+          }
+        }
+
+        return {
+          ...e,
+          ot: otMap.get(e.id) || { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 },
+          _att: attMap.get(e.id) || new Map(),
+          _offDaySet: offDaySet,
+          _holidaySet: holidaySet,
+        };
+      });
       setAttendanceOvertimeEmployees(merged);
     } catch { /* ignore */ }
   }, [client.id]);
@@ -933,11 +1020,14 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         setStatusMessage(editingEmployee ? 'Employee updated' : 'Employee created');
         setShowEmployeeModal(false);
         setEditingEmployee(null);
+        fetchEmployees();
       } else {
         const err = await res.json().catch(() => ({}));
-        setError(err.message || 'Save failed');
+        console.error('Save employee failed:', res.status, err);
+        setError(err.message || `Save failed (${res.status})`);
       }
-    } catch {
+    } catch (err) {
+      console.error('Save employee network error:', err);
       setError('Network error saving employee');
     }
   };
@@ -969,6 +1059,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         departmentId: emp.departmentId || null,
         standardCheckIn: emp.standardCheckIn || '08:00',
         standardCheckOut: emp.standardCheckOut || '17:00',
+        workScheduleId: emp.workScheduleId || '',
+        offDay: emp.offDay || '',
       });
     } else {
       setEditingEmployee(null);
@@ -980,6 +1072,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         dateJoined: '', dateLeft: '', basicPay: 0, bonusPay: 0,
         role: 'employee', departmentId: null,
         standardCheckIn: '08:00', standardCheckOut: '17:00',
+        workScheduleId: '', offDay: '',
       });
     }
     setShowEmployeeModal(true);
@@ -1713,6 +1806,29 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                         {Array.from({ length: 31 }, (_, i) => {
                           const day = i + 1;
                           const dateKey = `${attendanceOvertimePeriod}-${String(day).padStart(2, '0')}`;
+                          // Check for valid date in month
+                          const [y, m] = attendanceOvertimePeriod.split('-').map(Number);
+                          const lastDay = new Date(y, m, 0).getDate();
+                          if (day > lastDay) return <td key={i} className="w-8" />;
+
+                          const isHoliday = emp._holidaySet?.has(dateKey);
+                          const isOffDay = emp._offDaySet?.has(dateKey);
+
+                          if (isHoliday) {
+                            return (
+                              <td key={i} className="w-8 px-0 py-1.5 text-center">
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 cursor-default" title={`${emp.employeeName} — ${dateKey}: Holiday`}>H</span>
+                              </td>
+                            );
+                          }
+                          if (isOffDay) {
+                            return (
+                              <td key={i} className="w-8 px-0 py-1.5 text-center">
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-slate-100 text-slate-400 cursor-default" title={`${emp.employeeName} — ${dateKey}: Off Day`}>OFF</span>
+                              </td>
+                            );
+                          }
+
                           const status = emp._att?.get(dateKey) || '';
                           const color = status === 'Present' ? 'bg-emerald-50 text-emerald-700' :
                                         status === 'Absent' ? 'bg-red-50 text-red-700' :
@@ -1781,6 +1897,25 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
                 >
                   {savingOvertime ? 'Saving...' : 'Save Overtime'}
+                </button>
+                <button
+                  onClick={async () => {
+                    setAttendanceApprovalPeriod(attendanceOvertimePeriod);
+                    setLoadingAttendanceApproval(true);
+                    setShowAttendanceApprovalModal(true);
+                    try {
+                      const r = await apiFetch(`/clients/${client.id}/attendance-payroll-preview?period=${attendanceOvertimePeriod}`, { method: 'POST' });
+                      if (r.ok) {
+                        const data = await r.json();
+                        setAttendanceApprovalData(data.employees || []);
+                      } else { setError('Failed to load attendance preview'); }
+                    } catch { setError('Network error'); }
+                    finally { setLoadingAttendanceApproval(false); }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 transition"
+                  title="Review and approve attendance data that will feed into payroll"
+                >
+                  <CalendarCheck className="h-3.5 w-3.5" /> Review Attendance
                 </button>
               </div>
 
@@ -4425,6 +4560,36 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   </select>
                 </div>
                 <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Work Schedule</label>
+                  <select
+                    value={employeeForm.workScheduleId || ''}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, workScheduleId: e.target.value ? Number(e.target.value) : '' }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  >
+                    <option value="">Default (no schedule)</option>
+                    {workSchedules.map((ws: any) => (
+                      <option key={ws.id} value={ws.id}>{ws.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Off Day (if rotating)</label>
+                  <select
+                    value={employeeForm.offDay || ''}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, offDay: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  >
+                    <option value="">None</option>
+                    <option value="Monday">Monday</option>
+                    <option value="Tuesday">Tuesday</option>
+                    <option value="Wednesday">Wednesday</option>
+                    <option value="Thursday">Thursday</option>
+                    <option value="Friday">Friday</option>
+                    <option value="Saturday">Saturday</option>
+                    <option value="Sunday">Sunday</option>
+                  </select>
+                </div>
+                <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Portal Password</label>
                   <input
                     type="password"
@@ -4548,6 +4713,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       if (r.ok) {
                         setStatusMessage('Attendance data approved and saved.');
                         setShowAttendanceApprovalModal(false);
+                        fetchOvertimeForAttendance(attendanceApprovalPeriod);
                       } else { setError('Failed to save approval'); }
                     } catch { setError('Network error'); }
                     finally { setSavingAttendanceApproval(false); }

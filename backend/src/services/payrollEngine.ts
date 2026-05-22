@@ -50,6 +50,21 @@ export interface PayrollComputed {
     nonTaxableBonus: number;
 }
 
+interface WorkScheduleConfig {
+    Mon?: number;
+    Tue?: number;
+    Wed?: number;
+    Thu?: number;
+    Fri?: number;
+    Sat?: number;
+    Sun?: number;
+}
+
+interface HolidayInfo {
+    date: string;
+    isRecurring: number;
+}
+
 function roundMoney(amount: number): number {
     return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
@@ -58,7 +73,49 @@ function daysInMonth(year: number, month: number): number {
     return new Date(year, month, 0).getDate();
 }
 
-export function computePayrollEntry(input: PayrollInput, period: string, prorate: boolean): PayrollComputed {
+function dayName(date: Date): string {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return days[date.getDay()];
+}
+
+function getScheduledWorkDays(config: WorkScheduleConfig, period: string, holidays: HolidayInfo[] = []): number {
+    if (Object.keys(config).length === 0) return 30; // Fallback to legacy
+
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const totalDays = daysInMonth(year, month);
+
+    let workDays = 0;
+    for (let d = 1; d <= totalDays; d++) {
+        const date = new Date(year, month - 1, d);
+        const day = dayName(date);
+        const hours = config[day as keyof WorkScheduleConfig] || 0;
+        if (hours > 0) {
+            // Check if it's a holiday
+            const dateStr = date.toISOString().split('T')[0];
+            const isHoliday = holidays.some(h => {
+                if (h.date === dateStr) return true;
+                // Recurring: match MM-DD
+                if (h.isRecurring === 1) {
+                    const hDate = new Date(h.date);
+                    return hDate.getMonth() === (month - 1) && hDate.getDate() === d;
+                }
+                return false;
+            });
+            if (!isHoliday) workDays++;
+        }
+    }
+    return workDays || 30;
+}
+
+export function computePayrollEntry(
+    input: PayrollInput,
+    period: string,
+    prorate: boolean,
+    workScheduleConfig?: WorkScheduleConfig,
+    holidays: HolidayInfo[] = [],
+): PayrollComputed {
     const rawBasicPay = typeof input.basicPay === 'number' ? input.basicPay : parseFloat(String(input.basicPay)) || 0;
     const rawBenefits = typeof input.benefits === 'number' ? input.benefits : parseFloat(String(input.benefits)) || 0;
     const payStructure = input.payStructure || 'fixed';
@@ -68,7 +125,12 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
     const month = parseInt(monthStr, 10);
     const totalDays = daysInMonth(year, month);
 
-    let daysWorked = 30;
+    // Determine scheduled work days for the month
+    const scheduledWorkDays = workScheduleConfig
+        ? getScheduledWorkDays(workScheduleConfig, period, holidays)
+        : 30; // Legacy fallback
+
+    let daysWorked = scheduledWorkDays;
 
     if (prorate) {
         let activeDays = totalDays;
@@ -98,7 +160,7 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
         activeDays = Math.max(0, Math.min(totalDays, activeDays));
 
         if (payStructure === 'fixed') {
-            daysWorked = Math.min(30, activeDays);
+            daysWorked = Math.min(scheduledWorkDays, activeDays);
         } else {
             daysWorked = activeDays;
         }
@@ -106,13 +168,13 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
 
     const prorationFactor = payStructure === 'prorated' && prorate
         ? daysWorked / totalDays
-        : daysWorked / 30;
+        : daysWorked / scheduledWorkDays;
 
     const basicPay = roundMoney(rawBasicPay * prorationFactor);
     const benefits = roundMoney(rawBenefits * prorationFactor);
 
     const unpaidLeaveDays = input.unpaidLeaveDays || 0;
-    const unpaidLeaveDeduction = roundMoney((rawBasicPay / 30) * unpaidLeaveDays);
+    const unpaidLeaveDeduction = roundMoney((rawBasicPay / scheduledWorkDays) * unpaidLeaveDays);
 
     const overtimePay = roundMoney(input.overtimePay || 0);
     const rawBonusPay = input.bonusPay || 0;
@@ -124,7 +186,7 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
     const lateHours = input.attendanceLateDays || 0;
     const dailyRate = payStructure === 'prorated'
         ? rawBasicPay / Math.max(1, totalDays)
-        : rawBasicPay / 30;
+        : rawBasicPay / scheduledWorkDays;
     const attendanceDeduction = roundMoney(dailyRate * (absentDays + lateHours / 8));
 
     const grossPay = roundMoney(basicPay + benefits + overtimePay + taxableBonus - unpaidLeaveDeduction - attendanceDeduction);

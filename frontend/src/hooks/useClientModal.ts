@@ -95,7 +95,6 @@ export function useClientModal(
       });
 
       if (newClientObligations.includes('paye') && newClientMasterCsv) {
-        setDashboardNotice({ tone: 'info', message: 'Uploading master CSV for this client...' });
         await uploadMasterCsv(String(result.id), newClientMasterCsv, { propagateError: true });
         setDashboardNotice({
           tone: 'success',

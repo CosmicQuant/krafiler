@@ -178,7 +178,6 @@ export default function PracticeDashboard() {
       });
 
       if (newClientObligations.includes('paye') && newClientMasterCsv) {
-        setDashboardNotice({ tone: 'info', message: 'Uploading master CSV for this client...' });
         await filingActions.uploadMasterCsv(String(result.id), newClientMasterCsv, { propagateError: true });
         setDashboardNotice({
           tone: 'success',

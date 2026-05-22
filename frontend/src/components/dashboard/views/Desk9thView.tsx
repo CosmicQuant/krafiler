@@ -60,8 +60,9 @@ export function Desk9thView({
   onSelectClient,
   onGoToPayrollView,
 }: Desk9thViewProps) {
+  const hasObligation = (val?: string | null) => !!val && val !== 'na';
   const payrollClients = clients.filter(
-    (c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na',
+    (c) => hasObligation(c.paye) || hasObligation(c.nssf) || hasObligation(c.sha),
   );
 
   return (
@@ -209,7 +210,7 @@ export function Desk9thView({
                     {client.payeZipUrl && (
                       <a
                         href={client.payeZipUrl}
-                        target="_blank"
+                        download
                         rel="noreferrer"
                         className="flex items-center justify-center w-full rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500 transition"
                       >
@@ -220,7 +221,7 @@ export function Desk9thView({
                     {client.nssfFileUrl && (
                       <a
                         href={client.nssfFileUrl}
-                        target="_blank"
+                        download
                         rel="noreferrer"
                         className="flex items-center justify-center w-full rounded-lg bg-blue-50 border border-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition"
                       >
@@ -231,7 +232,7 @@ export function Desk9thView({
                     {client.shaFileUrl && (
                       <a
                         href={client.shaFileUrl}
-                        target="_blank"
+                        download
                         rel="noreferrer"
                         className="flex items-center justify-center w-full rounded-lg bg-violet-50 border border-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100 hover:text-violet-500 transition"
                       >
@@ -331,7 +332,11 @@ export function Desk9thView({
                         className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File PAYE"
                       >
-                        <Rocket className="h-4 w-4 shrink-0" />
+                        {isPendingFilingJob(activeJobs[client.id]) ? (
+                          <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                        ) : (
+                          <Rocket className="h-4 w-4 shrink-0" />
+                        )}
                         <span className="truncate">{getAutoFileLabel((() => {
                           const job = activeJobs[client.id];
                           const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
@@ -340,11 +345,19 @@ export function Desk9thView({
                       </button>
                       <button
                         onClick={() => void onAutoFileNssf(client)}
-                        disabled={!client.nssfFileUrl || !client.masterFileUrl}
+                        disabled={
+                          !client.nssfFileUrl ||
+                          !client.masterFileUrl ||
+                          isPendingFilingJob(activeJobs[client.id])
+                        }
                         className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File NSSF"
                       >
-                        <Cloud className="h-4 w-4 shrink-0" />
+                        {isPendingFilingJob(activeJobs[client.id]) ? (
+                          <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
+                        ) : (
+                          <Cloud className="h-4 w-4 shrink-0" />
+                        )}
                         <span className="truncate">AutoFile NSSF</span>
                       </button>
                     </div>
@@ -496,7 +509,7 @@ export function Desk9thView({
                         {client.payeZipUrl ? (
                           <a
                             href={client.payeZipUrl}
-                            target="_blank"
+                            download
                             rel="noreferrer"
                             className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-emerald-600 hover:text-emerald-500 hover:underline"
                             title={client.payeZipLabel}
@@ -510,7 +523,7 @@ export function Desk9thView({
                         {client.nssfFileUrl ? (
                           <a
                             href={client.nssfFileUrl}
-                            target="_blank"
+                            download
                             rel="noreferrer"
                             className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-500 hover:underline"
                             title={client.nssfFileLabel}
@@ -522,7 +535,7 @@ export function Desk9thView({
                         {client.shaFileUrl ? (
                           <a
                             href={client.shaFileUrl}
-                            target="_blank"
+                            download
                             rel="noreferrer"
                             className="inline-flex max-w-[100px] md:max-w-[150px] items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-500 hover:underline"
                             title={client.shaFileLabel}
@@ -578,7 +591,15 @@ export function Desk9thView({
                           }`}
                           title="Auto File PAYE"
                         >
-                          <Rocket className="h-3 w-3 shrink-0" />
+                          {isPendingFilingJob((() => {
+                            const job = activeJobs[client.id];
+                            const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                            return isDesk9Job ? job : undefined;
+                          })()) ? (
+                            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                          ) : (
+                            <Rocket className="h-3 w-3 shrink-0" />
+                          )}
                           <span className="truncate">Auto File PAYE</span>
                         </button>
                         <button
@@ -591,16 +612,40 @@ export function Desk9thView({
                           className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold leading-tight text-[#ff0613] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-slate-100 disabled:text-slate-500"
                           title="Print PAYE PRN"
                         >
-                          <Download className="h-3 w-3 shrink-0" />
+                          {isPendingFilingJob((() => {
+                            const job = activeJobs[client.id];
+                            const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                            return isDesk9Job ? job : undefined;
+                          })()) ? (
+                            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                          ) : (
+                            <Download className="h-3 w-3 shrink-0" />
+                          )}
                           <span className="truncate">Print PAYE PRN</span>
                         </button>
                         <button
                           onClick={() => void onAutoFileNssf(client)}
-                          disabled={!client.nssfFileUrl || !client.masterFileUrl}
+                          disabled={
+                            !client.nssfFileUrl ||
+                            !client.masterFileUrl ||
+                            isPendingFilingJob((() => {
+                              const job = activeJobs[client.id];
+                              const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                              return isDesk9Job ? job : undefined;
+                            })())
+                          }
                           className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-xs font-bold leading-tight text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                           title="Auto File NSSF"
                         >
-                          <Cloud className="h-3 w-3 shrink-0" />
+                          {isPendingFilingJob((() => {
+                            const job = activeJobs[client.id];
+                            const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                            return isDesk9Job ? job : undefined;
+                          })()) ? (
+                            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                          ) : (
+                            <Cloud className="h-3 w-3 shrink-0" />
+                          )}
                           <span className="truncate">Auto File NSSF</span>
                         </button>
                       </div>
@@ -661,7 +706,7 @@ export function Desk9thView({
                                   displayJob.receiptUrl !== displayJob.prnUrl && (
                                     <a
                                       href={displayJob.receiptUrl}
-                                      target="_blank"
+                                      download
                                       rel="noopener noreferrer"
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-500 transition hover:bg-blue-600 hover:text-slate-950"
                                     >
@@ -671,7 +716,7 @@ export function Desk9thView({
                                 {displayJob.prnUrl && (
                                   <a
                                     href={displayJob.prnUrl}
-                                    target="_blank"
+                                    download
                                     rel="noopener noreferrer"
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950"
                                   >

@@ -13,7 +13,7 @@ export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: 
     if (status === 'filed') return (
         <span className="inline-flex flex-col items-center">
             {receiptUrl ? (
-                <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Download Returns Receipt">
+                <a href={receiptUrl} download rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Download Returns Receipt">
                     <CheckCircle2 className="h-3 w-3" /> Filed
                 </a>
             ) : (

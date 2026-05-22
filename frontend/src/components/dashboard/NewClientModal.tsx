@@ -77,6 +77,10 @@ export function NewClientModal({
                                         { id: 'tot', label: 'TOT' },
                                         { id: 'mri', label: 'MRI' },
                                         { id: 'dst', label: 'DST' },
+                                        { id: 'income_tax_resident_individual', label: 'IT - Resident Individual' },
+                                        { id: 'income_tax_non_resident_individual', label: 'IT - Non-Resident Individual' },
+                                        { id: 'income_tax_company', label: 'IT - Company' },
+                                        { id: 'excise_duty', label: 'Excise Duty' },
                                     ].map((obs) => {
                                         const isActive = newClientObligations.includes(obs.id);
                                         return (

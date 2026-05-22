@@ -3,38 +3,71 @@ import { db } from '../db/kysely';
 
 const router = Router();
 
-async function autoCalculateOvertime(clientId: number, employeeId: number, date: string, checkOut: string): Promise<void> {
-    if (!checkOut || !date || !employeeId) return;
+async function recalculateOvertimeForPeriod(clientId: number, employeeId: number, period: string): Promise<void> {
+    if (!period || !employeeId) return;
     const emp = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).where('clientId', '=', clientId).executeTakeFirst();
     if (!emp) return;
 
     const standardCO = emp.standardCheckOut || '17:00';
     const [sH, sM] = standardCO.split(':').map(Number);
-    const [cH, cM] = checkOut.split(':').map(Number);
-    if (isNaN(sH) || isNaN(cH)) return;
+    if (isNaN(sH)) return;
 
-    const standardMins = sH * 60 + (sM || 0);
-    const actualMins = cH * 60 + (cM || 0);
-    if (actualMins <= standardMins) {
-        await db.deleteFrom('overtime_records').where('clientId', '=', clientId).where('employeeId', '=', employeeId).where('period', '=', date.substring(0, 7)).execute();
-        return;
+    const standardIn = emp.standardCheckIn || '08:00';
+    const [siH, siM] = standardIn.split(':').map(Number);
+    const standardWorkingMins = (isNaN(siH) ? 0 : (sH * 60 + sM) - (siH * 60 + siM));
+    const standardWorkingHours = Math.max(1, standardWorkingMins / 60);
+    const monthlyWorkingHours = standardWorkingHours * 30;
+    const hourlyRate = (emp.basicPay || 0) / Math.max(1, monthlyWorkingHours);
+
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const periodStart = `${period}-01`;
+    const periodEnd = `${period}-${String(daysInMonth).padStart(2, '0')}`;
+
+    const allAttendance = await db
+        .selectFrom('attendance_records')
+        .selectAll()
+        .where('clientId', '=', clientId)
+        .where('employeeId', '=', employeeId)
+        .where('date', '>=', periodStart)
+        .where('date', '<=', periodEnd)
+        .execute();
+
+    let totalOvertimeHours = 0;
+    for (const ar of allAttendance) {
+        if (!ar.checkOut) continue;
+        const [cH, cM] = ar.checkOut.split(':').map(Number);
+        if (isNaN(cH)) continue;
+        const standardMins = sH * 60 + (sM || 0);
+        const actualMins = cH * 60 + (cM || 0);
+        if (actualMins > standardMins) {
+            totalOvertimeHours += (actualMins - standardMins) / 60;
+        }
     }
 
-    const overtimeHours = (actualMins - standardMins) / 60;
-    const hourlyRate = (emp.basicPay || 0) / 240;
-    const amount = Math.round(overtimeHours * hourlyRate * 1.5 * 100) / 100;
-    const period = date.substring(0, 7);
-
+    // Always delete old record and insert fresh (avoids stale data)
     await db.deleteFrom('overtime_records').where('clientId', '=', clientId).where('employeeId', '=', employeeId).where('period', '=', period).execute();
-    await db.insertInto('overtime_records').values({
-        clientId, employeeId, period,
-        hours: Math.round(overtimeHours * 100) / 100,
-        rate: Math.round(hourlyRate * 100) / 100,
-        multiplier: 1.5,
-        amount,
-        description: '',
-        createdAt: new Date().toISOString(),
-    }).execute();
+
+    if (totalOvertimeHours > 0) {
+        const amount = Math.round(totalOvertimeHours * hourlyRate * 1.5 * 100) / 100;
+        await db.insertInto('overtime_records').values({
+            clientId, employeeId, period,
+            hours: Math.round(totalOvertimeHours * 100) / 100,
+            rate: Math.round(hourlyRate * 100) / 100,
+            multiplier: 1.5,
+            amount,
+            description: '',
+            createdAt: new Date().toISOString(),
+        }).execute();
+    }
+}
+
+async function autoCalculateOvertime(clientId: number, employeeId: number, date: string, _checkOut: string): Promise<void> {
+    if (!date || !employeeId) return;
+    const period = date.substring(0, 7);
+    await recalculateOvertimeForPeriod(clientId, employeeId, period);
 }
 
 // GET /api/clients/:clientId/attendance
@@ -167,11 +200,22 @@ router.delete('/:clientId/attendance/:id', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(id) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
 
+        const existing = await db
+            .selectFrom('attendance_records')
+            .selectAll()
+            .where('id', '=', id)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
         await db
             .deleteFrom('attendance_records')
             .where('id', '=', id)
             .where('clientId', '=', clientId)
             .execute();
+
+        if (existing) {
+            recalculateOvertimeForPeriod(clientId, existing.employeeId, existing.date.substring(0, 7)).catch(() => {});
+        }
 
         res.json({ success: true });
     } catch (err) {

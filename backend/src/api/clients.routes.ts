@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { openDb } from '../db/database';
+import { db as kyselyDb } from '../db/kysely';
 import path from 'path';
 import fs from 'fs/promises';
 import { processAndStandardizePayroll } from '../scripts/ai-mapper';
@@ -19,7 +20,11 @@ function normalizeObligationToken(value: string): string {
     if (!normalized) return normalized;
     if (normalized === 'monthly_rental_income' || normalized === 'monthly rental income') return 'mri';
     if (normalized === 'turnover_tax' || normalized === 'turnover tax') return 'tot';
-    if (normalized === 'elevy' || normalized === 'elevy') return 'elevy';
+    if (normalized === 'elevy' || normalized === 'e-levy') return 'elevy';
+    if (normalized === 'income_tax_resident_individual' || normalized === 'income tax resident individual') return 'income_tax_resident_individual';
+    if (normalized === 'income_tax_non_resident_individual' || normalized === 'income tax non-resident individual') return 'income_tax_non_resident_individual';
+    if (normalized === 'income_tax_company' || normalized === 'income tax company') return 'income_tax_company';
+    if (normalized === 'excise_duty' || normalized === 'excise duty') return 'excise_duty';
 
     return normalized;
 }
@@ -159,11 +164,15 @@ router.post('/', async (req, res) => {
         const mri = obsList.includes('mri') ? 'due' : 'na';
         const eLevy = obsList.includes('elevy') ? 'due' : 'na';
         const dst = obsList.includes('dst') ? 'due' : 'na';
+        const incomeTaxResidentIndividual = obsList.includes('income_tax_resident_individual') ? 'due' : 'na';
+        const incomeTaxNonResidentIndividual = obsList.includes('income_tax_non_resident_individual') ? 'due' : 'na';
+        const incomeTaxCompany = obsList.includes('income_tax_company') ? 'due' : 'na';
+        const exciseDuty = obsList.includes('excise_duty') ? 'due' : 'na';
 
         const db = await openDb();
         const result = await db.run(
-            `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure || 'fixed']
+            `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst, incomeTaxResidentIndividual, incomeTaxNonResidentIndividual, incomeTaxCompany, exciseDuty, payStructure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, incomeTaxResidentIndividual, incomeTaxNonResidentIndividual, incomeTaxCompany, exciseDuty, payStructure || 'fixed']
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
@@ -294,15 +303,16 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { name, pin, password, iTaxPassword, obligations, sector, email, phone, payStructure } = req.body;
-        const clientId = req.params.id;
+        const clientIdInt = parseInt(req.params.id, 10);
+        if (isNaN(clientIdInt)) return res.status(400).json({ message: 'Invalid client ID' });
         const effectivePassword = String(iTaxPassword || password || '').trim();
 
         if (!name || !pin || !effectivePassword) {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
-        const db = await openDb();
-        const existingClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        const legacyDb = await openDb();
+        const existingClient = await legacyDb.get('SELECT * FROM clients WHERE id = ?', [clientIdInt]);
         if (!existingClient) {
             return res.status(404).json({ message: 'Client not found' });
         }
@@ -316,19 +326,50 @@ router.put('/:id', async (req, res) => {
         const mri = obsList.includes('mri') ? (existingClient.mri === 'na' ? 'due' : existingClient.mri) : 'na';
         const eLevy = obsList.includes('elevy') ? (existingClient.eLevy === 'na' ? 'due' : existingClient.eLevy) : 'na';
         const dst = obsList.includes('dst') ? (existingClient.dst === 'na' ? 'due' : existingClient.dst) : 'na';
+        const incomeTaxResidentIndividual = obsList.includes('income_tax_resident_individual') ? (existingClient.incomeTaxResidentIndividual === 'na' ? 'due' : existingClient.incomeTaxResidentIndividual) : 'na';
+        const incomeTaxNonResidentIndividual = obsList.includes('income_tax_non_resident_individual') ? (existingClient.incomeTaxNonResidentIndividual === 'na' ? 'due' : existingClient.incomeTaxNonResidentIndividual) : 'na';
+        const incomeTaxCompany = obsList.includes('income_tax_company') ? (existingClient.incomeTaxCompany === 'na' ? 'due' : existingClient.incomeTaxCompany) : 'na';
+        const exciseDuty = obsList.includes('excise_duty') ? (existingClient.exciseDuty === 'na' ? 'due' : existingClient.exciseDuty) : 'na';
 
-        await db.run(
-            `UPDATE clients 
-             SET name = ?, pin = ?, password = ?, obligations = ?, sector = ?, email = ?, phone = ?,
-                 paye = ?, nssf = ?, sha = ?, vat = ?, tot = ?, mri = ?, eLevy = ?, dst = ?, payStructure = ?
-             WHERE id = ?`,
-            [name, pin, effectivePassword, obligations || '', sector || '', email || '', phone || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, payStructure || 'fixed', clientId]
-        );
-        
-        const updatedClient = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
-        res.json(updatedClient);
+        // Build column list dynamically — only include columns that exist in the table
+        const tableCols = new Set(Object.keys(existingClient));
+        const setClauses: string[] = [];
+        const setValues: any[] = [];
+
+        const addCol = (col: string, val: any) => {
+            if (tableCols.has(col)) { setClauses.push(`${col} = ?`); setValues.push(val); }
+        };
+        addCol('name', name);
+        addCol('pin', pin);
+        addCol('password', effectivePassword);
+        addCol('obligations', obligations || '');
+        addCol('sector', sector || '');
+        addCol('email', email || '');
+        addCol('phone', phone || '');
+        addCol('paye', paye);
+        addCol('nssf', nssf);
+        addCol('sha', sha);
+        addCol('vat', vat);
+        addCol('tot', tot);
+        addCol('mri', mri);
+        addCol('eLevy', eLevy);
+        addCol('dst', dst);
+        addCol('incomeTaxResidentIndividual', incomeTaxResidentIndividual);
+        addCol('incomeTaxNonResidentIndividual', incomeTaxNonResidentIndividual);
+        addCol('incomeTaxCompany', incomeTaxCompany);
+        addCol('exciseDuty', exciseDuty);
+        addCol('payStructure', payStructure || 'fixed');
+
+        if (setClauses.length > 0) {
+            setValues.push(clientIdInt);
+            await legacyDb.run(`UPDATE clients SET ${setClauses.join(', ')} WHERE id = ?`, setValues);
+        }
+
+        const updated = await legacyDb.get('SELECT * FROM clients WHERE id = ?', [clientIdInt]);
+        res.json(updated);
     } catch (err) {
         console.error('Error updating client:', err);
+        console.error('Request body:', JSON.stringify(req.body));
         res.status(500).json({ message: 'Internal server error' });
     }
 });
@@ -339,7 +380,7 @@ router.put('/:id/status', async (req, res) => {
         const { field, status } = req.body;
         const clientId = req.params.id;
         
-        const validFields = ['paye', 'nssf', 'sha', 'vat', 'tot', 'mri', 'eLevy', 'dst'];
+        const validFields = ['paye', 'nssf', 'sha', 'vat', 'tot', 'mri', 'eLevy', 'dst', 'incomeTaxResidentIndividual', 'incomeTaxNonResidentIndividual', 'incomeTaxCompany', 'exciseDuty'];
         if (!validFields.includes(field)) {
             return res.status(400).json({ message: 'Invalid status field' });
         }
@@ -394,87 +435,146 @@ router.post('/:id/payroll-source', async (req, res) => {
 // Get payroll data (standardized CSV)
 router.get('/:id/payroll-data', async (req, res) => {
     try {
-        const clientId = req.params.id;
-        const db = await openDb();
-        const client = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
-        if (!client) {
-            return res.status(404).json({ message: 'Client not found' });
+        const clientId = parseInt(req.params.id, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const client = await kyselyDb.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
+        if (!client) return res.status(404).json({ message: 'Client not found' });
+
+        const employees = await kyselyDb.selectFrom('employees').selectAll().where('clientId', '=', clientId).orderBy('employeeName', 'asc').execute();
+
+        if (employees.length === 0) {
+            // Fallback: try reading from master CSV file
+            const legacydb = await openDb();
+            const clientLegacy = await legacydb.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+            if (clientLegacy?.masterFileUrl) {
+                const decUrl = decodeURIComponent(clientLegacy.masterFileUrl);
+                const relPath = decUrl.replace(/^\/clients\//, '');
+                const csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+                const fileExists = await fs.stat(csvPath).then(() => true).catch(() => false);
+                if (fileExists) {
+                    const fsStandard = require('fs');
+                    const fastCsv = require('fast-csv');
+                    const rawRows: string[][] = [];
+                    await new Promise<void>((resolve, reject) => {
+                        fsStandard.createReadStream(csvPath)
+                            .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
+                            .on('data', (row: string[]) => rawRows.push(row))
+                            .on('error', reject)
+                            .on('end', resolve);
+                    });
+                    let dataStartIndex = 0;
+                    for (let i = 0; i < rawRows.length; i++) {
+                        const row = rawRows[i];
+                        if (row.some(c => c.toLowerCase().includes('payroll number'))) { dataStartIndex = i + 1; break; }
+                    }
+                    const headers = rawRows[dataStartIndex - 1] || [];
+                    const csvEmployees = rawRows.slice(dataStartIndex).filter(row => row.some(c => c.trim())).map(row => {
+                        const record: Record<string, string | number> = {};
+                        headers.forEach((h, idx) => { const val = row[idx] || ''; const num = parseFloat(val); record[h] = isNaN(num) || val.trim() === '' ? val : num; });
+                        return record;
+                    });
+                    return res.json({ hasData: true, clientId, clientName: clientLegacy.name, preamble: { companyName: clientLegacy.name || '', companyPin: clientLegacy.pin || '', companyNssf: '', companyNssfPassword: '', companyShaLogin: '', companyShaPassword: '' }, headers, employees: csvEmployees });
+                }
+            }
+            return res.json({ hasData: false, clientId, clientName: client.name, employees: [] });
         }
 
-        if (!client.masterFileUrl) {
-            console.log(`[PayrollData] Client ${clientId} has no masterFileUrl`);
-            return res.json({ hasData: false, clientId: Number(clientId), clientName: client.name, employees: [] });
-        }
+        const headers = [
+            'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
+            'SHA No', 'NSSF No', 'Residential Status', 'Type of Employee', 'Persons with Disability(PWD)',
+            'Exemption Certificate', 'Total Cash Pay (A)', 'Value of Car Benefit (B)', 'Value of Meals (C)',
+            'Non Cash Benefits (D)', 'Type of Housing', 'Housing Benefit (F)', 'Other Benefits (G)',
+            'Total Gross Pay (Ksh) (H)', 'Social Health Insurance Fund (I)', 'NSSF Contribution (J)',
+            'Other Pension Contribution (K)', 'Post Retirement Medical Fund (L)', 'Mortgage Interest (M)',
+            'Affordable Housing Levy (N)', 'Taxable Pay(Ksh) (O)', 'Monthly Personal Relief (Ksh) (P)',
+            'Amount of Insurance Relief (Q)', 'PAYE Tax (Ksh) (R)', 'Self Assessed PAYE Tax (Ksh) (S)',
+        ];
 
-        const decUrl = decodeURIComponent(client.masterFileUrl);
-        const relPath = decUrl.replace(/^\/clients\//, '');
-        const csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+        const mapped = employees.map((emp, i) => {
+            const totalCashPay = emp.basicPay || 0;
+            const grossSalary = totalCashPay + (emp.carBenefit || 0) + (emp.mealsBenefit || 0) + (emp.nonCashBenefits || 0) + (emp.housingBenefit || 0) + (emp.otherBenefits || 0);
+            const sha = Math.round(grossSalary * 0.0275 * 100) / 100;
+            const nssf = Math.round((Math.min(grossSalary, 9000) * 0.06 + Math.max(0, Math.min(grossSalary - 9000, 99000)) * 0.06) * 100) / 100;
+            const ahl = Math.round(grossSalary * 0.015 * 100) / 100;
+            const taxablePay = Math.round(Math.max(0, grossSalary - sha - nssf - ahl) * 100) / 100;
+            const paye = Math.round(Math.max(0,
+                Math.max(0, taxablePay * 0.1) + Math.max(0, (taxablePay - 24000) * 0.15) + Math.max(0, (taxablePay - 32333) * 0.05) + Math.max(0, (taxablePay - 500000) * 0.025) + Math.max(0, (taxablePay - 800000) * 0.025) - 2400
+            ) * 100) / 100;
 
-        console.log(`[PayrollData] Client ${clientId} masterFileUrl=${client.masterFileUrl}`);
-        console.log(`[PayrollData] Resolved CSV path: ${csvPath}`);
-
-        const fileExists = await fs.stat(csvPath).then(() => true).catch(() => false);
-        if (!fileExists) {
-            console.log(`[PayrollData] File NOT FOUND at ${csvPath}`);
-            return res.json({ hasData: false, clientId: Number(clientId), clientName: client.name, employees: [] });
-        }
-
-        const rawRows: string[][] = [];
-        await new Promise<void>((resolve, reject) => {
-            fsStandard.createReadStream(csvPath)
-                .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
-                .on('data', (row: string[]) => rawRows.push(row))
-                .on('error', reject)
-                .on('end', resolve);
+            const record: Record<string, string | number> = {};
+            record[headers[0]] = emp.payrollNumber || String(i + 1);
+            record[headers[1]] = emp.kraPin || '';
+            record[headers[2]] = emp.idNumber || '';
+            record[headers[3]] = emp.identityType || 'National ID';
+            record[headers[4]] = emp.employeeName || '';
+            record[headers[5]] = emp.shaNo || '';
+            record[headers[6]] = emp.nssfNo || '';
+            record[headers[7]] = emp.residentialStatus || 'Resident';
+            record[headers[8]] = emp.typeOfEmployee || 'Primary Employee';
+            record[headers[9]] = emp.pwd || 'No';
+            record[headers[10]] = emp.exemptionCert || '';
+            record[headers[11]] = totalCashPay;
+            record[headers[12]] = emp.carBenefit || 0;
+            record[headers[13]] = emp.mealsBenefit || 0;
+            record[headers[14]] = emp.nonCashBenefits || 0;
+            record[headers[15]] = emp.typeOfHousing || 'Benefit not given';
+            record[headers[16]] = emp.housingBenefit || 0;
+            record[headers[17]] = emp.otherBenefits || 0;
+            record[headers[18]] = grossSalary;
+            record[headers[19]] = sha;
+            record[headers[20]] = nssf;
+            record[headers[21]] = emp.otherPension || 0;
+            record[headers[22]] = emp.postRetMedical || 0;
+            record[headers[23]] = emp.mortgageInterest || 0;
+            record[headers[24]] = ahl;
+            record[headers[25]] = taxablePay;
+            record[headers[26]] = 2400;
+            record[headers[27]] = emp.insuranceRelief || 0;
+            record[headers[28]] = paye;
+            record[headers[29]] = paye;
+            record['Std Check-In'] = emp.standardCheckIn || '08:00';
+            record['Std Check-Out'] = emp.standardCheckOut || '17:00';
+            return record;
         });
 
-        console.log(`[PayrollData] Parsed ${rawRows.length} rows from CSV`);
-
-        const preamble: Record<string, string> = {};
-        let dataStartIndex = 0;
-        for (let i = 0; i < rawRows.length; i++) {
-            const row = rawRows[i];
-            if (row.length >= 2 && row[0].endsWith(':')) {
-                preamble[row[0].replace(':', '').trim()] = row[1] || '';
-            } else if (row.length === 0 || (row.length === 1 && !row[0])) {
-                continue;
-            } else if (row.some(c => c.toLowerCase().includes('payroll number'))) {
-                dataStartIndex = i + 1;
-                break;
+        // Merge payroll pipeline data if period is provided
+        const period = req.query.period as string;
+        if (period) {
+            const runs = await kyselyDb.selectFrom('payroll_runs').select('id').where('clientId', '=', clientId).where('period', '=', period).execute();
+            if (runs.length > 0) {
+                const entries = await kyselyDb.selectFrom('payroll_entries').selectAll().where('payrollRunId', 'in', runs.map(r => r.id as any)).execute();
+                const entryMap = new Map<number, any>();
+                for (const e of entries) entryMap.set(e.employeeId, e);
+                for (const m of mapped) {
+                    const kraPin = String(m[headers[1]] || '');
+                    const emp = employees.find(e => e.kraPin === kraPin);
+                    if (emp && entryMap.has(emp.id)) {
+                        const en = entryMap.get(emp.id)!;
+                        m['OT Pay (read-only)'] = en.overtimePay || 0;
+                        m['Absent Days (read-only)'] = en.absentDays || 0;
+                        m['Late Days (read-only)'] = en.lateDays || 0;
+                        m['Unpaid Leave Days (read-only)'] = en.unpaidLeaveDays || 0;
+                        m['Bonus Pay (read-only)'] = en.bonusPay || emp.bonusPay || 0;
+                    }
+                }
             }
         }
 
-        console.log(`[PayrollData] dataStartIndex=${dataStartIndex}, preamble keys=${Object.keys(preamble).join(', ')}`);
-
-        const headers = rawRows[dataStartIndex - 1] || [];
-        const employees = rawRows.slice(dataStartIndex)
-            .filter(row => row.some(c => c.trim()))
-            .map(row => {
-                const record: Record<string, string | number> = {};
-                headers.forEach((h, idx) => {
-                    const val = row[idx] || '';
-                    const num = parseFloat(val);
-                    record[h] = isNaN(num) || val.trim() === '' ? val : num;
-                });
-                return record;
-            });
-
-        console.log(`[PayrollData] Returning ${employees.length} employees with ${headers.length} headers`);
-
         res.json({
             hasData: true,
-            clientId: Number(clientId),
+            clientId,
             clientName: client.name,
             preamble: {
-                companyName: preamble['COMPANY NAME'] || preamble['ï»¿COMPANY NAME'] || '',
-                companyPin: preamble['COMPANY KRA PIN'] || '',
-                companyNssf: preamble['COMPANY NSSF NO'] || '',
-                companyNssfPassword: preamble['COMPANY NSSF PASSWORD'] || '',
-                companyShaLogin: preamble['COMPANY SHA LOGIN'] || '',
-                companyShaPassword: preamble['COMPANY SHA PASSWORD'] || '',
+                companyName: client.name || '',
+                companyPin: client.pin || '',
+                companyNssf: client.nssfLogin || '',
+                companyNssfPassword: '',
+                companyShaLogin: client.shaLogin || '',
+                companyShaPassword: '',
             },
             headers,
-            employees,
+            employees: mapped,
         });
     } catch (err) {
         console.error('[PayrollData] Error fetching payroll data:', err);
@@ -493,18 +593,34 @@ router.put('/:id/payroll-data', async (req, res) => {
             return res.status(404).json({ message: 'Client not found' });
         }
 
-        const decUrl = decodeURIComponent(client.masterFileUrl);
-        const relPath = decUrl.replace(/^\/clients\//, '');
-        const csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+        let csvPath: string;
+        let relPath: string;
+        if (client.masterFileUrl) {
+            const decUrl = decodeURIComponent(client.masterFileUrl);
+            relPath = decUrl.replace(/^\/clients\//, '');
+            csvPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', relPath);
+        } else {
+            // No master CSV yet — create one from scratch
+            const safeName = String(client.name || 'Client').replace(/[^a-zA-Z0-9]/g, '_');
+            relPath = path.join(String(clientId), `${safeName}_Standardized.csv`);
+            const clientsDir = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', String(clientId));
+            await fs.mkdir(clientsDir, { recursive: true });
+            csvPath = path.join(clientsDir, `${safeName}_Standardized.csv`);
+            const fileUrl = `/clients/${clientId}/${safeName}_Standardized.csv`;
+            await db.run('UPDATE clients SET masterFileUrl = ?, masterFileLabel = ? WHERE id = ?', [fileUrl, `${safeName}_Standardized.csv`, clientId]);
+        }
 
         const rawRows: string[][] = [];
-        await new Promise<void>((resolve, reject) => {
-            fsStandard.createReadStream(csvPath)
-                .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
-                .on('data', (row: string[]) => rawRows.push(row))
-                .on('error', reject)
-                .on('end', resolve);
-        });
+        const fileExists = fsStandard.existsSync(csvPath);
+        if (fileExists) {
+            await new Promise<void>((resolve, reject) => {
+                fsStandard.createReadStream(csvPath)
+                    .pipe(fastCsv.parse({ headers: false, ignoreEmpty: true, trim: true }))
+                    .on('data', (row: string[]) => rawRows.push(row))
+                    .on('error', reject)
+                    .on('end', resolve);
+            });
+        }
 
         const headerRowIndex = rawRows.findIndex(row =>
             row.some(c => c.toLowerCase().includes('payroll number'))
@@ -644,6 +760,38 @@ router.put('/:id/payroll-data', async (req, res) => {
         res.json({ success: true, message: 'Payroll data saved and recalculated.' });
     } catch (err) {
         console.error('Error saving payroll data:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// POST /api/clients/:id/logo — upload company logo
+router.post('/:id/logo', upload.single('logo'), async (req, res) => {
+    try {
+        const clientId = req.params.id;
+        const file = req.file;
+        if (!file) return res.status(400).json({ message: 'No logo file uploaded' });
+
+        const db = await openDb();
+        const client = await db.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        if (!client) {
+            await fs.unlink(file.path);
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        const safeName = String(client.name || 'client').replace(/[^a-zA-Z0-9]/g, '_');
+        const ext = path.extname(file.originalname) || '.png';
+        const logoDir = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', String(clientId));
+        const logoPath = path.join(logoDir, `${safeName}_logo${ext}`);
+        await fs.mkdir(logoDir, { recursive: true });
+        await fs.copyFile(file.path, logoPath);
+        await fs.unlink(file.path);
+
+        const fileUrl = `/clients/${clientId}/${safeName}_logo${ext}`;
+        await db.run('UPDATE clients SET logoUrl = ? WHERE id = ?', [fileUrl, clientId]);
+
+        res.json({ success: true, logoUrl: fileUrl });
+    } catch (err) {
+        console.error('Error uploading logo:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

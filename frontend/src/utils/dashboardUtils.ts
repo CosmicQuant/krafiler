@@ -7,6 +7,10 @@ export function normalizeClientObligation(value: string) {
     if (normalized === 'monthly_rental_income' || normalized === 'monthly rental income') return 'mri';
     if (normalized === 'turnover_tax' || normalized === 'turnover tax') return 'tot';
     if (normalized === 'elevy') return 'elevy';
+    if (normalized === 'income_tax_resident_individual' || normalized === 'income tax resident individual') return 'income_tax_resident_individual';
+    if (normalized === 'income_tax_non_resident_individual' || normalized === 'income tax non-resident individual') return 'income_tax_non_resident_individual';
+    if (normalized === 'income_tax_company' || normalized === 'income tax company') return 'income_tax_company';
+    if (normalized === 'excise_duty' || normalized === 'excise duty') return 'excise_duty';
 
     return normalized;
 }
@@ -68,6 +72,14 @@ export function getReceiptUrlForObligation(client: ClientObligation, type: strin
             return client.nssfReceiptUrl;
         case 'SHA':
             return client.shaReceiptUrl;
+        case 'IT_RESIDENT_INDIVIDUAL':
+            return client.incomeTaxResidentIndividualReceiptUrl;
+        case 'IT_NON_RESIDENT_INDIVIDUAL':
+            return client.incomeTaxNonResidentIndividualReceiptUrl;
+        case 'IT_COMPANY':
+            return client.incomeTaxCompanyReceiptUrl;
+        case 'EXCISE_DUTY':
+            return client.exciseDutyReceiptUrl;
         default:
             return undefined;
     }
@@ -142,7 +154,8 @@ export function getFilingProgressTone(job: ActiveDashboardJob) {
 }
 
 export function isPayrollDeskClient(client: ClientObligation) {
-    return client.paye !== 'na' || client.nssf !== 'na' || client.sha !== 'na';
+    const hasObligation = (val: string | null | undefined) => !!val && val !== 'na';
+    return hasObligation(client.paye) || hasObligation(client.nssf) || hasObligation(client.sha);
 }
 
 export function markPayrollStatusesGenerated(client: ClientObligation): ClientObligation {

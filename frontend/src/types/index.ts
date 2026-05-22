@@ -72,6 +72,10 @@ export type ClientObligation = {
     tot: TaxStatus;
     mri: TaxStatus;
     dst: TaxStatus;
+    incomeTaxResidentIndividual: TaxStatus;
+    incomeTaxNonResidentIndividual: TaxStatus;
+    incomeTaxCompany: TaxStatus;
+    exciseDuty: TaxStatus;
     payeLastFiledDate?: string;
     payeReceiptUrl?: string;
     nssfLastFiledDate?: string;
@@ -88,6 +92,15 @@ export type ClientObligation = {
     mriReceiptUrl?: string;
     dstLastFiledDate?: string;
     dstReceiptUrl?: string;
+    incomeTaxResidentIndividualLastFiledDate?: string;
+    incomeTaxResidentIndividualReceiptUrl?: string;
+    incomeTaxNonResidentIndividualLastFiledDate?: string;
+    incomeTaxNonResidentIndividualReceiptUrl?: string;
+    incomeTaxCompanyLastFiledDate?: string;
+    incomeTaxCompanyReceiptUrl?: string;
+    exciseDutyLastFiledDate?: string;
+    exciseDutyReceiptUrl?: string;
+    logoUrl?: string;
 };
 
 export type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';
@@ -116,7 +129,8 @@ export type TaxObligationType =
     | 'vat'
     | 'paye'
     | 'turnover_tax'
-    | 'monthly_rental_income';
+    | 'monthly_rental_income'
+    | 'excise_duty';
 
 export const TAX_OBLIGATION_OPTIONS: { value: TaxObligationType; label: string; filingMode: 'nil' | 'transactional'; description?: string }[] = [
     { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)', filingMode: 'nil', description: 'File a nil income tax return for resident individuals.' },
@@ -126,6 +140,7 @@ export const TAX_OBLIGATION_OPTIONS: { value: TaxObligationType; label: string; 
     { value: 'paye', label: 'PAYE (Nil)', filingMode: 'nil', description: 'File a nil PAYE return when no salaries were paid.' },
     { value: 'turnover_tax', label: 'Turnover Tax (Nil)', filingMode: 'nil', description: 'File a nil Turnover Tax return.' },
     { value: 'monthly_rental_income', label: 'Monthly Rental Income (Nil)', filingMode: 'nil', description: 'File a nil Monthly Rental Income return.' },
+    { value: 'excise_duty', label: 'Excise Duty (Nil)', filingMode: 'nil', description: 'File a nil Excise Duty return when no excisable goods were manufactured or imported.' },
 ];
 
 export type FilingStepLog = {

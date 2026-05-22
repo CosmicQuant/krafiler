@@ -149,6 +149,8 @@ function createEmptyEmployee(index: number): PayrollEmployee {
     else if (i === 27) emp[h] = '0';
     else emp[h] = '';
   });
+  emp['Std Check-In'] = '08:00';
+  emp['Std Check-Out'] = '17:00';
   calculateFields(emp);
   return emp;
 }
@@ -170,9 +172,11 @@ interface PayrollWebViewProps {
   onAutoFilePaye?: (client: ClientObligation) => void;
   onAutoFileNssf?: (client: ClientObligation) => void;
   onGenerateCompliance?: (client: ClientObligation, result: any) => void;
+  clients?: ClientObligation[];
+  onClientChange?: (client: ClientObligation) => void;
 }
 
-export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv, onRemoveMasterCsv, onGeneratePayrollPacks, onAutoFilePaye, onAutoFileNssf, onGenerateCompliance }: PayrollWebViewProps) {
+export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv, onRemoveMasterCsv, onGeneratePayrollPacks, onAutoFilePaye, onAutoFileNssf, onGenerateCompliance, clients, onClientChange }: PayrollWebViewProps) {
   const [preamble, setPreamble] = useState<PayloadPreamble | null>(null);
   const [employees, setEmployees] = useState<PayrollEmployee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,6 +185,9 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [hasData, setHasData] = useState(false);
   const [uploadingMasterCsv, setUploadingMasterCsv] = useState(false);
+  const [generatingPacks, setGeneratingPacks] = useState(false);
+  const [filingPaye, setFilingPaye] = useState(false);
+  const [filingNssf, setFilingNssf] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('master');
   const [importingEmployees, setImportingEmployees] = useState(false);
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
@@ -190,9 +197,9 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     nssfNo: '', shaNo: '', phone: '', email: '', bankName: '',
     bankAccount: '', bankCode: '', department: '', jobTitle: '',
     employmentType: 'Permanent', employmentStatus: 'Active',
-    dateJoined: '', dateLeft: '', basicPay: 0,
+    dateJoined: '', dateLeft: '', basicPay: 0, bonusPay: 0,
     role: 'employee', departmentId: null, standardCheckOut: '17:00',
-    portalPassword: '',
+    standardCheckIn: '08:00', portalPassword: '',
   });
 
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -200,7 +207,9 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [leaveForm, setLeaveForm] = useState<any>({
     employeeId: '', employeeName: '', kraPin: '', leaveType: 'Annual',
     startDate: '', endDate: '', daysCount: 1, reason: '', status: 'Pending',
+    isPaid: true,
   });
+  const [leaveTypes, setLeaveTypes] = useState<any[]>([]);
 
   const [loanRecords, setLoanRecords] = useState<any[]>([]);
   const [loadingLoans, setLoadingLoans] = useState(false);
@@ -224,6 +233,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [loadingReport, setLoadingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [kpiData, setKpiData] = useState<any>(null);
+  const [customReportType, setCustomReportType] = useState('payroll-summary');
+  const [customReportData, setCustomReportData] = useState<any>(null);
   const [emailHistory, setEmailHistory] = useState<any[]>([]);
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -238,6 +249,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [portalLoginForm, setPortalLoginForm] = useState({ kraPin: '', password: '' });
   const [portalError, setPortalError] = useState<string | null>(null);
   const [portalLeaveForm, setPortalLeaveForm] = useState({ leaveType: 'Annual', startDate: '', endDate: '', daysCount: 1, reason: '' });
+  const [portalEditingLeave, setPortalEditingLeave] = useState<any | null>(null);
   const [portalLoanForm, setPortalLoanForm] = useState({ loanType: 'Salary Advance', principal: 0, installments: 1, interestRate: 0, notes: '' });
   const [portalSubmitting, setPortalSubmitting] = useState(false);
   const [showPortalPasswordModal, setShowPortalPasswordModal] = useState(false);
@@ -258,13 +270,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [savingOvertime, setSavingOvertime] = useState(false);
 
   // Overtime tab state
-  const [attendanceOvertimePeriod, setAttendanceOvertimePeriod] = useState(() => {
-    const now = new Date();
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    return `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [attendanceOvertimePeriod, setAttendanceOvertimePeriod] = useState(getCurrentFilingPeriod().period);
   const [attendanceOvertimeEmployees, setAttendanceOvertimeEmployees] = useState<any[]>([]);
   const [timeLeaveRecords, setTimeLeaveRecords] = useState<any[]>([]);
+  const [dbEmployees, setDbEmployees] = useState<any[]>([]);
 
   // Compliance generation state
   const [generatingCompliance, setGeneratingCompliance] = useState(false);
@@ -283,11 +292,27 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [p11Data, setP11Data] = useState<any>(null);
   const [loadingP11, setLoadingP11] = useState(false);
 
+  // Attendance approval workflow state
+  const [showAttendanceApprovalModal, setShowAttendanceApprovalModal] = useState(false);
+  const [attendanceApprovalData, setAttendanceApprovalData] = useState<any[]>([]);
+  const [loadingAttendanceApproval, setLoadingAttendanceApproval] = useState(false);
+  const [savingAttendanceApproval, setSavingAttendanceApproval] = useState(false);
+  const [attendanceApprovalPeriod, setAttendanceApprovalPeriod] = useState(getCurrentFilingPeriod().period);
+
+  // Reset key state when the selected company changes
+  useEffect(() => {
+    setSelectedRun(null);
+    setRunEntries([]);
+    setRunDetailView('list');
+    setComplianceResult(null);
+    setError(null);
+  }, [client.id]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/clients/${client.id}/payroll-data`);
+      const res = await apiFetch(`/clients/${client.id}/payroll-data?period=${attendanceOvertimePeriod}`);
       if (!res.ok) {
         setError('Failed to load payroll data.');
         setLoading(false);
@@ -308,9 +333,16 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     } finally {
       setLoading(false);
     }
-  }, [client.id]);
+  }, [client.id, attendanceOvertimePeriod]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { if (statusMessage) console.log(statusMessage); }, [statusMessage]);
+  useEffect(() => {
+    apiFetch(`/clients/${client.id}/employees`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setDbEmployees(Array.isArray(data) ? data : []))
+      .catch(() => setDbEmployees([]));
+  }, [client.id]);
 
   const updateField = (empIndex: number, header: string, value: string) => {
     setEmployees(prev => {
@@ -351,12 +383,69 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.message || 'Save failed.');
       }
-      setStatusMessage('Payroll data saved and recalculated successfully.');
+
+      // Sync to employees DB table
+      let synced = 0;
+      for (const emp of employees) {
+        const kraPin = String(emp[STANDARD_HEADERS[1]] || '').trim();
+        if (!kraPin) continue;
+        const body = {
+          payrollNumber: String(emp[STANDARD_HEADERS[0]] || ''),
+          employeeName: String(emp[STANDARD_HEADERS[4]] || ''),
+          kraPin,
+          idNumber: String(emp[STANDARD_HEADERS[2]] || ''),
+          identityType: String(emp[STANDARD_HEADERS[3]] || 'National ID'),
+          shaNo: String(emp[STANDARD_HEADERS[5]] || ''),
+          nssfNo: String(emp[STANDARD_HEADERS[6]] || ''),
+          residentialStatus: String(emp[STANDARD_HEADERS[7]] || 'Resident'),
+          typeOfEmployee: String(emp[STANDARD_HEADERS[8]] || 'Primary Employee'),
+          pwd: String(emp[STANDARD_HEADERS[9]] || 'No'),
+          exemptionCert: String(emp[STANDARD_HEADERS[10]] || ''),
+          basicPay: parseFloat(String(emp[STANDARD_HEADERS[11]] || '0')) || 0,
+          carBenefit: parseFloat(String(emp[STANDARD_HEADERS[12]] || '0')) || 0,
+          mealsBenefit: parseFloat(String(emp[STANDARD_HEADERS[13]] || '0')) || 0,
+          nonCashBenefits: parseFloat(String(emp[STANDARD_HEADERS[14]] || '0')) || 0,
+          typeOfHousing: String(emp[STANDARD_HEADERS[15]] || 'Benefit not given'),
+          housingBenefit: parseFloat(String(emp[STANDARD_HEADERS[16]] || '0')) || 0,
+          otherBenefits: parseFloat(String(emp[STANDARD_HEADERS[17]] || '0')) || 0,
+          otherPension: parseFloat(String(emp[STANDARD_HEADERS[21]] || '0')) || 0,
+          postRetMedical: parseFloat(String(emp[STANDARD_HEADERS[22]] || '0')) || 0,
+          mortgageInterest: parseFloat(String(emp[STANDARD_HEADERS[23]] || '0')) || 0,
+          insuranceRelief: parseFloat(String(emp[STANDARD_HEADERS[27]] || '0')) || 0,
+          bonusPay: 0,
+          standardCheckIn: String(emp['Std Check-In'] || '08:00'),
+          standardCheckOut: String(emp['Std Check-Out'] || '17:00'),
+          employmentStatus: 'Active',
+          dateJoined: '',
+        };
+        try {
+          await apiFetch(`/clients/${client.id}/employees/sync-by-pin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          synced++;
+        } catch { /* skip failed sync */ }
+      }
+      setStatusMessage(`Payroll data saved. ${synced} employees synced to DB.`);
       await fetchData();
     } catch (err: any) {
       setError(err.message || 'Failed to save payroll data.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleGeneratePacks = async () => {
+    if (!onGeneratePayrollPacks) return;
+    setGeneratingPacks(true);
+    setError(null);
+    try {
+      await onGeneratePayrollPacks(client);
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate payroll packs.');
+    } finally {
+      setGeneratingPacks(false);
     }
   };
 
@@ -585,6 +674,15 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { fetchLoans(); }, [fetchLoans]);
 
+  const fetchLeaveTypes = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/clients/${client.id}/leave-types`);
+      if (res.ok) setLeaveTypes(await res.json());
+    } catch { /* ignore */ }
+  }, [client.id]);
+
+  useEffect(() => { fetchLeaveTypes(); }, [fetchLeaveTypes]);
+
   const fetchOvertimeForAttendance = useCallback(async (period: string) => {
     try {
       const [y, m] = period.split('-').map(Number);
@@ -640,14 +738,17 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
     }
   }, [client.id]);
 
-  useEffect(() => { if (activeTab === 'reports') { fetchReport(); fetchKpiData(); } }, [fetchReport, activeTab]);
-
   const fetchKpiData = useCallback(async () => {
     try {
       const r = await apiFetch(`/clients/${client.id}/kpi`);
       if (r.ok) setKpiData(await r.json());
     } catch { /* ignore */ }
   }, [client.id]);
+
+  useEffect(() => { if (activeTab === 'reports') { fetchReport(); fetchKpiData(); } }, [fetchReport, fetchKpiData, activeTab]);
+
+  // Auto-load Time & Attendance on tab entry or period change
+  useEffect(() => { if (activeTab === 'time') fetchOvertimeForAttendance(attendanceOvertimePeriod); }, [activeTab, attendanceOvertimePeriod, fetchOvertimeForAttendance]);
 
   const handleDownloadReport = () => {
     if (!reportData) return;
@@ -863,8 +964,11 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         dateJoined: emp.dateJoined || '',
         dateLeft: emp.dateLeft || '',
         basicPay: emp.basicPay || 0,
+        bonusPay: emp.bonusPay || 0,
         role: emp.role || 'employee',
         departmentId: emp.departmentId || null,
+        standardCheckIn: emp.standardCheckIn || '08:00',
+        standardCheckOut: emp.standardCheckOut || '17:00',
       });
     } else {
       setEditingEmployee(null);
@@ -873,8 +977,9 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         nssfNo: '', shaNo: '', phone: '', email: '', bankName: '',
         bankAccount: '', bankCode: '', department: '', jobTitle: '',
         employmentType: 'Permanent', employmentStatus: 'Active',
-        dateJoined: '', dateLeft: '', basicPay: 0,
+        dateJoined: '', dateLeft: '', basicPay: 0, bonusPay: 0,
         role: 'employee', departmentId: null,
+        standardCheckIn: '08:00', standardCheckOut: '17:00',
       });
     }
     setShowEmployeeModal(true);
@@ -917,12 +1022,14 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         daysCount: rec.daysCount || 1,
         reason: rec.reason || '',
         status: rec.status || 'Pending',
+        isPaid: rec.isPaid !== 0,
       });
     } else {
       setEditingLeave(null);
       setLeaveForm({
         employeeId: '', employeeName: '', kraPin: '', leaveType: 'Annual',
         startDate: '', endDate: '', daysCount: 1, reason: '', status: 'Pending',
+        isPaid: true,
       });
     }
     setShowLeaveModal(true);
@@ -1072,8 +1179,31 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
-          <h2 className="text-xl font-bold text-slate-900">{client.name}</h2>
-          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-500">{client.pin}</span>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900">{client.name}</h2>
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-500">{client.pin}</span>
+            </div>
+            {clients && clients.length > 0 && onClientChange && (
+                <select
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 w-64"
+                value={client.id}
+                onChange={(e) => {
+                  const selected = clients.find(c => String(c.id) === e.target.value);
+                  if (selected && onClientChange) onClientChange(selected);
+                }}
+              >
+                {clients.filter(c => {
+                  const has = (val?: string | null) => !!val && val !== 'na';
+                  return has(c.paye) || has(c.nssf) || has(c.sha);
+                }).map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} — {c.pin}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {onEditClient && (
@@ -1086,6 +1216,16 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
           )}
         </div>
       </div>
+
+      {/* Inline error banner */}
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-3 rounded p-1 hover:bg-white/60 transition">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Tab Bar + Master CSV (same row) */}
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -1129,7 +1269,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
               <a
                 href={client.masterFileUrl}
-                target="_blank"
+                download
                 rel="noreferrer"
                 className="flex items-center gap-2 text-xs font-semibold text-slate-700 hover:text-[#ff0613] transition max-w-[180px]"
               >
@@ -1153,7 +1293,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       if (onUploadMasterCsv) await onUploadMasterCsv(client.id, file);
                       else { const d = new FormData(); d.append('masterCsv', file); await fetch(`/api/clients/${client.id}/master-csv`, { method: 'POST', body: d }); }
                       setStatusMessage('Master CSV replaced.');
-                      window.location.reload();
+                      await fetchData();
                     } catch (err: any) { setError(err.message || 'Upload failed.'); }
                     finally { setUploadingMasterCsv(false); }
                   }}
@@ -1166,7 +1306,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     if (onRemoveMasterCsv) await onRemoveMasterCsv(client.id);
                     else await fetch(`/api/clients/${client.id}/master-csv`, { method: 'DELETE' });
                     setStatusMessage('Master CSV removed.');
-                    window.location.reload();
+                    await fetchData();
                   } catch (err: any) { setError(err.message || 'Remove failed.'); }
                 }}
                 className="inline-flex items-center gap-1 rounded-md border border-red-500/30 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 transition"
@@ -1187,7 +1327,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     if (onUploadMasterCsv) await onUploadMasterCsv(client.id, file);
                     else { const d = new FormData(); d.append('masterCsv', file); await fetch(`/api/clients/${client.id}/master-csv`, { method: 'POST', body: d }); }
                     setStatusMessage('Master CSV uploaded.');
-                    window.location.reload();
+                    await fetchData();
                   } catch (err: any) { setError(err.message || 'Upload failed.'); }
                   finally { setUploadingMasterCsv(false); }
                 }}
@@ -1196,12 +1336,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
           )}
         </div>
       </div>
-
-      {statusMessage && (
-        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-          {statusMessage}
-        </div>
-      )}
 
       {error && (
         <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 flex items-center gap-2">
@@ -1213,26 +1347,49 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       {/* ───── Master Payroll Tab ───── */}
       {activeTab === 'master' && (
         <>
-          {!hasData ? (
+          {(!hasData && employees.length === 0) ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-              <p className="text-sm font-semibold text-slate-500">No payroll data found</p>
+              <p className="text-sm font-semibold text-slate-500">No payroll data yet</p>
               <p className="mt-2 text-xs text-slate-400">
-                Upload a master CSV for this client from the Payroll Pipeline desk to enable the payroll editor.
+                Click "Add Employee" to start adding payroll data manually, or upload a Master CSV from the Payroll Pipeline desk.
               </p>
+              <button
+                onClick={addRow}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-900 transition"
+              >
+                <Plus className="h-4 w-4" />
+                Add Employee
+              </button>
             </div>
           ) : (
             <>
               <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Employee Payroll Data</span>
                 <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={attendanceOvertimePeriod}
+                    onChange={e => setAttendanceOvertimePeriod(e.target.value)}
+                    placeholder="YYYY-MM"
+                    className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                  <button
+                    onClick={() => fetchData()}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                  ><RefreshCw className="h-3.5 w-3.5" /></button>
+                </div>
+                <div className="flex items-center gap-2">
                   {onGeneratePayrollPacks && (
                     <button
-                      onClick={() => onGeneratePayrollPacks(client)}
-                      disabled={!hasData}
+                      onClick={handleGeneratePacks}
+                      disabled={!hasData || generatingPacks}
                       className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      <Cloud className="h-3.5 w-3.5" />
-                      Generate Payroll Packs
+                      {generatingPacks ? (
+                        <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Generating...</>
+                      ) : (
+                        <><Cloud className="h-3.5 w-3.5" /> Generate Payroll Packs</>
+                      )}
                     </button>
                   )}
                   <button
@@ -1259,11 +1416,13 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
               <div className="mb-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-left text-xs">
-                  <thead>
+                    <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 border-r border-slate-200 min-w-[3rem]">
                         #
                       </th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">Std Check-In</th>
+                      <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">Std Check-Out</th>
                       {STANDARD_HEADERS.map((header, i) => {
                         const numeric = i >= 11 && i !== 15;
                         return (
@@ -1277,6 +1436,15 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           </th>
                         );
                       })}
+                      {employees[0]?.['OT Pay (read-only)'] !== undefined && (
+                        <>
+                          <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right whitespace-nowrap">OT Pay</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right whitespace-nowrap">Absent</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right whitespace-nowrap">Late</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right whitespace-nowrap">U.Leave</th>
+                          <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400 text-right whitespace-nowrap">Bonus</th>
+                        </>
+                      )}
                       <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 w-12">
                       </th>
                     </tr>
@@ -1286,6 +1454,22 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       <tr key={rowIdx} className="hover:bg-slate-50/50 transition">
                         <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-xs text-slate-400 font-mono border-r border-slate-100">
                           {rowIdx + 1}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            type="time"
+                            value={String(emp['Std Check-In'] || '08:00')}
+                            onChange={e => updateField(rowIdx, 'Std Check-In', e.target.value)}
+                            className="w-24 rounded border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                          />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            type="time"
+                            value={String(emp['Std Check-Out'] || '17:00')}
+                            onChange={e => updateField(rowIdx, 'Std Check-Out', e.target.value)}
+                            className="w-24 rounded border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                          />
                         </td>
                         {STANDARD_HEADERS.map((header, colIdx) => {
                           const isComputed = COMPUTED_COLUMNS.has(header);
@@ -1368,6 +1552,21 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           );
                         })}
                         <td className="px-3 py-1.5">
+                          {employees[0]?.['OT Pay (read-only)'] !== undefined && (
+                            <>
+                              <span className="block w-full px-1.5 py-1 text-xs text-amber-600 bg-amber-50 rounded text-right">{Number(emp['OT Pay (read-only)'] || 0).toLocaleString()}</span>
+                            </>
+                          )}
+                        </td>
+                        {employees[0]?.['OT Pay (read-only)'] !== undefined && (
+                          <>
+                            <td className="px-3 py-1.5 text-right"><span className="text-xs text-rose-500 bg-rose-50 rounded px-1.5 py-1">{emp['Absent Days (read-only)'] || 0}</span></td>
+                            <td className="px-3 py-1.5 text-right"><span className="text-xs text-amber-500 bg-amber-50 rounded px-1.5 py-1">{emp['Late Days (read-only)'] || 0}</span></td>
+                            <td className="px-3 py-1.5 text-right"><span className="text-xs text-blue-500 bg-blue-50 rounded px-1.5 py-1">{emp['Unpaid Leave Days (read-only)'] || 0}</span></td>
+                            <td className="px-3 py-1.5 text-right"><span className="text-xs text-emerald-600 bg-emerald-50 rounded px-1.5 py-1 font-mono">{Number(emp['Bonus Pay (read-only)'] || 0).toLocaleString()}</span></td>
+                          </>
+                        )}
+                        <td className="px-3 py-1.5">
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => {
@@ -1392,7 +1591,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             <button
                               onClick={() => {
                                 const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
-                                const e = attendanceOvertimeEmployees.find(x => x.kraPin === kraPin);
+                                const e = dbEmployees.find((x: any) => x.kraPin === kraPin);
                                 if (e) { setDocModalEmployee(e); fetchEmpDocuments(e.id); setShowDocModal(true); }
                               }}
                               className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
@@ -1403,7 +1602,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             <button
                               onClick={() => {
                                 const kraPin = String(emp[STANDARD_HEADERS[1]] || '');
-                                const e = attendanceOvertimeEmployees.find(x => x.kraPin === kraPin);
+                                const e = dbEmployees.find((x: any) => x.kraPin === kraPin);
                                 if (e) openEmployeeModal(e);
                               }}
                               className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
@@ -1451,32 +1650,45 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
               Time & Attendance
             </span>
             <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={attendanceOvertimePeriod}
-                onChange={e => { setAttendanceOvertimePeriod(e.target.value); }}
-                placeholder="YYYY-MM"
-                className="w-28 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-              />
+              <select
+                value={attendanceOvertimePeriod.split('-')[0] || ''}
+                onChange={e => {
+                  const mm = attendanceOvertimePeriod.split('-')[1] || '01';
+                  setAttendanceOvertimePeriod(`${e.target.value}-${mm}`);
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+              >
+                {Array.from({ length: 5 }, (_, i) => {
+                  const y = new Date().getFullYear() - 2 + i;
+                  return <option key={y} value={y}>{y}</option>;
+                })}
+              </select>
+              <select
+                value={attendanceOvertimePeriod.split('-')[1] || ''}
+                onChange={e => {
+                  const mm = e.target.value;
+                  const yyyy = attendanceOvertimePeriod.split('-')[0] || String(new Date().getFullYear());
+                  setAttendanceOvertimePeriod(`${yyyy}-${mm}`);
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+              >
+                {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
+                  <option key={m} value={m}>{new Date(2020, parseInt(m)-1, 1).toLocaleString('en-US', { month: 'short' })}</option>
+                ))}
+              </select>
               {isPastDeadline(attendanceOvertimePeriod) && (
                 <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 whitespace-nowrap">
                   <AlertCircle className="h-3 w-3" /> Past deadline
                 </span>
               )}
-              <button
-                onClick={() => fetchOvertimeForAttendance(attendanceOvertimePeriod)}
-                className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
-              >
-                Load Month
-              </button>
             </div>
           </div>
 
           {attendanceOvertimeEmployees.length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
               <CalendarCheck className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">Select a period and click Load Month</p>
-              <p className="mt-2 text-xs text-slate-400">View attendance, overtime, and leave in a unified calendar.</p>
+              <p className="text-sm font-semibold text-slate-500">Loading data for {attendanceOvertimePeriod}...</p>
+              <p className="mt-2 text-xs text-slate-400">View attendance, overtime, and leave in a unified calendar. Data loads automatically when changing the period.</p>
             </div>
           ) : (
             <>
@@ -1588,16 +1800,18 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {attendanceOvertimeEmployees.filter((e: any) => e.ot.hours > 0 || (e.employeeName || '')).map((emp: any) => (
+                      {attendanceOvertimeEmployees
+                        .filter((e: any) => (e.ot?.hours || 0) > 0 || (e.ot?.amount || 0) > 0)
+                        .map((emp: any) => (
                         <tr key={emp.id} className="hover:bg-slate-50/50 transition">
                           <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 text-right">
                             <input type="number" value={emp.ot.hours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, hours: val } } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 text-right">
                             <input type="number" value={emp.ot.rate} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, rate: val } } : e)); }} className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-3 py-2 text-right">
                             <input type="number" value={emp.ot.multiplier} step="0.5" onChange={e => { const val = parseFloat(e.target.value) || 1; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, multiplier: val } } : e)); }} className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
                           </td>
                           <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
@@ -1623,6 +1837,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       ))}
                     </tbody>
                   </table>
+                  {attendanceOvertimeEmployees.filter((e: any) => (e.ot?.hours || 0) > 0 || (e.ot?.amount || 0) > 0).length === 0 && (
+                    <p className="text-xs text-slate-400 py-3 text-center">No employees with overtime records for this period.</p>
+                  )}
+                  <p className="text-[10px] text-slate-400 mt-2">
+                    Showing {attendanceOvertimeEmployees.filter((e: any) => (e.ot?.hours || 0) > 0 || (e.ot?.amount || 0) > 0).length} of {attendanceOvertimeEmployees.length} employees with overtime
+                  </p>
                 </div>
               </div>
 
@@ -1921,6 +2141,94 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 >
                   Apply
                 </button>
+              </div>
+
+              {/* Custom Report Builder */}
+              <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Custom Report Builder</h4>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={customReportType}
+                      onChange={e => setCustomReportType(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    >
+                      <option value="payroll-summary">Payroll Summary</option>
+                      <option value="gross-to-net">Gross-to-Net</option>
+                      <option value="overtime">Overtime Report</option>
+                      <option value="loans">Loan Report</option>
+                      <option value="leave">Leave Report</option>
+                      <option value="attendance">Attendance Report</option>
+                      <option value="lateness">Lateness Report</option>
+                      <option value="statutory">Statutory Deductions</option>
+                    </select>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const params = new URLSearchParams({ reportType: customReportType });
+                          if (attendanceOvertimePeriod) { params.set('periodFrom', attendanceOvertimePeriod); params.set('periodTo', attendanceOvertimePeriod); }
+                          const r = await apiFetch(`/clients/${client.id}/reports/custom?${params}`);
+                          if (r.ok) setCustomReportData(await r.json());
+                          else setError('Failed to load report');
+                        } catch { setError('Network error'); }
+                      }}
+                      className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
+                    >
+                      Generate
+                    </button>
+                    {customReportData && (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (!customReportData?.rows?.length) return;
+                            const keys = Object.keys(customReportData.rows[0]);
+                            const csv = [keys.join(','), ...customReportData.rows.map((r: any) => keys.map((k: string) => String(r[k] ?? '')).join(','))].join('\n');
+                            const blob = new Blob([csv], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a'); a.href = url; a.download = `Report_${customReportType}_${client.name || 'Client'}.csv`;
+                            document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+                          }}
+                          disabled={!customReportData?.rows?.length}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                        >
+                          <Download className="h-3.5 w-3.5 inline mr-1" />CSV
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {customReportData && (
+                  <div className="overflow-x-auto max-h-64">
+                    {customReportData.totals && (
+                      <div className="mb-2 flex flex-wrap gap-2 text-[10px]">
+                        {Object.entries(customReportData.totals).map(([k, v]) => (
+                          <span key={k} className="rounded bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{k}: {typeof v === 'number' ? (v as number).toLocaleString() : String(v)}</span>
+                        ))}
+                      </div>
+                    )}
+                    {customReportData.rows?.length > 0 ? (
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50">
+                            {Object.keys(customReportData.rows[0]).map(k => (
+                              <th key={k} className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">{k}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {customReportData.rows.slice(0, 50).map((row: any, i: number) => (
+                            <tr key={i} className="hover:bg-slate-50/50">
+                              {(Object.values(row) as any[]).map((v: any, j: number) => (
+                                <td key={j} className="px-3 py-2 text-slate-700 text-right font-mono">{typeof v === 'number' ? v.toLocaleString() : String(v)}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : <p className="text-xs text-slate-400 py-2">No data for this report type and period.</p>}
+                    {customReportData.rows?.length > 50 && <p className="text-[10px] text-slate-400 mt-1">Showing 50 of {customReportData.rows.length} rows</p>}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 mb-6">
@@ -2565,11 +2873,52 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                               {portalDashboard.recentLeave.map((l: any) => (
                                 <div key={l.id} className="flex items-center justify-between text-xs">
                                   <span className="text-slate-700">{l.leaveType} · {l.startDate} to {l.endDate}</span>
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                    l.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
-                                    l.status === 'Rejected' ? 'bg-red-50 text-red-700' :
-                                    'bg-amber-50 text-amber-700'
-                                  }`}>{l.status}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    {l.status === 'Pending' && (
+                                      <>
+                                        <button
+                                          onClick={() => {
+                                            setPortalEditingLeave(l);
+                                            setPortalLeaveForm({
+                                              leaveType: l.leaveType || 'Annual',
+                                              startDate: l.startDate || '',
+                                              endDate: l.endDate || '',
+                                              daysCount: l.daysCount || 1,
+                                              reason: l.reason || '',
+                                            });
+                                            setPortalSubView('leave');
+                                          }}
+                                          className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition"
+                                          title="Edit"
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                          onClick={async () => {
+                                            if (!confirm('Delete this leave request?')) return;
+                                            try {
+                                              const r = await fetch(`/api/portal/leave/${l.id}`, {
+                                                method: 'DELETE',
+                                                headers: { 'Authorization': `Bearer ${portalToken}` },
+                                              });
+                                              if (r.ok) {
+                                                setPortalDashboard(null);
+                                              }
+                                            } catch { /* ignore */ }
+                                          }}
+                                          className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-100 transition"
+                                          title="Delete"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </>
+                                    )}
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                      l.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
+                                      l.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                      'bg-amber-50 text-amber-700'
+                                    }`}>{l.status}</span>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -2671,7 +3020,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
               {portalSubView === 'leave' && (
                 <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <h3 className="text-sm font-bold text-slate-900 mb-4">Request Leave</h3>
+                  <h3 className="text-sm font-bold text-slate-900 mb-4">{portalEditingLeave ? 'Edit Leave Request' : 'Request Leave'}</h3>
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -2730,28 +3079,43 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                       />
                     </div>
-                    <button
-                      disabled={portalSubmitting}
-                      onClick={async () => {
-                        setPortalSubmitting(true);
-                        try {
-                          const r = await fetch('/api/portal/leave', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${portalToken}` },
-                            body: JSON.stringify(portalLeaveForm),
-                          });
-                          if (r.ok) {
-                            setPortalSubView('dashboard');
-                            setPortalDashboard(null);
-                            setPortalDocuments([]);
+                    <div className="flex gap-2">
+                      <button
+                        disabled={portalSubmitting}
+                        onClick={async () => {
+                          setPortalSubmitting(true);
+                          try {
+                            const url = portalEditingLeave ? `/api/portal/leave/${portalEditingLeave.id}` : '/api/portal/leave';
+                            const r = await fetch(url, {
+                              method: portalEditingLeave ? 'PUT' : 'POST',
+                              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${portalToken}` },
+                              body: JSON.stringify(portalLeaveForm),
+                            });
+                            if (r.ok) {
+                              setPortalSubView('dashboard');
+                              setPortalDashboard(null);
+                              setPortalDocuments([]);
+                              setPortalLeaveForm({ leaveType: 'Annual', startDate: '', endDate: '', daysCount: 1, reason: '' });
+                              setPortalEditingLeave(null);
+                            }
+                          } catch { /* ignore */ } finally { setPortalSubmitting(false); }
+                        }}
+                        className="flex-1 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                      >
+                        {portalSubmitting ? <><RefreshCw className="mr-1.5 inline h-3 w-3 animate-spin" /> Submitting...</> : (portalEditingLeave ? 'Save Changes' : 'Submit Leave Request')}
+                      </button>
+                      {portalEditingLeave && (
+                        <button
+                          onClick={() => {
+                            setPortalEditingLeave(null);
                             setPortalLeaveForm({ leaveType: 'Annual', startDate: '', endDate: '', daysCount: 1, reason: '' });
-                          }
-                        } catch { /* ignore */ } finally { setPortalSubmitting(false); }
-                      }}
-                      className="w-full rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
-                    >
-                      {portalSubmitting ? <><RefreshCw className="mr-1.5 inline h-3 w-3 animate-spin" /> Submitting...</> : 'Submit Leave Request'}
-                    </button>
+                          }}
+                          className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -2887,35 +3251,32 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</label>
-                  <input
-                    type="text"
-                    value={attendanceForm.date}
-                    onChange={e => setAttendanceForm((f: any) => ({ ...f, date: e.target.value }))}
-                    placeholder="YYYY-MM-DD"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                  />
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</label>
+                    <input
+                      type="date"
+                      value={attendanceForm.date}
+                      onChange={e => setAttendanceForm((f: any) => ({ ...f, date: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check In</label>
+                    <input
+                      type="time"
+                      value={attendanceForm.checkIn}
+                      onChange={e => setAttendanceForm((f: any) => ({ ...f, checkIn: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
                 </div>
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check In</label>
-                  <input
-                    type="text"
-                    value={attendanceForm.checkIn}
-                    onChange={e => setAttendanceForm((f: any) => ({ ...f, checkIn: e.target.value }))}
-                    placeholder="HH:MM"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check Out</label>
-                  <input
-                    type="text"
-                    value={attendanceForm.checkOut}
-                    onChange={e => setAttendanceForm((f: any) => ({ ...f, checkOut: e.target.value }))}
-                    placeholder="HH:MM"
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                  />
+                  <div>
+                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check Out</label>
+                    <input
+                      type="time"
+                      value={attendanceForm.checkOut}
+                      onChange={e => setAttendanceForm((f: any) => ({ ...f, checkOut: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</label>
@@ -3183,6 +3544,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     onChange={e => setLeaveForm((f: any) => ({ ...f, leaveType: e.target.value }))}
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                   >
+                    {leaveTypes.map((lt: any) => (
+                      <option key={lt.id} value={lt.name}>{lt.name} {lt.isPaid ? '(Paid)' : '(Unpaid)'}</option>
+                    ))}
+                    <option disabled>──────────</option>
                     <option>Annual</option>
                     <option>Sick</option>
                     <option>Compassionate</option>
@@ -3191,23 +3556,33 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     <option>Paternity</option>
                   </select>
                 </div>
+                <div className="col-span-2 flex items-center gap-2 mt-1">
+                  <input
+                    type="checkbox"
+                    id="leave-isPaid"
+                    checked={leaveForm.isPaid !== false}
+                    onChange={e => setLeaveForm((f: any) => ({ ...f, isPaid: e.target.checked }))}
+                    className="rounded border-slate-300 text-slate-950 focus:ring-slate-500"
+                  />
+                  <label htmlFor="leave-isPaid" className="text-xs text-slate-700">Paid Leave</label>
+                </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Start Date</label>
-                  <input
-                    type="text"
-                    value={leaveForm.startDate}
-                    onChange={e => setLeaveForm((f: any) => ({ ...f, startDate: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                  />
+                    <input
+                      type="date"
+                      value={leaveForm.startDate}
+                      onChange={e => setLeaveForm((f: any) => ({ ...f, startDate: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">End Date</label>
-                  <input
-                    type="text"
-                    value={leaveForm.endDate}
-                    onChange={e => setLeaveForm((f: any) => ({ ...f, endDate: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                  />
+                    <input
+                      type="date"
+                      value={leaveForm.endDate}
+                      onChange={e => setLeaveForm((f: any) => ({ ...f, endDate: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Days Count</label>
@@ -3305,6 +3680,25 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
                   >
                     <Plus className="h-3.5 w-3.5" /> New Run
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setAttendanceApprovalPeriod(newRunPeriod || getCurrentFilingPeriod().period);
+                      setLoadingAttendanceApproval(true);
+                      setShowAttendanceApprovalModal(true);
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/attendance-payroll-preview?period=${newRunPeriod || getCurrentFilingPeriod().period}`, { method: 'POST' });
+                        if (r.ok) {
+                          const data = await r.json();
+                          setAttendanceApprovalData(data.employees || []);
+                        } else { setError('Failed to load attendance preview'); }
+                      } catch { setError('Network error'); }
+                      finally { setLoadingAttendanceApproval(false); }
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                    title="Review and approve attendance data before generating payroll"
+                  >
+                    <CalendarCheck className="h-3.5 w-3.5" /> Review Attendance
                   </button>
                   <button
                     onClick={async () => {
@@ -3436,7 +3830,118 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   <p className="text-sm font-semibold text-slate-500">No entries yet</p>
                   <p className="mt-2 text-xs text-slate-400">Click the Generate button to auto-compute entries.</p>
                 </div>
-              ) : (
+              ) : null}
+
+              {/* Compliance File Generation */}
+              {runEntries.length > 0 && (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Compliance Files</h4>
+                    <button
+                      disabled={generatingCompliance}
+                      onClick={async () => {
+                        if (!selectedRun) return;
+                        setGeneratingCompliance(true);
+                        setError(null);
+                        try {
+                          const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/generate-compliance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }) });
+                          const data = await r.json();
+                          if (r.ok) { setComplianceResult(data); setStatusMessage('Compliance files generated'); onGenerateCompliance?.(client, data); }
+                          else setError(data.message || 'Failed');
+                        } catch { setError('Network error'); }
+                        finally { setGeneratingCompliance(false); }
+                      }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                    >
+                      {generatingCompliance ? (
+                        <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Generating...</>
+                      ) : (
+                        'Generate Compliance Files'
+                      )}
+                    </button>
+                  </div>
+                  {complianceResult && (
+                    <div className="space-y-2">
+                      {complianceResult.payeZipUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs">
+                            <FileText className="h-3.5 w-3.5 text-slate-400" />
+                            <span className="font-medium text-slate-900">PAYE ZIP</span>
+                            <span className="text-slate-400">{complianceResult.payeZipLabel}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.payeZipUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button disabled={filingPaye} onClick={async () => {
+                              setFilingPaye(true);
+                              setError(null);
+                              try {
+                                const parts = selectedRun?.period?.split('-') || [];
+                                const y = parseInt(parts[0], 10); const m = parseInt(parts[1], 10);
+                                const mm = String(isNaN(m) ? new Date().getMonth() + 1 : m).padStart(2, '0');
+                                const yyyy = String(isNaN(y) ? new Date().getFullYear() : y);
+                                const lastDay = new Date(isNaN(y) ? new Date().getFullYear() : y, isNaN(m) ? new Date().getMonth() + 1 : m, 0).getDate();
+                                const payload = { kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '1234', periodFrom: `${yyyy}-${mm}-01`, periodTo: `${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`, taxObligationType: 'paye', payeZipUrl: complianceResult.payeZipUrl, ownsRentalProperty: false };
+                                const r = await apiFetch('/tax/file-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                const d = await r.json();
+                                if (!r.ok) setError(d.message || 'Failed');
+                              } catch { setError('Network error'); } finally { setFilingPaye(false); }
+                            }} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                              {filingPaye ? (
+                                <><RefreshCw className="h-3 w-3 animate-spin" /> Filing...</>
+                              ) : (
+                                <><Globe className="h-3 w-3" /> File PAYE</>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.nssfFileUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">NSSF XLSX</span><span className="text-slate-400">{complianceResult.nssfFileLabel}</span></div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.nssfFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button disabled={filingNssf} onClick={async () => {
+                              setFilingNssf(true);
+                              setError(null);
+                              try {
+                                const parts = selectedRun?.period?.split('-') || [];
+                                const mVal = parseInt(parts[1], 10) || (new Date().getMonth() + 1);
+                                const yVal = parseInt(parts[0], 10) || new Date().getFullYear();
+                                const period = `${String(mVal).padStart(2, '0')}/${yVal}`;
+                                const r = await apiFetch('/tax/file-nssf-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nssfFileUrl: complianceResult.nssfFileUrl, masterFileUrl: client.masterFileUrl, period }) });
+                                const d = await r.json();
+                                if (!r.ok) setError(d.message || 'Failed');
+                              } catch { setError('Network error'); } finally { setFilingNssf(false); }
+                            }} className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-blue-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                              {filingNssf ? (
+                                <><RefreshCw className="h-3 w-3 animate-spin" /> Filing...</>
+                              ) : (
+                                <><Globe className="h-3 w-3" /> File NSSF</>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.shaFileUrl && (
+                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">SHA XLSX</span><span className="text-slate-400">{complianceResult.shaFileLabel}</span></div>
+                          <div className="flex items-center gap-2">
+                            <a href={complianceResult.shaFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
+                            <button onClick={() => setStatusMessage('SHA auto-filing will be available in a future update.')} className="inline-flex items-center gap-1 rounded bg-purple-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-purple-700 transition"><Globe className="h-3 w-3" /> File SHA</button>
+                          </div>
+                        </div>
+                      )}
+                      {complianceResult.summaryAmounts && (
+                        <div className="mt-2 rounded-lg bg-slate-100 px-3 py-1.5 text-[10px] text-slate-600">
+                          Summary: PAYE {Number(complianceResult.summaryAmounts.payeAmount).toLocaleString()} | NITA {Number(complianceResult.summaryAmounts.nitaAmount).toLocaleString()} | AHL {Number(complianceResult.summaryAmounts.housingLevyAmount).toLocaleString()} | NSSF {Number(complianceResult.summaryAmounts.nssfAmount).toLocaleString()} | SHA {Number(complianceResult.summaryAmounts.shaAmount).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {runEntries.length > 0 && (
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -3483,97 +3988,6 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       Total Net: KES {runEntries.reduce((s: number, e: any) => s + Number(e.netPay), 0).toLocaleString()}
                     </span>
                   </div>
-                </div>
-              )}
-
-              {/* Compliance File Generation */}
-              {runEntries.length > 0 && (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Compliance Files</h4>
-                    <button
-                      disabled={generatingCompliance}
-                      onClick={async () => {
-                        if (!selectedRun) return;
-                        setGeneratingCompliance(true);
-                        setError(null);
-                        try {
-                          const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/generate-compliance`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }) });
-                          const data = await r.json();
-                          if (r.ok) { setComplianceResult(data); setStatusMessage('Compliance files generated'); onGenerateCompliance?.(client, data); }
-                          else setError(data.message || 'Failed');
-                        } catch { setError('Network error'); }
-                        finally { setGeneratingCompliance(false); }
-                      }}
-                      className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
-                    >
-                      {generatingCompliance ? 'Generating...' : 'Generate Compliance Files'}
-                    </button>
-                  </div>
-                  {complianceResult && (
-                    <div className="space-y-2">
-                      {complianceResult.payeZipUrl && (
-                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                          <div className="flex items-center gap-2 text-xs">
-                            <FileText className="h-3.5 w-3.5 text-slate-400" />
-                            <span className="font-medium text-slate-900">PAYE ZIP</span>
-                            <span className="text-slate-400">{complianceResult.payeZipLabel}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <a href={complianceResult.payeZipUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
-                            <button onClick={async () => {
-                              try {
-                                const parts = selectedRun?.period?.split('-') || [];
-                                const y = parseInt(parts[0], 10); const m = parseInt(parts[1], 10);
-                                const mm = String(isNaN(m) ? new Date().getMonth() + 1 : m).padStart(2, '0');
-                                const yyyy = String(isNaN(y) ? new Date().getFullYear() : y);
-                                const lastDay = new Date(isNaN(y) ? new Date().getFullYear() : y, isNaN(m) ? new Date().getMonth() + 1 : m, 0).getDate();
-                                const payload = { kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '1234', periodFrom: `${yyyy}-${mm}-01`, periodTo: `${yyyy}-${mm}-${String(lastDay).padStart(2, '0')}`, taxObligationType: 'paye', payeZipUrl: complianceResult.payeZipUrl, ownsRentalProperty: false };
-                                const r = await apiFetch('/tax/file-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                                const d = await r.json();
-                                if (r.ok) setStatusMessage('PAYE filing job queued.');
-                                else setError(d.message || 'Failed');
-                              } catch { setError('Network error'); }
-                            }} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700 transition"><Globe className="h-3 w-3" /> File PAYE</button>
-                          </div>
-                        </div>
-                      )}
-                      {complianceResult.nssfFileUrl && (
-                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">NSSF XLSX</span><span className="text-slate-400">{complianceResult.nssfFileLabel}</span></div>
-                          <div className="flex items-center gap-2">
-                            <a href={complianceResult.nssfFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
-                            <button onClick={async () => {
-                              try {
-                                const parts = selectedRun?.period?.split('-') || [];
-                                const mVal = parseInt(parts[1], 10) || (new Date().getMonth() + 1);
-                                const yVal = parseInt(parts[0], 10) || new Date().getFullYear();
-                                const period = `${String(mVal).padStart(2, '0')}/${yVal}`;
-                                const r = await apiFetch('/tax/file-nssf-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nssfFileUrl: complianceResult.nssfFileUrl, masterFileUrl: client.masterFileUrl, period }) });
-                                const d = await r.json();
-                                if (r.ok) setStatusMessage('NSSF filing job queued.');
-                                else setError(d.message || 'Failed');
-                              } catch { setError('Network error'); }
-                            }} className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-blue-700 transition"><Globe className="h-3 w-3" /> File NSSF</button>
-                          </div>
-                        </div>
-                      )}
-                      {complianceResult.shaFileUrl && (
-                        <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                          <div className="flex items-center gap-2 text-xs"><FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" /><span className="font-medium text-slate-900">SHA XLSX</span><span className="text-slate-400">{complianceResult.shaFileLabel}</span></div>
-                          <div className="flex items-center gap-2">
-                            <a href={complianceResult.shaFileUrl} download className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"><Download className="h-3 w-3" /> Download</a>
-                            <button onClick={() => setStatusMessage('SHA auto-filing will be available in a future update.')} className="inline-flex items-center gap-1 rounded bg-purple-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-purple-700 transition"><Globe className="h-3 w-3" /> File SHA</button>
-                          </div>
-                        </div>
-                      )}
-                      {complianceResult.summaryAmounts && (
-                        <div className="mt-2 rounded-lg bg-slate-100 px-3 py-1.5 text-[10px] text-slate-600">
-                          Summary: PAYE {Number(complianceResult.summaryAmounts.payeAmount).toLocaleString()} | NITA {Number(complianceResult.summaryAmounts.nitaAmount).toLocaleString()} | AHL {Number(complianceResult.summaryAmounts.housingLevyAmount).toLocaleString()} | NSSF {Number(complianceResult.summaryAmounts.nssfAmount).toLocaleString()} | SHA {Number(complianceResult.summaryAmounts.shaAmount).toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </>
@@ -3971,6 +4385,33 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   />
                 </div>
                 <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Bonus Pay (KES)</label>
+                  <input
+                    type="number"
+                    value={employeeForm.bonusPay}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, bonusPay: parseFloat(e.target.value) || 0 }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Std Check-In</label>
+                  <input
+                    type="time"
+                    value={employeeForm.standardCheckIn || '08:00'}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, standardCheckIn: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Std Check-Out</label>
+                  <input
+                    type="time"
+                    value={employeeForm.standardCheckOut || '17:00'}
+                    onChange={e => setEmployeeForm((f: any) => ({ ...f, standardCheckOut: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                </div>
+                <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Role</label>
                   <select
                     value={employeeForm.role || 'employee'}
@@ -4008,6 +4449,114 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
               >
                 {editingEmployee ? 'Update' : 'Create'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Attendance Approval Modal */}
+      {showAttendanceApprovalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-auto rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <h3 className="text-sm font-bold text-slate-900">Review Attendance Data — {attendanceApprovalPeriod}</h3>
+              <button onClick={() => setShowAttendanceApprovalModal(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-6">
+              {loadingAttendanceApproval ? (
+                <div className="flex items-center justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>
+              ) : attendanceApprovalData.length === 0 ? (
+                <p className="text-sm text-slate-500 text-center py-8">No attendance data found for this period.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Employee</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Absent Days</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">Late Hours</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">OT Hours</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">OT Rate</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">OT Multiplier</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500 text-right">OT Amount</th>
+                        <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {attendanceApprovalData.map((emp: any) => (
+                        <tr key={emp.employeeId} className="hover:bg-slate-50/50 transition">
+                          <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" step="0.5" value={emp.absentDays} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceApprovalData(prev => prev.map(e => e.employeeId === emp.employeeId ? { ...e, absentDays: val } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" step="0.5" value={emp.lateHours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceApprovalData(prev => prev.map(e => e.employeeId === emp.employeeId ? { ...e, lateHours: val } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" step="0.5" value={emp.overtimeHours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceApprovalData(prev => prev.map(e => e.employeeId === emp.employeeId ? { ...e, overtimeHours: val } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" value={emp.overtimeRate} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceApprovalData(prev => prev.map(e => e.employeeId === emp.employeeId ? { ...e, overtimeRate: val } : e)); }} className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" step="0.5" value={emp.overtimeMultiplier} onChange={e => { const val = parseFloat(e.target.value) || 1; setAttendanceApprovalData(prev => prev.map(e => e.employeeId === emp.employeeId ? { ...e, overtimeMultiplier: val } : e)); }} className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                            {(emp.overtimeHours * emp.overtimeRate * emp.overtimeMultiplier).toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2">
+                            {emp.approved ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Approved</span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Draft</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
+              <p className="text-[10px] text-slate-400">{attendanceApprovalData.length} employees</p>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setShowAttendanceApprovalModal(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">Cancel</button>
+                <button
+                  disabled={savingAttendanceApproval || attendanceApprovalData.length === 0}
+                  onClick={async () => {
+                    setSavingAttendanceApproval(true);
+                    try {
+                      const r = await apiFetch(`/clients/${client.id}/attendance-payroll-approve`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          period: attendanceApprovalPeriod,
+                          employees: attendanceApprovalData.map(e => ({
+                            employeeId: e.employeeId,
+                            employeeName: e.employeeName,
+                            absentDays: e.absentDays,
+                            lateHours: e.lateHours,
+                            overtimeHours: e.overtimeHours,
+                            overtimeRate: e.overtimeRate,
+                            overtimeMultiplier: e.overtimeMultiplier,
+                            overtimeAmount: e.overtimeHours * e.overtimeRate * e.overtimeMultiplier,
+                          })),
+                          approvedBy: 'admin',
+                        }),
+                      });
+                      if (r.ok) {
+                        setStatusMessage('Attendance data approved and saved.');
+                        setShowAttendanceApprovalModal(false);
+                      } else { setError('Failed to save approval'); }
+                    } catch { setError('Network error'); }
+                    finally { setSavingAttendanceApproval(false); }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                >
+                  {savingAttendanceApproval ? 'Saving...' : 'Approve & Save'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -255,7 +255,7 @@ export default function JobTracker({
                             {receiptUrl && (
                                 <a
                                     href={receiptUrl}
-                                    target="_blank"
+                                    download
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500/20"
                                 >
@@ -266,7 +266,7 @@ export default function JobTracker({
                             {prnUrl && (
                                 <a
                                     href={prnUrl}
-                                    target="_blank"
+                                    download
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-bold text-amber-400 transition hover:bg-amber-500/20"
                                 >
@@ -277,7 +277,7 @@ export default function JobTracker({
                             {generatedZipUrl && (
                                 <a
                                     href={generatedZipUrl}
-                                    target="_blank"
+                                    download
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs font-bold text-blue-400 transition hover:bg-blue-500/20"
                                 >

@@ -18,6 +18,10 @@ const ALL_OBLIGATIONS = [
     { key: 'mri', label: 'MRI' },
     { key: 'eLevy', label: 'E-Levy' },
     { key: 'dst', label: 'DST' },
+    { key: 'incomeTaxResidentIndividual', label: 'IT - Resident Individual' },
+    { key: 'incomeTaxNonResidentIndividual', label: 'IT - Non-Resident Individual' },
+    { key: 'incomeTaxCompany', label: 'IT - Company' },
+    { key: 'exciseDuty', label: 'Excise Duty' },
 ];
 
 export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollView }: CompanyDetailsProps) {
@@ -181,6 +185,38 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                                 />
                             </div>
                         </div>
+                    </div>
+
+                    {/* Company Logo */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <h2 className="text-xl font-bold text-slate-900 mb-4">Company Logo</h2>
+                        <div className="flex items-center gap-4">
+                            {formData.logoUrl ? (
+                                <img src={formData.logoUrl} alt="Company logo" className="h-16 w-16 rounded-lg object-contain border border-slate-200" />
+                            ) : (
+                                <div className="h-16 w-16 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 text-xs">No logo</div>
+                            )}
+                            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-2.5 text-xs font-semibold text-slate-500 hover:border-slate-400 hover:text-slate-700 transition shadow-sm">
+                                <Cloud className="h-4 w-4" />
+                                {formData.logoUrl ? 'Replace Logo' : 'Upload Logo'}
+                                <input type="file" className="hidden" accept="image/png,image/jpeg,image/jpg,image/webp"
+                                    onChange={async (e) => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        const data = new FormData();
+                                        data.append('logo', file);
+                                        try {
+                                            const res = await fetch(`/api/clients/${client.id}/logo`, { method: 'POST', body: data });
+                                            if (res.ok) {
+                                                const d = await res.json();
+                                                setFormData((prev: ClientObligation) => ({ ...prev, logoUrl: d.logoUrl }));
+                                            } else { alert('Failed to upload logo'); }
+                                        } catch { alert('Network error uploading logo'); }
+                                    }}
+                                />
+                            </label>
+                        </div>
+                        <p className="mt-2 text-[10px] text-slate-400">PNG, JPG, or WEBP. Used on payslips and P9 forms.</p>
                     </div>
 
                     {/* Obligations */}

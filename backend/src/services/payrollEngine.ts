@@ -14,6 +14,12 @@ export interface PayrollInput {
     overtimePay?: number;
     attendanceAbsentDays?: number;
     attendanceLateDays?: number;
+    pwd?: string;
+    otherPension?: number;
+    postRetMedical?: number;
+    mortgageInterest?: number;
+    insuranceRelief?: number;
+    bonusPay?: number;
 }
 
 export interface PayrollComputed {
@@ -39,6 +45,9 @@ export interface PayrollComputed {
     overtimePay: number;
     absentDays: number;
     lateDays: number;
+    bonusPay: number;
+    taxableBonus: number;
+    nonTaxableBonus: number;
 }
 
 function roundMoney(amount: number): number {
@@ -106,12 +115,19 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
     const unpaidLeaveDeduction = roundMoney((rawBasicPay / 30) * unpaidLeaveDays);
 
     const overtimePay = roundMoney(input.overtimePay || 0);
+    const rawBonusPay = input.bonusPay || 0;
+    const isLowIncome = rawBasicPay <= 11180;
+    const taxableBonus = isLowIncome ? 0 : roundMoney(rawBonusPay);
+    const nonTaxableBonus = isLowIncome ? roundMoney(rawBonusPay) : 0;
 
     const absentDays = input.attendanceAbsentDays || 0;
-    const lateDays = input.attendanceLateDays || 0;
-    const attendanceDeduction = roundMoney((rawBasicPay / 30) * (absentDays + lateDays * 0.5));
+    const lateHours = input.attendanceLateDays || 0;
+    const dailyRate = payStructure === 'prorated'
+        ? rawBasicPay / Math.max(1, totalDays)
+        : rawBasicPay / 30;
+    const attendanceDeduction = roundMoney(dailyRate * (absentDays + lateHours / 8));
 
-    const grossPay = roundMoney(basicPay + benefits + overtimePay - unpaidLeaveDeduction - attendanceDeduction);
+    const grossPay = roundMoney(basicPay + benefits + overtimePay + taxableBonus - unpaidLeaveDeduction - attendanceDeduction);
 
     const loanDeduction = roundMoney(input.loanDeduction || 0);
 
@@ -127,22 +143,30 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
 
     const otherDeductions = roundMoney(loanDeduction);
 
-    const taxablePay = roundMoney(Math.max(0, grossPay - shaDeduction - nssfDeduction - ahlDeduction));
+    // KRA caps per the official P10_Return template
+    const otherPension = input.otherPension || 0;
+    const nssfPensionCapped = Math.min(nssfDeduction + otherPension, 30000);
+    const postRetMedicalCapped = Math.min(input.postRetMedical || 0, 15000);
+    const mortgageInterestCapped = Math.min(input.mortgageInterest || 0, 30000);
+    const pwdExemption = (input.pwd === 'Yes') ? 12500 : 0;
+
+    const taxablePay = roundMoney(Math.max(0, grossPay - shaDeduction - nssfPensionCapped - postRetMedicalCapped - mortgageInterestCapped - ahlDeduction - pwdExemption));
 
     const personalRelief = 2400;
+    const insuranceRelief = Math.min(input.insuranceRelief || 0, 5000);
 
-    const payeTax = roundMoney(Math.max(
-        0,
+    const grossPayeTax = roundMoney(
         Math.max(0, taxablePay * 0.1)
             + Math.max(0, (taxablePay - 24000) * 0.15)
             + Math.max(0, (taxablePay - 32333) * 0.05)
             + Math.max(0, (taxablePay - 500000) * 0.025)
             + Math.max(0, (taxablePay - 800000) * 0.025)
-            - personalRelief
-    ));
+    );
+
+    const payeTax = roundMoney(Math.max(0, grossPayeTax - personalRelief - insuranceRelief));
 
     const totalDeductions = roundMoney(shaDeduction + nssfDeduction + ahlDeduction + otherDeductions + payeTax);
-    const netPay = roundMoney(grossPay - totalDeductions);
+    const netPay = roundMoney(grossPay - totalDeductions + nonTaxableBonus);
 
     return {
         employeeId: input.employeeId,
@@ -166,6 +190,9 @@ export function computePayrollEntry(input: PayrollInput, period: string, prorate
         daysWorked,
         overtimePay,
         absentDays,
-        lateDays,
+        lateDays: lateHours,
+        bonusPay: taxableBonus + nonTaxableBonus,
+        taxableBonus,
+        nonTaxableBonus,
     };
 }

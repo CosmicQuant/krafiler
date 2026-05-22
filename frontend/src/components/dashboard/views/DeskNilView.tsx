@@ -1,4 +1,4 @@
-import { Download } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import { ClientObligation, ActiveDashboardJob } from '../../../types';
 import { isTerminalFilingJob } from '../../../utils/dashboardUtils';
 import { getPreviousYearIsoRange } from '../../../utils/taxPeriods';
@@ -11,6 +11,7 @@ const TAX_OBLIGATION_OPTIONS = [
   { value: 'paye', label: 'PAYE (Nil)', filingMode: 'nil' },
   { value: 'turnover_tax', label: 'Turnover Tax (Nil)', filingMode: 'nil' },
   { value: 'monthly_rental_income', label: 'Monthly Rental Income (Nil)', filingMode: 'nil' },
+  { value: 'excise_duty', label: 'Excise Duty (Nil)', filingMode: 'nil' },
 ];
 
 interface DeskNilViewProps {
@@ -188,13 +189,22 @@ export function DeskNilView({
                               : 'bg-[#ff0613] hover:bg-[#d80000] text-white shadow-sm'
                           }`}
                         >
-                          {isProcessing ? `Processing (${displayJob.progress}%)` : isCompleted ? 'File Again' : 'File Nil'}
+                          {isProcessing ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              <span>Processing ({displayJob.progress}%)</span>
+                            </>
+                          ) : isCompleted ? (
+                            'File Again'
+                          ) : (
+                            'File Nil'
+                          )}
                         </button>
 
                         {isCompleted && displayJob.receiptUrl && (
                           <a
                             href={displayJob.receiptUrl}
-                            target="_blank"
+                            download
                             rel="noreferrer"
                             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 transition"
                           >

@@ -5,6 +5,7 @@ import { logAudit } from '../services/auditService';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
+import { PDFDocument as PDFLibDocument, rgb, StandardFonts } from 'pdf-lib';
 
 const router = Router();
 
@@ -36,7 +37,7 @@ router.post('/:clientId/employees', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, standardCheckOut } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
@@ -64,6 +65,24 @@ router.post('/:clientId/employees', async (req, res) => {
                 basicPay: basicPay || 0,
                 role: role || 'employee',
                 standardCheckOut: standardCheckOut || '17:00',
+                standardCheckIn: standardCheckIn || '08:00',
+                identityType: identityType || 'National ID',
+                residentialStatus: residentialStatus || 'Resident',
+                typeOfEmployee: typeOfEmployee || 'Primary Employee',
+                pwd: pwd || 'No',
+                exemptionCert: exemptionCert || '',
+                carBenefit: carBenefit || 0,
+                mealsBenefit: mealsBenefit || 0,
+                nonCashBenefits: nonCashBenefits || 0,
+                typeOfHousing: typeOfHousing || 'Benefit not given',
+                housingBenefit: housingBenefit || 0,
+                otherBenefits: otherBenefits || 0,
+                otherPension: otherPension || 0,
+                postRetMedical: postRetMedical || 0,
+                mortgageInterest: mortgageInterest || 0,
+                insuranceRelief: insuranceRelief || 0,
+                payStructure: payStructure || 'fixed',
+                bonusPay: bonusPay || 0,
                 createdAt: now,
                 updatedAt: now,
             })
@@ -109,7 +128,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Employee not found' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId, standardCheckOut } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay } = req.body;
 
         await db
             .updateTable('employees')
@@ -135,6 +154,24 @@ router.put('/:clientId/employees/:id', async (req, res) => {
                 basicPay: basicPay !== undefined ? basicPay : existing.basicPay,
                 role: role !== undefined ? role : existing.role,
                 standardCheckOut: standardCheckOut !== undefined ? (standardCheckOut || '17:00') : existing.standardCheckOut,
+                standardCheckIn: standardCheckIn !== undefined ? (standardCheckIn || '08:00') : existing.standardCheckIn,
+                identityType: identityType !== undefined ? identityType : existing.identityType,
+                residentialStatus: residentialStatus !== undefined ? residentialStatus : existing.residentialStatus,
+                typeOfEmployee: typeOfEmployee !== undefined ? typeOfEmployee : existing.typeOfEmployee,
+                pwd: pwd !== undefined ? pwd : existing.pwd,
+                exemptionCert: exemptionCert !== undefined ? exemptionCert : existing.exemptionCert,
+                carBenefit: carBenefit !== undefined ? carBenefit : existing.carBenefit,
+                mealsBenefit: mealsBenefit !== undefined ? mealsBenefit : existing.mealsBenefit,
+                nonCashBenefits: nonCashBenefits !== undefined ? nonCashBenefits : existing.nonCashBenefits,
+                typeOfHousing: typeOfHousing !== undefined ? typeOfHousing : existing.typeOfHousing,
+                housingBenefit: housingBenefit !== undefined ? housingBenefit : existing.housingBenefit,
+                otherBenefits: otherBenefits !== undefined ? otherBenefits : existing.otherBenefits,
+                otherPension: otherPension !== undefined ? otherPension : existing.otherPension,
+                postRetMedical: postRetMedical !== undefined ? postRetMedical : existing.postRetMedical,
+                mortgageInterest: mortgageInterest !== undefined ? mortgageInterest : existing.mortgageInterest,
+                insuranceRelief: insuranceRelief !== undefined ? insuranceRelief : existing.insuranceRelief,
+                payStructure: payStructure !== undefined ? payStructure : existing.payStructure,
+                bonusPay: bonusPay !== undefined ? bonusPay : existing.bonusPay,
                 updatedAt: new Date().toISOString(),
             })
             .where('id', '=', id)
@@ -269,6 +306,24 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     basicPay: parseFloat(String(emp['Total Cash Pay (A)'] ?? '0')) || 0,
                     role: 'employee',
                     standardCheckOut: '17:00',
+                    standardCheckIn: '08:00',
+                    identityType: 'National ID',
+                    residentialStatus: 'Resident',
+                    typeOfEmployee: 'Primary Employee',
+                    pwd: 'No',
+                    exemptionCert: '',
+                    carBenefit: 0,
+                    mealsBenefit: 0,
+                    nonCashBenefits: 0,
+                    typeOfHousing: 'Benefit not given',
+                    housingBenefit: 0,
+                    otherBenefits: 0,
+                    otherPension: 0,
+                    postRetMedical: 0,
+                    mortgageInterest: 0,
+                    insuranceRelief: 0,
+                    payStructure: 'fixed',
+                    bonusPay: 0,
                     createdAt: now,
                     updatedAt: now,
                 })
@@ -366,6 +421,21 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req, res) => {
         const pageWidth = doc.page.width - 80;
         const leftMargin = 40;
         let y = leftMargin;
+
+        // ── Logo ──
+        if (client?.logoUrl) {
+            try {
+                const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+                if (fs.existsSync(logoPath)) {
+                    doc.image(logoPath, leftMargin, y, { width: 70 });
+                    y += 80;
+                } else {
+                    console.warn('Payslip logo not found at:', logoPath);
+                }
+            } catch (e: any) {
+                console.warn('Payslip logo error:', e.message);
+            }
+        }
 
         // ── Header ──
         doc.fontSize(16).font('Helvetica-Bold').text(companyName, leftMargin, y);
@@ -485,6 +555,188 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req, res) => {
 
 // ─── P9 Generation (Annual Tax Deduction Card) ────────────────────────────────
 
+function generateP9WithPdfKit(res: any, data: any) {
+    const {
+        companyName, companyPin, client, employeeName, kraPin, idNo, nssfNo, shaNo, payrollNo,
+        department, jobTitle, employmentType, grossPay, totalCashPay, carBenefit, meals, nonCash,
+        housingBenefit, otherBenefits, shaDed, nssfDed, otherPension, postRetMedical, mortgage,
+        ahl, taxablePay, personalRelief, insuranceRelief, payeTax, taxYear, periodLabel,
+    } = data;
+
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="P9_${employeeName.replace(/\s+/g, '_')}_${taxYear}.pdf"`);
+    doc.pipe(res);
+
+    const pageWidth = doc.page.width - 80;
+    const leftMargin = 40;
+    let y = leftMargin;
+
+    if (client?.logoUrl) {
+        try {
+            const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+            doc.image(logoPath, leftMargin, y, { fit: [80, 60], align: 'center' });
+            y += 70;
+        } catch { /* ignore */ }
+    }
+
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#000');
+    doc.text('P9 - ANNUAL TAX DEDUCTION CARD', leftMargin, y, { align: 'center', width: pageWidth });
+    y += 6;
+    doc.fontSize(8).font('Helvetica').fillColor('#666');
+    doc.text(`Tax Year: ${taxYear}  |  Period: ${periodLabel}`, leftMargin, y, { align: 'center', width: pageWidth });
+    y += 24;
+
+    doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
+    y += 8;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
+    doc.text('SECTION A: EMPLOYER DETAILS', leftMargin, y);
+    y += 16;
+
+    const empSectionY = y;
+    doc.fontSize(8).font('Helvetica').fillColor('#333');
+    doc.text('Employer Name:', leftMargin, y, { width: 120 });
+    doc.font('Helvetica-Bold').text(companyName, leftMargin + 130, y, { width: 250 });
+    y += 13;
+    doc.font('Helvetica').fillColor('#333');
+    doc.text('Employer KRA PIN:', leftMargin, y, { width: 120 });
+    doc.font('Helvetica-Bold').text(companyPin, leftMargin + 130, y, { width: 250 });
+    y += 13;
+    doc.font('Helvetica').fillColor('#333');
+    doc.text('Sector:', leftMargin, y, { width: 120 });
+    doc.font('Helvetica-Bold').text(client.sector || '-', leftMargin + 130, y, { width: 250 });
+
+    y = Math.max(y + 20, empSectionY + 50);
+    doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
+    y += 8;
+
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
+    doc.text('SECTION B: EMPLOYEE DETAILS', leftMargin, y);
+    y += 16;
+
+    const empDetails = [
+        ['Employee Name:', employeeName, 'Payroll No:', payrollNo],
+        ['KRA PIN:', kraPin, 'ID Number:', idNo],
+        ['NSSF No:', nssfNo, 'SHA No:', shaNo],
+        ['Department:', department, 'Job Title:', jobTitle],
+        ['Employment Type:', employmentType, '', ''],
+    ];
+
+    empDetails.forEach((row: any) => {
+        doc.fontSize(8).font('Helvetica').fillColor('#333');
+        doc.text(row[0], leftMargin, y, { width: 100 });
+        doc.font('Helvetica-Bold').text(row[1], leftMargin + 95, y, { width: 140 });
+        doc.font('Helvetica').text(row[2], leftMargin + 250, y, { width: 80 });
+        doc.font('Helvetica-Bold').text(row[3], leftMargin + 330, y, { width: 100 });
+        y += 13;
+    });
+
+    y += 8;
+    doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
+    y += 12;
+
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
+    doc.text('SECTION C: MONTHLY EARNINGS & DEDUCTIONS', leftMargin, y);
+    y += 16;
+
+    const colX = [leftMargin, leftMargin + 55, leftMargin + 125, leftMargin + 195, leftMargin + 260, leftMargin + 325, leftMargin + 395];
+    const colW = colX.map((_: any, i: number) => i < colX.length - 1 ? colX[i + 1] - colX[i] - 2 : 100);
+    const headers = ['Month', 'Cash Pay', 'Benefits', 'Gross Pay', 'NSSF', 'PAYE', 'Net Pay'];
+
+    doc.fontSize(7).font('Helvetica-Bold').fillColor('#fff');
+    doc.rect(leftMargin, y, pageWidth, 14).fill('#1e293b');
+    headers.forEach((h: string, i: number) => {
+        doc.text(h, colX[i] + 2, y + 3, { width: colW[i], align: i === 0 ? 'left' : 'right' });
+    });
+    y += 16;
+
+    const netPay = grossPay - shaDed - nssfDed - ahl - payeTax - otherPension - postRetMedical;
+    const benefits = carBenefit + meals + nonCash + housingBenefit + otherBenefits;
+
+    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    let rowY = y;
+    monthLabels.forEach((ml: string, mi: number) => {
+        const isCurrent = ml === periodLabel.split('/')[0];
+        if (mi % 2 === 0) {
+            doc.rect(leftMargin, rowY, pageWidth, 13).fill('#f8f8f8');
+        }
+        doc.fontSize(7).font('Helvetica').fillColor('#333');
+        doc.text(ml, colX[0] + 2, rowY + 3, { width: colW[0] });
+
+        if (isCurrent) {
+            [totalCashPay, benefits, grossPay, nssfDed, payeTax, netPay].forEach((val: any, vi: number) => {
+                doc.fontSize(7).font('Helvetica').fillColor('#333');
+                doc.text(formatMoney(typeof val === 'number' ? val : 0), colX[vi + 1] + 2, rowY + 3, { width: colW[vi + 1], align: 'right' });
+            });
+        } else {
+            for (let vi = 1; vi < headers.length; vi++) {
+                doc.fontSize(7).font('Helvetica').fillColor('#ccc');
+                doc.text('0.00', colX[vi] + 2, rowY + 3, { width: colW[vi], align: 'right' });
+            }
+        }
+        rowY += 13;
+    });
+
+    y = rowY + 4;
+    doc.rect(leftMargin, y, pageWidth, 16).fill('#1e293b');
+    doc.fontSize(8).font('Helvetica-Bold').fillColor('#fff');
+    doc.text('ANNUAL TOTALS', colX[0] + 2, y + 4, { width: colW[0] });
+    [totalCashPay, benefits, grossPay, nssfDed, payeTax, netPay].forEach((val: any, vi: number) => {
+        doc.text(formatMoney(val), colX[vi + 1] + 2, y + 4, { width: colW[vi + 1], align: 'right' });
+    });
+    y += 24;
+
+    doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
+    y += 8;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
+    doc.text('SECTION D: ANNUAL SUMMARY', leftMargin, y);
+    y += 16;
+
+    const summaryItems = [
+        ['Total Cash Pay', formatMoney(totalCashPay)],
+        ['Total Benefits', formatMoney(benefits)],
+        ['Total Gross Pay', formatMoney(grossPay)],
+        ['NSSF Contributions', formatMoney(nssfDed)],
+        ['SHIF Contributions', formatMoney(shaDed)],
+        ['Housing Levy', formatMoney(ahl)],
+        ['PAYE Tax Deducted', formatMoney(payeTax)],
+        ['Personal Relief', formatMoney(personalRelief)],
+        ['Insurance Relief', formatMoney(insuranceRelief)],
+        ['Net Pay', formatMoney(netPay)],
+    ];
+
+    const summaryCol1X = leftMargin;
+    const summaryCol2X = leftMargin + 320;
+
+    doc.fontSize(8).font('Helvetica').fillColor('#333');
+    summaryItems.forEach(([label, amount]: any, i: number) => {
+        const isTotal = i === summaryItems.length - 1;
+        if (isTotal) {
+            doc.rect(summaryCol1X, y - 2, pageWidth - summaryCol1X + leftMargin, 18).fill('#1e293b');
+            doc.fontSize(9).font('Helvetica-Bold').fillColor('#fff');
+        }
+        doc.text(label as string, summaryCol1X, y + 2);
+        doc.text(amount as string, summaryCol2X, y + 2, { align: 'right', width: 100 });
+        y += isTotal ? 22 : 14;
+    });
+
+    y += 16;
+    doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
+    y += 8;
+    doc.fontSize(8).font('Helvetica').fillColor('#666');
+    doc.text('I certify that the information provided in this P9 form is true and correct.', leftMargin, y, { align: 'center', width: pageWidth });
+    y += 16;
+    doc.fontSize(8).font('Helvetica').fillColor('#333');
+    doc.text('Employer\'s Signature: _______________________', leftMargin, y);
+    doc.text('Date: _______________________', leftMargin + 300, y);
+    y += 20;
+    doc.fontSize(7).font('Helvetica').fillColor('#999');
+    doc.text('This is a computer-generated document. No signature required.', leftMargin, y, { align: 'center', width: pageWidth });
+
+    doc.end();
+}
+
 // GET /api/clients/:clientId/p9/:employeeKraPin?period=MMYYYY
 router.get('/:clientId/p9/:employeeKraPin', async (req, res) => {
     try {
@@ -557,189 +809,180 @@ router.get('/:clientId/p9/:employeeKraPin', async (req, res) => {
         const insuranceRelief = parseFloat(String(emp['Amount of Insurance Relief (Q)'] || '0')) || 0;
         const payeTax = parseFloat(String(emp['PAYE Tax (Ksh) (R)'] || '0')) || 0;
 
-        // Generate P9 PDF
-        const doc = new PDFDocument({ margin: 40, size: 'A4' });
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="P9_${employeeName.replace(/\s+/g, '_')}_${taxYear}.pdf"`);
-        doc.pipe(res);
+        // Generate P9 PDF using template
+        const templatePath = path.resolve(__dirname, '..', '..', '..', 'P9-FORM-Template-2025.pdf');
+        const templateBytes = fs.readFileSync(templatePath);
+        const pdfDoc = await PDFLibDocument.load(templateBytes);
+        const pages = pdfDoc.getPages();
+        const page = pages[0];
+        const { width, height } = page.getSize();
 
-        const pageWidth = doc.page.width - 80;
-        const leftMargin = 40;
-        let y = leftMargin;
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        const black = rgb(0, 0, 0);
+        const darkGray = rgb(0.2, 0.2, 0.2);
 
-        // ── Title ──
-        doc.fontSize(16).font('Helvetica-Bold').fillColor('#000');
-        doc.text('P9 - ANNUAL TAX DEDUCTION CARD', leftMargin, y, { align: 'center', width: pageWidth });
-        y += 6;
-        doc.fontSize(8).font('Helvetica').fillColor('#666');
-        doc.text(`Tax Year: ${taxYear}  |  Period: ${periodLabel}`, leftMargin, y, { align: 'center', width: pageWidth });
-        y += 24;
+        const drawText = (text: string, x: number, y: number, opts?: { size?: number; bold?: boolean; color?: any; align?: 'left' | 'right' }) => {
+            const f = opts?.bold ? fontBold : font;
+            const s = opts?.size || 8;
+            const c = opts?.color || black;
+            const txt = String(text ?? '');
+            if (opts?.align === 'right') {
+                const tw = f.widthOfTextAtSize(txt, s);
+                page.drawText(txt, { x: x - tw, y, size: s, font: f, color: c });
+            } else {
+                page.drawText(txt, { x, y, size: s, font: f, color: c });
+            }
+        };
 
-        // ── Section A: Employer ──
-        doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
-        y += 8;
-        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
-        doc.text('SECTION A: EMPLOYER DETAILS', leftMargin, y);
-        y += 16;
+        const fmt = (n: number) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
+        const z = (v: any) => (v === undefined || v === null || v === '' || Number(v) === 0 ? '0.00' : fmt(Number(v)));
 
-        const empSectionY = y;
-        doc.fontSize(8).font('Helvetica').fillColor('#333');
-        doc.text('Employer Name:', leftMargin, y, { width: 120 });
-        doc.font('Helvetica-Bold').text(companyName, leftMargin + 130, y, { width: 250 });
-        y += 13;
-        doc.font('Helvetica').fillColor('#333');
-        doc.text('Employer KRA PIN:', leftMargin, y, { width: 120 });
-        doc.font('Helvetica-Bold').text(companyPin, leftMargin + 130, y, { width: 250 });
-        y += 13;
-        doc.font('Helvetica').fillColor('#333');
-        doc.text('Sector:', leftMargin, y, { width: 120 });
-        doc.font('Helvetica-Bold').text(client.sector || '-', leftMargin + 130, y, { width: 250 });
+        // ── Overlay Logo ──
+        if (client?.logoUrl) {
+            try {
+                const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+                const logoBytes = fs.readFileSync(logoPath);
+                const ext = path.extname(logoPath).toLowerCase();
+                let logoImg;
+                if (ext === '.png') logoImg = await pdfDoc.embedPng(logoBytes);
+                else if (ext === '.jpg' || ext === '.jpeg') logoImg = await pdfDoc.embedJpg(logoBytes);
+                else logoImg = await pdfDoc.embedPng(logoBytes);
+                page.drawImage(logoImg, { x: 40, y: height - 90, width: 80, height: 60 });
+            } catch { /* ignore missing logo */ }
+        }
 
-        y = Math.max(y + 20, empSectionY + 50);
-        doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
-        y += 8;
+        // ── Header Info ──
+        drawText(`Tax Year: ${taxYear}  |  Period: ${periodLabel}`, width / 2 - 80, height - 30, { size: 8, color: darkGray });
+
+        // ── Section A: Employer (approximate positions for standard KRA P9) ──
+        drawText(companyName, 160, height - 140, { bold: true });
+        drawText(companyPin, 160, height - 155, { bold: true });
+        drawText(client.sector || '-', 160, height - 170);
 
         // ── Section B: Employee ──
-        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
-        doc.text('SECTION B: EMPLOYEE DETAILS', leftMargin, y);
-        y += 16;
+        drawText(employeeName, 160, height - 205, { bold: true });
+        drawText(kraPin, 420, height - 205, { bold: true });
+        drawText(idNo, 160, height - 220, { bold: true });
+        drawText(nssfNo, 420, height - 220, { bold: true });
+        drawText(shaNo, 160, height - 235, { bold: true });
+        drawText(payrollNo, 420, height - 235, { bold: true });
+        drawText(department, 160, height - 250);
+        drawText(jobTitle, 420, height - 250);
+        drawText(employmentType, 160, height - 265);
 
-        const empDetails = [
-            ['Employee Name:', employeeName, 'Payroll No:', payrollNo],
-            ['KRA PIN:', kraPin, 'ID Number:', idNo],
-            ['NSSF No:', nssfNo, 'SHA No:', shaNo],
-            ['Department:', department, 'Job Title:', jobTitle],
-            ['Employment Type:', employmentType, '', ''],
-        ];
-
-        empDetails.forEach(row => {
-            doc.fontSize(8).font('Helvetica').fillColor('#333');
-            doc.text(row[0], leftMargin, y, { width: 100 });
-            doc.font('Helvetica-Bold').text(row[1], leftMargin + 95, y, { width: 140 });
-            doc.font('Helvetica').text(row[2], leftMargin + 250, y, { width: 80 });
-            doc.font('Helvetica-Bold').text(row[3], leftMargin + 330, y, { width: 100 });
-            y += 13;
-        });
-
-        y += 8;
-        doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
-        y += 12;
-
-        // ── Section C: Monthly Earnings Breakdown ──
-        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
-        doc.text('SECTION C: MONTHLY EARNINGS & DEDUCTIONS', leftMargin, y);
-        y += 16;
-
-        // Table header
-        const colX = [leftMargin, leftMargin + 55, leftMargin + 125, leftMargin + 195, leftMargin + 260, leftMargin + 325, leftMargin + 395];
-        const colW = colX.map((_, i) => i < colX.length - 1 ? colX[i + 1] - colX[i] - 2 : 100);
-        const headers = ['Month', 'Cash Pay', 'Benefits', 'Gross Pay', 'NSSF', 'PAYE', 'Net Pay'];
-
-        doc.fontSize(7).font('Helvetica-Bold').fillColor('#fff');
-        doc.rect(leftMargin, y, pageWidth, 14).fill('#1e293b');
-        headers.forEach((h, i) => {
-            doc.text(h, colX[i] + 2, y + 3, { width: colW[i], align: i === 0 ? 'left' : 'right' });
-        });
-        y += 16;
-
-        // Single month data
+        // ── Section C: Monthly Table ──
         const netPay = grossPay - shaDed - nssfDed - ahl - payeTax - otherPension - postRetMedical;
         const benefits = carBenefit + meals + nonCash + housingBenefit + otherBenefits;
-
         const monthLabel = periodLabel;
-        const monthData = [monthLabel, totalCashPay, benefits, grossPay, nssfDed, payeTax, netPay];
-        const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthNum = period ? parseInt(period.substring(0, 2)) : new Date().getMonth() + 1;
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-        let rowY = y;
-        monthLabels.forEach((ml, mi) => {
-            const isCurrent = ml === monthLabel.split('/')[0] || (period && parseInt(period.substring(0, 2)) === mi + 1);
-            if (mi % 2 === 0) {
-                doc.rect(leftMargin, rowY, pageWidth, 13).fill('#f8f8f8');
-            }
-            doc.fontSize(7).font('Helvetica').fillColor('#333');
-            doc.text(ml, colX[0] + 2, rowY + 3, { width: colW[0] });
+        // Approximate row positions for monthly table (starting around y=420 on standard P9)
+        const tableStartY = height - 380;
+        const rowHeight = 18;
+        const colPositions = [45, 130, 210, 290, 370, 450, 530];
+
+        for (let mi = 0; mi < 12; mi++) {
+            const rowY = tableStartY - (mi * rowHeight);
+            const isCurrent = mi + 1 === monthNum;
+
+            // Month label
+            drawText(monthNames[mi], colPositions[0], rowY);
 
             if (isCurrent) {
-                monthData.forEach((val, vi) => {
-                    if (vi === 0) return;
-                    doc.fontSize(7).font('Helvetica').fillColor('#333');
-                    doc.text(formatMoney(typeof val === 'number' ? val : 0), colX[vi] + 2, rowY + 3, { width: colW[vi], align: 'right' });
-                });
+                drawText(z(totalCashPay), colPositions[1], rowY, { align: 'right' });
+                drawText(z(benefits), colPositions[2], rowY, { align: 'right' });
+                drawText(z(grossPay), colPositions[3], rowY, { align: 'right' });
+                drawText(z(nssfDed), colPositions[4], rowY, { align: 'right' });
+                drawText(z(payeTax), colPositions[5], rowY, { align: 'right' });
+                drawText(z(netPay), colPositions[6], rowY, { align: 'right' });
             } else {
-                for (let vi = 1; vi < headers.length; vi++) {
-                    doc.fontSize(7).font('Helvetica').fillColor('#ccc');
-                    doc.text('-', colX[vi] + 2, rowY + 3, { width: colW[vi], align: 'right' });
+                // Fill zero for non-current months as requested
+                for (let ci = 1; ci < colPositions.length; ci++) {
+                    drawText('0.00', colPositions[ci], rowY, { align: 'right', color: rgb(0.7, 0.7, 0.7) });
                 }
             }
-            rowY += 13;
-        });
-
-        y = rowY + 4;
+        }
 
         // Annual totals row
-        doc.rect(leftMargin, y, pageWidth, 16).fill('#1e293b');
-        doc.fontSize(8).font('Helvetica-Bold').fillColor('#fff');
-        doc.text('ANNUAL TOTALS', colX[0] + 2, y + 4, { width: colW[0] });
-        const annualValues = [totalCashPay, benefits, grossPay, nssfDed, payeTax, netPay];
-        annualValues.forEach((val, vi) => {
-            doc.text(formatMoney(val), colX[vi + 1] + 2, y + 4, { width: colW[vi + 1], align: 'right' });
-        });
-        y += 24;
+        const totalY = tableStartY - (12 * rowHeight);
+        drawText('TOTALS', colPositions[0], totalY, { bold: true });
+        drawText(z(totalCashPay), colPositions[1], totalY, { align: 'right', bold: true });
+        drawText(z(benefits), colPositions[2], totalY, { align: 'right', bold: true });
+        drawText(z(grossPay), colPositions[3], totalY, { align: 'right', bold: true });
+        drawText(z(nssfDed), colPositions[4], totalY, { align: 'right', bold: true });
+        drawText(z(payeTax), colPositions[5], totalY, { align: 'right', bold: true });
+        drawText(z(netPay), colPositions[6], totalY, { align: 'right', bold: true });
 
-        // ── Section D: Summary ──
-        doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
-        y += 8;
-        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
-        doc.text('SECTION D: ANNUAL SUMMARY', leftMargin, y);
-        y += 16;
+        // ── Section D: Summary fields (approximate positions) ──
+        const summaryY = height - 650;
+        const summaryCol2 = 480;
+        drawText(z(totalCashPay), summaryCol2, summaryY, { align: 'right' });
+        drawText(z(benefits), summaryCol2, summaryY - 16, { align: 'right' });
+        drawText(z(grossPay), summaryCol2, summaryY - 32, { align: 'right' });
+        drawText(z(nssfDed), summaryCol2, summaryY - 48, { align: 'right' });
+        drawText(z(shaDed), summaryCol2, summaryY - 64, { align: 'right' });
+        drawText(z(ahl), summaryCol2, summaryY - 80, { align: 'right' });
+        drawText(z(payeTax), summaryCol2, summaryY - 96, { align: 'right' });
+        drawText(z(personalRelief), summaryCol2, summaryY - 112, { align: 'right' });
+        drawText(z(insuranceRelief), summaryCol2, summaryY - 128, { align: 'right' });
+        drawText(z(netPay), summaryCol2, summaryY - 148, { align: 'right', bold: true });
 
-        const summaryItems = [
-            ['Total Cash Pay', formatMoney(totalCashPay)],
-            ['Total Benefits', formatMoney(benefits)],
-            ['Total Gross Pay', formatMoney(grossPay)],
-            ['NSSF Contributions', formatMoney(nssfDed)],
-            ['SHIF Contributions', formatMoney(shaDed)],
-            ['Housing Levy', formatMoney(ahl)],
-            ['PAYE Tax Deducted', formatMoney(payeTax)],
-            ['Personal Relief', formatMoney(personalRelief)],
-            ['Insurance Relief', formatMoney(insuranceRelief)],
-            ['Net Pay', formatMoney(netPay)],
-        ];
+        let useFallback = false;
+        try {
+            const pdfBytes = await pdfDoc.save();
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="P9_${employeeName.replace(/\s+/g, '_')}_${taxYear}.pdf"`);
+            res.send(Buffer.from(pdfBytes));
+        } catch (pdfLibErr) {
+            console.error('pdf-lib P9 generation failed, falling back to PDFKit:', pdfLibErr);
+            useFallback = true;
+        }
 
-        const summaryCol1X = leftMargin;
-        const summaryCol2X = leftMargin + 320;
-
-        doc.fontSize(8).font('Helvetica').fillColor('#333');
-        summaryItems.forEach(([label, amount], i) => {
-            const isTotal = i === summaryItems.length - 1;
-            if (isTotal) {
-                doc.rect(summaryCol1X, y - 2, pageWidth - summaryCol1X + leftMargin, 18).fill('#1e293b');
-                doc.fontSize(9).font('Helvetica-Bold').fillColor('#fff');
-            }
-            doc.text(label as string, summaryCol1X, y + 2);
-            doc.text(amount as string, summaryCol2X, y + 2, { align: 'right', width: 100 });
-            y += isTotal ? 22 : 14;
-        });
-
-        y += 16;
-
-        // ── Certification ──
-        doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
-        y += 8;
-        doc.fontSize(8).font('Helvetica').fillColor('#666');
-        doc.text('I certify that the information provided in this P9 form is true and correct.', leftMargin, y, { align: 'center', width: pageWidth });
-        y += 16;
-        doc.fontSize(8).font('Helvetica').fillColor('#333');
-        doc.text('Employer\'s Signature: _______________________', leftMargin, y);
-        doc.text('Date: _______________________', leftMargin + 300, y);
-        y += 20;
-        doc.fontSize(7).font('Helvetica').fillColor('#999');
-        doc.text('This is a computer-generated document. No signature required.', leftMargin, y, { align: 'center', width: pageWidth });
-
-        doc.end();
+        if (useFallback) {
+            generateP9WithPdfKit(res, {
+                companyName, companyPin, client, employeeName, kraPin, idNo, nssfNo, shaNo, payrollNo,
+                department, jobTitle, employmentType, grossPay, totalCashPay, carBenefit, meals, nonCash,
+                housingBenefit, otherBenefits, shaDed, nssfDed, otherPension, postRetMedical, mortgage,
+                ahl, taxablePay, personalRelief, insuranceRelief, payeTax, taxYear, periodLabel,
+            });
+        }
     } catch (err) {
         console.error('Error generating P9:', err);
         res.status(500).json({ message: 'Failed to generate P9 PDF' });
+    }
+});
+
+// POST /api/clients/:clientId/employees/sync-by-pin — upsert by KRA PIN
+router.post('/:clientId/employees/sync-by-pin', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const { kraPin } = req.body;
+        if (!kraPin) return res.status(400).json({ message: 'kraPin is required' });
+
+        const existing = await db
+            .selectFrom('employees')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('kraPin', '=', kraPin)
+            .executeTakeFirst();
+
+        const now = new Date().toISOString();
+        const fields = { ...req.body, clientId, updatedAt: now } as any;
+
+        if (existing) {
+            await db.updateTable('employees').set(fields).where('id', '=', existing.id).execute();
+            res.json({ synced: true, id: existing.id, action: 'updated' });
+        } else {
+            const result = await db.insertInto('employees').values({ ...fields, createdAt: now } as any).executeTakeFirst();
+            res.status(201).json({ synced: true, id: Number(result.insertId || 0), action: 'created' });
+        }
+    } catch (err) {
+        console.error('Error syncing employee:', err);
+        res.status(500).json({ message: 'Failed to sync employee' });
     }
 });
 

@@ -14,7 +14,8 @@ export const TAX_OBLIGATION_TYPES = [
     'vat',
     'paye',
     'turnover_tax',
-    'nssf'
+    'nssf',
+    'excise_duty'
 ] as const;
 
 export type TaxObligationType = (typeof TAX_OBLIGATION_TYPES)[number];

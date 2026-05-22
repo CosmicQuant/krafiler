@@ -9,6 +9,14 @@ function roundMoney(amount: number): number {
     return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
+function escapeCsv(value: string | number | undefined): string {
+    const str = String(value ?? '');
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+}
+
 function getClientWorkspaceDir(clientName: string) {
     const safe = clientName
         .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
@@ -152,34 +160,66 @@ export async function generateComplianceFromPayrollRun(
             const csvRows = entries.map(entry => {
                 const emp = empMap.get(entry.employeeId);
                 const fullName = entry.employeeName || '';
-                const resStatus = 'Resident';
-                const empType = 'Primary Employee';
-                const pwd = 'No';
-                const exemptionCert = '0';
+                const resStatus = emp?.residentialStatus || 'Resident';
+                const empType = emp?.typeOfEmployee || 'Primary Employee';
+                const pwd = emp?.pwd || 'No';
+                const exemptionCert = emp?.exemptionCert || '';
                 const unpaidLeaveDays = entry.unpaidLeaveDays || 0;
                 const unpaidLeaveDeduction = roundMoney((entry.basicPay / Math.max(1, entry.daysWorked || 30)) * unpaidLeaveDays);
-                const totalCashPay = roundMoney(entry.basicPay + entry.overtimePay - unpaidLeaveDeduction);
-                const carBenefit = 0;
-                const meals = 0;
-                const nonCash = 0;
-                const typeOfHousing = 'Benefit not given';
-                const housingOrOtherBenefits = entry.benefits || 0;
+                const attendanceDeduction = roundMoney((entry.basicPay / Math.max(1, entry.daysWorked || 30)) * ((entry.absentDays || 0) + (entry.lateDays || 0) * 0.5));
+                const bonusPay = entry.bonusPay || 0;
+                const totalCashPay = roundMoney(entry.basicPay + entry.overtimePay + bonusPay - unpaidLeaveDeduction - attendanceDeduction);
+                const carBenefit = emp?.carBenefit || 0;
+                const meals = emp?.mealsBenefit || 0;
+                const nonCash = emp?.nonCashBenefits || 0;
+                const typeOfHousing = emp?.typeOfHousing || 'Benefit not given';
+                const housingOrOtherBenefits = emp?.housingBenefit || emp?.otherBenefits || entry.benefits || 0;
                 const grossSalary = entry.grossPay;
                 const shaContribution = entry.shaDeduction;
                 const nssfContribution = entry.nssfDeduction;
-                const otherPension = 0;
-                const postRetMedical = 0;
-                const mortgage = 0;
+                const otherPension = emp?.otherPension || 0;
+                const postRetMedical = emp?.postRetMedical || 0;
+                const mortgage = emp?.mortgageInterest || 0;
                 const ahl = entry.ahlDeduction;
                 const taxablePayCalc = roundMoney(Math.max(0, entry.grossPay - entry.shaDeduction - entry.nssfDeduction - entry.ahlDeduction));
                 const personalRelief = 2400;
-                const insuranceRelief = 0;
+                const insuranceRelief = emp?.insuranceRelief || 0;
                 const paye = entry.payeTax;
                 const selfAssessedPaye = entry.payeTax;
                 const typeEmpCode = empType.toLowerCase().includes('primary') ? 'PRMEMP' : 'SECEMP';
                 const resStatCode = resStatus.toLowerCase().includes('non') ? 'NRES' : 'RES';
 
-                return `${entry.kraPin},${fullName},${resStatus},${empType},${pwd},${exemptionCert},${totalCashPay},${carBenefit},${meals},${nonCash},${typeOfHousing},,${housingOrOtherBenefits},${grossSalary},${shaContribution},${nssfContribution},${otherPension},${postRetMedical},${mortgage},${ahl},${taxablePayCalc},${personalRelief},${insuranceRelief},${paye},${selfAssessedPaye},${typeEmpCode},0,${resStatCode},DTEMP`;
+                return [
+                    escapeCsv(entry.kraPin),
+                    escapeCsv(fullName),
+                    escapeCsv(resStatus),
+                    escapeCsv(empType),
+                    escapeCsv(pwd),
+                    escapeCsv(exemptionCert),
+                    escapeCsv(totalCashPay),
+                    escapeCsv(carBenefit),
+                    escapeCsv(meals),
+                    escapeCsv(nonCash),
+                    escapeCsv(typeOfHousing),
+                    '',
+                    escapeCsv(housingOrOtherBenefits),
+                    escapeCsv(grossSalary),
+                    escapeCsv(shaContribution),
+                    escapeCsv(nssfContribution),
+                    escapeCsv(otherPension),
+                    escapeCsv(postRetMedical),
+                    escapeCsv(mortgage),
+                    escapeCsv(ahl),
+                    escapeCsv(taxablePayCalc),
+                    escapeCsv(personalRelief),
+                    escapeCsv(insuranceRelief),
+                    escapeCsv(paye),
+                    escapeCsv(selfAssessedPaye),
+                    escapeCsv(typeEmpCode),
+                    '0',
+                    escapeCsv(resStatCode),
+                    'DTEMP',
+                ].join(',');
             }).join('\n');
 
             archive.append(csvRows, { name: 'B_Employees_Dtls_Simp.csv' });

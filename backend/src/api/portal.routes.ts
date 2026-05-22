@@ -138,7 +138,7 @@ router.post('/leave', async (req: AuthRequest, res) => {
     try {
         const employeeId = req.employee!.id;
         const clientId = req.employee!.clientId;
-        const { leaveType, startDate, endDate, daysCount, reason } = req.body;
+        const { leaveType, startDate, endDate, daysCount, reason, isPaid } = req.body;
 
         if (!leaveType || !startDate || !endDate) {
             res.status(400).json({ message: 'Leave type, start date, and end date are required' });
@@ -159,6 +159,7 @@ router.post('/leave', async (req: AuthRequest, res) => {
                 daysCount: daysCount || 1,
                 reason: reason || '',
                 status: 'Pending',
+                isPaid: isPaid === false || isPaid === 0 ? 0 : 1,
                 createdAt: now,
                 updatedAt: now,
             })
@@ -184,6 +185,105 @@ router.post('/leave', async (req: AuthRequest, res) => {
         res.status(201).json(record);
     } catch (err) {
         console.error('Error submitting leave via portal:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// PUT /api/portal/leave/:id — edit own pending leave request
+router.put('/leave/:id', async (req: AuthRequest, res) => {
+    try {
+        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
+
+        const { leaveType, startDate, endDate, daysCount, reason, isPaid } = req.body;
+
+        const existing = await db
+            .selectFrom('leave_requests')
+            .selectAll()
+            .where('id', '=', id)
+            .where('employeeId', '=', employeeId)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!existing) return res.status(404).json({ message: 'Leave request not found' });
+
+        await db
+            .updateTable('leave_requests')
+            .set({
+                leaveType: leaveType !== undefined ? leaveType : existing.leaveType,
+                startDate: startDate !== undefined ? startDate : existing.startDate,
+                endDate: endDate !== undefined ? endDate : existing.endDate,
+                daysCount: daysCount !== undefined ? daysCount : existing.daysCount,
+                reason: reason !== undefined ? reason : existing.reason,
+                isPaid: isPaid !== undefined ? (isPaid === false || isPaid === 0 ? 0 : 1) : existing.isPaid,
+                updatedAt: new Date().toISOString(),
+            })
+            .where('id', '=', id)
+            .execute();
+
+        const updated = await db
+            .selectFrom('leave_requests')
+            .selectAll()
+            .where('id', '=', id)
+            .executeTakeFirst();
+
+        logAudit({
+            clientId,
+            employeeId,
+            action: 'UPDATE',
+            entityType: 'leave_request',
+            entityId: id,
+            oldValues: existing,
+            newValues: updated,
+            performedBy: req.employee!.employeeName,
+        });
+
+        res.json(updated);
+    } catch (err) {
+        console.error('Error updating portal leave request:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// DELETE /api/portal/leave/:id — delete own leave request
+router.delete('/leave/:id', async (req: AuthRequest, res) => {
+    try {
+        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
+
+        const existing = await db
+            .selectFrom('leave_requests')
+            .selectAll()
+            .where('id', '=', id)
+            .where('employeeId', '=', employeeId)
+            .where('clientId', '=', clientId)
+            .executeTakeFirst();
+
+        if (!existing) { res.status(404).json({ message: 'Leave request not found' }); return; }
+
+        await db
+            .deleteFrom('leave_requests')
+            .where('id', '=', id)
+            .where('clientId', '=', clientId)
+            .execute();
+
+        logAudit({
+            clientId,
+            employeeId,
+            action: 'DELETE',
+            entityType: 'leave_request',
+            entityId: id,
+            oldValues: existing,
+            performedBy: req.employee!.employeeName,
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error deleting portal leave request:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

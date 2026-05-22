@@ -70,7 +70,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 obligationType,
             },
         }));
-        d.setDashboardNotice({ tone: 'info', message: data.message || `A filing is already queued or active for ${client.name}.` });
+        console.log(data.message || `A filing is already queued or active for ${client.name}.`);
     }, []);
 
     const generatePayrollZip = useCallback(async (client: ClientObligation): Promise<any> => {
@@ -116,9 +116,13 @@ export function useFilingActions(deps: FilingActionsDeps) {
     const generateClientZip = useCallback(async (client: ClientObligation) => {
         const d = getD();
         await withLoading(client.id, d.setGeneratingClientIds, async () => {
-            d.setDashboardNotice({ tone: 'info', message: `Generating payroll ZIP for ${client.name}...` });
-            await generatePayrollZip(client);
-            d.setDashboardNotice({ tone: 'success', message: `Saved the latest payroll ZIP for ${client.name} to the workspace.` });
+            console.log(`Generating payroll ZIP for ${client.name}...`);
+            try {
+                await generatePayrollZip(client);
+                d.setDashboardNotice({ tone: 'success', message: `Saved the latest payroll ZIP for ${client.name} to the workspace.` });
+            } catch (e: any) {
+                d.setDashboardNotice({ tone: 'error', message: e.message || `Failed to generate payroll ZIP for ${client.name}.` });
+            }
         });
     }, [generatePayrollZip]);
 
@@ -130,7 +134,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             return;
         }
         if (d.setIsGeneratingZips) d.setIsGeneratingZips(true);
-        d.setDashboardNotice({ tone: 'info', message: `Generating payroll ZIPs for ${clientsWithSources.length} client${clientsWithSources.length === 1 ? '' : 's'}...` });
+        console.log(`Generating payroll ZIPs for ${clientsWithSources.length} client${clientsWithSources.length === 1 ? '' : 's'}...`);
 
         try {
             const batchSize = 5;
@@ -160,13 +164,13 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const activeJobs = d.getActiveJobs();
         try {
             if (isPendingFilingJob(activeJobs[client.id])) {
-                d.setDashboardNotice({ tone: 'info', message: `A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.` });
+                console.log(`A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
                 return;
             }
 
             let activeClient = client;
             if (activeClient.masterFileUrl || activeClient.payrollSourceUrl) {
-                d.setDashboardNotice({ tone: 'info', message: `Generating required ZIP files before filing for ${client.name}...` });
+                console.log(`Generating required ZIP files before filing for ${client.name}...`);
                 const sourceUrl = activeClient.masterFileUrl || activeClient.payrollSourceUrl;
                 const sourceResponse = await fetch(sourceUrl as string, { cache: 'no-store' });
                 if (!sourceResponse.ok) throw new Error(`Could not load payroll CSV`);
@@ -190,7 +194,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
             if (!activeClient.payeZipUrl) throw new Error("No PAYE ZIP available to upload.");
 
-            d.setDashboardNotice({ tone: 'info', message: `Dispatching KRA filing job for ${client.name}...` });
+            console.log(`Dispatching KRA filing job for ${client.name}...`);
             const { periodFrom, periodTo } = getCurrentFilingPeriod('paye');
             const payload = {
                 kraPin: activeClient.pin,
@@ -224,7 +228,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const vatSectionBWithoutPinVal = d.getVatSectionBWithoutPinVals()[client.id] || '';
         try {
             if (isPendingFilingJob(activeJobs[client.id])) {
-                d.setDashboardNotice({ tone: 'info', message: `A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.` });
+                console.log(`A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
                 return;
             }
             const previousCredit = !vatPreviousCreditVal.trim() ? 0 : parseFloat(vatPreviousCreditVal);
@@ -280,7 +284,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const vatPreviousCreditVal = d.getVatPreviousCreditVals()[client.id] || '';
         try {
             if (isPendingFilingJob(activeJobs[client.id])) {
-                d.setDashboardNotice({ tone: 'info', message: `A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.` });
+                console.log(`A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
                 return;
             }
             const effectiveVatZipUrl = client.vatZipUrl ?? activeJobs[client.id]?.generatedZipUrl;
@@ -290,7 +294,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!Number.isFinite(previousCredit) || previousCredit < 0) throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
 
             const { periodFrom, periodTo } = getCurrentFilingPeriod('vat');
-            d.setDashboardNotice({ tone: 'info', message: `Filing VAT for ${client.name} with the generated ZIP.` });
+            console.log(`Filing VAT for ${client.name} with the generated ZIP.`);
 
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
@@ -332,7 +336,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const generatePrn = useCallback(async (client: ClientObligation, type: string) => {
         const d = getD();
-        d.setDashboardNotice({ tone: 'info', message: `Queuing PRN Generation for ${client.name} (${type})...` });
+        console.log(`Queuing PRN Generation for ${client.name} (${type})...`);
         try {
             const taxObligationMap: Record<string, string> = { 'PAYE': 'paye', 'TOT': 'turnover_tax', 'MRI': 'monthly_rental_income', 'VAT': 'vat' };
             const { periodFrom, periodTo } = getCurrentFilingPeriod(taxObligationMap[type]);
@@ -364,7 +368,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             d.setDashboardNotice({ tone: 'error', message: `No NSSF File or Master CSV available for ${client.name}. Please generate ZIP first.` });
             return;
         }
-        d.setDashboardNotice({ tone: 'info', message: `Starting NSSF Auto-filing for ${client.name}...` });
+        console.log(`Starting NSSF Auto-filing for ${client.name}...`);
         try {
             const res = await apiFetch('/tax/file-nssf-return', {
                 method: 'POST',
@@ -391,7 +395,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             d.setDashboardNotice({ tone: 'error', message: `Please specify the obligation type and period for ${client.name}.` });
             return;
         }
-        d.setDashboardNotice({ tone: 'info', message: `Starting Nil Auto-filing for ${client.name}... ` });
+        console.log(`Starting Nil Auto-filing for ${client.name}... `);
         try {
             let totYear, totMonth;
             if (sel.type === 'turnover_tax' && sel.periodFrom) {
@@ -414,7 +418,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
                     d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: sel.type, isNil: true } }));
-                    d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing Nil job.' });
+                    console.log('Reconnected to an existing Nil job.');
                 } else {
                     throw new Error(dataResp.message || 'Auto-file request failed');
                 }
@@ -435,7 +439,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             d.setDashboardNotice({ tone: 'error', message: `Please enter a valid rental income amount for ${client.name}.` });
             return;
         }
-        d.setDashboardNotice({ tone: 'info', message: `Starting MRI Auto-filing for ${client.name}... ` });
+        console.log(`Starting MRI Auto-filing for ${client.name}... `);
         try {
             const isNilMri = amount === 0;
             const { periodFrom, periodTo } = getCurrentFilingPeriod('monthly_rental_income');
@@ -457,7 +461,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
                     d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: 'monthly_rental_income' } }));
-                    d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing MRI job.' });
+                    console.log('Reconnected to an existing MRI job.');
                 } else { throw new Error(dataResp.message || 'Auto-file request failed'); }
             } else if (dataResp.jobId) {
                 d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'MRI Job queued...', obligationType: 'monthly_rental_income' } }));
@@ -477,7 +481,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             d.setDashboardNotice({ tone: 'error', message: `Please enter a valid turnover amount for ${client.name}.` });
             return;
         }
-        d.setDashboardNotice({ tone: 'info', message: `Starting TOT Auto-filing for ${client.name}... ` });
+        console.log(`Starting TOT Auto-filing for ${client.name}... `);
         try {
             const currentDate = new Date();
             currentDate.setMonth(currentDate.getMonth() - 1);
@@ -503,7 +507,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!res.ok) {
                 if (res.status === 409 && dataResp.jobId) {
                     d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: dataResp.jobState || 'waiting', progress: 0, message: 'Reconnected to running job.', obligationType: 'turnover_tax' } }));
-                    d.setDashboardNotice({ tone: 'info', message: 'Reconnected to an existing TOT job.' });
+                    console.log('Reconnected to an existing TOT job.');
                 } else { throw new Error(dataResp.message || 'Auto-file request failed'); }
             } else if (dataResp.jobId) {
                 d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: dataResp.jobId, state: 'waiting', progress: 0, message: 'TOT Job queued...', obligationType: 'turnover_tax' } }));
@@ -558,7 +562,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!response.ok) throw new Error(data.message || 'Failed to cancel the filing job.');
             const nextState = (data.jobState || (activeJob.state === 'active' ? 'cancelling' : 'cancelled')) as FilingJobState;
             d.setActiveJobs((current) => ({ ...current, [client.id]: { ...current[client.id], state: nextState, message: data.message || (nextState === 'cancelled' ? 'Job cancelled before processing started.' : 'Cancellation requested. Waiting for the worker to stop.') } }));
-            d.setDashboardNotice({ tone: 'info', message: data.message || (nextState === 'cancelled' ? `Cancelled the queued filing for ${client.name}.` : `Cancellation requested for ${client.name}.`) });
+            console.log(data.message || (nextState === 'cancelled' ? `Cancelled the queued filing for ${client.name}.` : `Cancellation requested for ${client.name}.`));
         } catch (error) {
             d.setDashboardNotice({ tone: 'error', message: error instanceof Error ? error.message : 'Failed to cancel the filing job.' });
         } finally {
@@ -601,7 +605,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const d = getD();
         const file = event.target.files?.[0];
         if (!file) return;
-        d.setDashboardNotice({ tone: 'info', message: 'Uploading bulk clients CSV...' });
+        console.log('Uploading bulk clients CSV...');
         try {
             const formData = new FormData();
             formData.append('clientsCsv', file);
@@ -624,7 +628,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
     const globalMasterCsvUpload = useCallback(async (file: File) => {
         const d = getD();
         if (d.setIsGlobalUploading) d.setIsGlobalUploading(true);
-        d.setDashboardNotice({ tone: 'info', message: 'Analyzing Master CSV...' });
+        console.log('Analyzing Master CSV...');
         try {
             const formData = new FormData();
             formData.append('payrollFile', file);
@@ -674,7 +678,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const generatePayrollCompliance = useCallback(async (client: ClientObligation, runId: number) => {
         const d = getD();
-        d.setDashboardNotice({ tone: 'info', message: `Generating compliance files for ${client.name}...` });
+        console.log(`Generating compliance files for ${client.name}...`);
         try {
             const res = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/generate-compliance`, {
                 method: 'POST',

@@ -30,6 +30,10 @@ export interface ClientsTable {
     tot: string | null;
     mri: string | null;
     dst: string | null;
+    incomeTaxResidentIndividual: string | null;
+    incomeTaxNonResidentIndividual: string | null;
+    incomeTaxCompany: string | null;
+    exciseDuty: string | null;
     
     // Amounts
     payeAmount: number | null;
@@ -55,6 +59,14 @@ export interface ClientsTable {
     mriReceiptUrl: string | null;
     dstLastFiledDate: string | null;
     dstReceiptUrl: string | null;
+    incomeTaxResidentIndividualLastFiledDate: string | null;
+    incomeTaxResidentIndividualReceiptUrl: string | null;
+    incomeTaxNonResidentIndividualLastFiledDate: string | null;
+    incomeTaxNonResidentIndividualReceiptUrl: string | null;
+    incomeTaxCompanyLastFiledDate: string | null;
+    incomeTaxCompanyReceiptUrl: string | null;
+    exciseDutyLastFiledDate: string | null;
+    exciseDutyReceiptUrl: string | null;
 
     // Credentials
     sector: string | null;
@@ -69,6 +81,7 @@ export interface ClientsTable {
     eLevyLogin: string | null;
     eLevyPassword: string | null;
     payStructure: string;
+    logoUrl: string | null;
 }
 
 export interface JobHistoryTable {
@@ -108,7 +121,25 @@ export interface EmployeesTable {
     dateJoined: string;
     dateLeft: string | null;
     standardCheckOut: string;
+    standardCheckIn: string;
     basicPay: number;
+    identityType: string;
+    residentialStatus: string;
+    typeOfEmployee: string;
+    pwd: string;
+    exemptionCert: string;
+    carBenefit: number;
+    mealsBenefit: number;
+    nonCashBenefits: number;
+    typeOfHousing: string;
+    housingBenefit: number;
+    otherBenefits: number;
+    otherPension: number;
+    postRetMedical: number;
+    mortgageInterest: number;
+    insuranceRelief: number;
+    payStructure: string;
+    bonusPay: number;
     passwordHash: string | null;
     passwordChangedAt: string | null;
     createdAt: string;
@@ -127,6 +158,17 @@ export interface LeaveRequestsTable {
     daysCount: number;
     reason: string;
     status: string;
+    isPaid: number; // 1 = paid, 0 = unpaid
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LeaveTypesTable {
+    id: Generated<number>;
+    clientId: number;
+    name: string;
+    isPaid: number; // 1 = paid, 0 = unpaid
+    maxDaysPerYear: number | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -221,6 +263,9 @@ export interface PayrollEntriesTable {
     overtimePay: number;
     absentDays: number;
     lateDays: number;
+    bonusPay: number;
+    taxableBonus: number;
+    nonTaxableBonus: number;
     status: string;
     createdAt: string;
 }
@@ -273,11 +318,29 @@ export interface AuditLogTable {
     createdAt: string;
 }
 
+export interface AttendancePayrollApprovalsTable {
+    id: Generated<number>;
+    clientId: number;
+    period: string;
+    employeeId: number;
+    employeeName: string;
+    absentDays: number;
+    lateHours: number;
+    overtimeHours: number;
+    overtimeRate: number;
+    overtimeMultiplier: number;
+    overtimeAmount: number;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    createdAt: string;
+}
+
 export interface Database {
     clients: ClientsTable;
     job_history: JobHistoryTable;
     employees: EmployeesTable;
     leave_requests: LeaveRequestsTable;
+    leave_types: LeaveTypesTable;
     loans: LoansTable;
     attendance_records: AttendanceRecordsTable;
     email_history: EmailHistoryTable;
@@ -287,4 +350,5 @@ export interface Database {
     documents: DocumentsTable;
     audit_log: AuditLogTable;
     overtime_records: OvertimeRecordsTable;
+    attendance_payroll_approvals: AttendancePayrollApprovalsTable;
 }

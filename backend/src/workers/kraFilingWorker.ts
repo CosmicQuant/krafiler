@@ -111,6 +111,10 @@ const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     ],
     nssf: [
         /^nssf$/i
+    ],
+    excise_duty: [
+        /^excise\s*duty$/i,
+        /excise/i,
     ]
 };
 
@@ -2384,6 +2388,7 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
             else if (taxObligationType === 'monthly_rental_income') obligationCol = 'mri';
             else if (taxObligationType === 'vat') obligationCol = 'vat';
             else if (taxObligationType === 'paye') obligationCol = 'paye';
+            else if (taxObligationType === 'excise_duty') obligationCol = 'exciseDuty';
 
             if (obligationCol) {
                 const db = await openDb();

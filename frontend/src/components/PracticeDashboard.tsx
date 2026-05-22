@@ -57,8 +57,9 @@ export default function PracticeDashboard() {
   // Local state
   const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
   const [showPayrollView, setShowPayrollView] = useState(false);
+  const hasObligation = (val?: string | null) => !!val && val !== 'na';
   const isPayrollClient = selectedClient
-    ? selectedClient.paye !== 'na' || selectedClient.nssf !== 'na' || selectedClient.sha !== 'na'
+    ? hasObligation(selectedClient.paye) || hasObligation(selectedClient.nssf) || hasObligation(selectedClient.sha)
     : false;
 
   const handleGoToPayrollView = (client: ClientObligation) => {
@@ -223,6 +224,8 @@ export default function PracticeDashboard() {
         password,
         obligations: updatedClient.obligations || '',
         sector: updatedClient.sector || '',
+        email: updatedClient.email || '',
+        phone: updatedClient.phone || '',
       }),
     });
 
@@ -356,7 +359,7 @@ export default function PracticeDashboard() {
     return () => clearInterval(interval);
   }, [activeJobs]);
 
-  const payrollClients = useMemo(() => clients.filter((c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na'), [clients]);
+  const payrollClients = useMemo(() => clients.filter((c) => hasObligation(c.paye) || hasObligation(c.nssf) || hasObligation(c.sha)), [clients]);
   const payrollPendingCount = useMemo(
     () => payrollClients.filter((client) => client.paye === 'due' || client.nssf === 'due' || client.sha === 'due').length,
     [payrollClients],
@@ -444,25 +447,21 @@ export default function PracticeDashboard() {
               </div>
             </header>
 
-            {dashboardNotice && (
-              <div className="relative">
-                <div
-                  className={`mt-6 rounded-2xl border px-4 py-3 pr-10 text-sm font-medium ${
-                    dashboardNotice.tone === 'success'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : dashboardNotice.tone === 'error'
-                        ? 'border-red-200 bg-red-50 text-red-700'
-                        : 'border-slate-200 bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  {dashboardNotice.message}
-                </div>
+            {/* Error / Success notices only (info suppressed — button animations handle loading states) */}
+            {dashboardNotice && dashboardNotice.tone !== 'info' && (
+              <div
+                className={`mb-4 rounded-xl px-4 py-3 text-sm font-semibold flex items-center justify-between ${
+                  dashboardNotice.tone === 'success'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}
+              >
+                <span>{dashboardNotice.message}</span>
                 <button
                   onClick={() => setDashboardNotice(null)}
-                  className="absolute top-7 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-white/80 text-slate-400 hover:text-slate-700 transition"
-                  title="Dismiss"
+                  className="ml-3 rounded p-1 hover:bg-white/60 transition"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             )}
@@ -471,6 +470,8 @@ export default function PracticeDashboard() {
               <div className="mt-10">
                 <PayrollWebView
                   client={selectedClient}
+                  clients={clients}
+                  onClientChange={(c) => setSelectedClient(c)}
                   onBack={() => { setSelectedClient(null); setShowPayrollView(false); }}
                   onEditClient={() => setShowPayrollView(false)}
                   onUploadMasterCsv={filingActions.uploadMasterCsv}

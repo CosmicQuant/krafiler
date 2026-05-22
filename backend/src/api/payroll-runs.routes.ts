@@ -3,6 +3,8 @@ import { db } from '../db/kysely';
 import { computePayrollEntry } from '../services/payrollEngine';
 import { generateComplianceFromPayrollRun } from '../services/complianceFileGenerator';
 import PDFDocument from 'pdfkit';
+import path from 'path';
+import fs from 'fs';
 
 const router = Router();
 
@@ -59,7 +61,7 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         .execute();
     const leaveMap = new Map<number, number>();
     for (const lv of leaveRecords) {
-        const isUnpaid = lv.leaveType.toLowerCase().includes('unpaid');
+        const isUnpaid = lv.isPaid === 0 || lv.leaveType.toLowerCase().includes('unpaid');
         if (!isUnpaid) continue;
         const lvStartStr = lv.startDate || '';
         const lvEndStr = lv.endDate || '';
@@ -87,12 +89,55 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         .execute();
 
     const absentMap = new Map<number, number>();
-    const lateMap = new Map<number, number>();
+    const lateHoursMap = new Map<number, number>();
     for (const ar of attendanceRecords) {
         if (ar.status === 'Absent') {
             absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 1);
+        } else if (ar.status === 'Half-Day') {
+            absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 0.5);
         } else if (ar.status === 'Late') {
-            lateMap.set(ar.employeeId, (lateMap.get(ar.employeeId) || 0) + 1);
+            const emp = employees.find(e => e.id === ar.employeeId);
+            const checkIn = ar.checkIn || '';
+            const standardIn = emp?.standardCheckIn || '08:00';
+            const [cH, cM] = checkIn.split(':').map(Number);
+            const [sH, sM] = standardIn.split(':').map(Number);
+            if (!isNaN(cH) && !isNaN(sH)) {
+                const lateMins = (cH * 60 + (cM || 0)) - (sH * 60 + (sM || 0));
+                if (lateMins > 0) {
+                    const lateHours = lateMins / 60;
+                    lateHoursMap.set(ar.employeeId, (lateHoursMap.get(ar.employeeId) || 0) + lateHours);
+                }
+            }
+        }
+    }
+
+    // Exclude approved leave days from absent counts
+    const leaveDateMap = new Map<number, Set<string>>();
+    for (const lv of leaveRecords) {
+        if (lv.status !== 'Approved') continue;
+        const lvStartStr = lv.startDate || '';
+        const lvEndStr = lv.endDate || '';
+        if (!lvStartStr) continue;
+        const lvStart = new Date(lvStartStr);
+        const lvEnd = lvEndStr ? new Date(lvEndStr) : new Date(lvStartStr);
+        const periodStart = new Date(parseInt(periodYear, 10), parseInt(periodMonth, 10) - 1, 1);
+        const periodEnd = new Date(parseInt(periodYear, 10), parseInt(periodMonth, 10), 0);
+        const overlapStart = lvStart > periodStart ? lvStart : periodStart;
+        const overlapEnd = lvEnd < periodEnd ? lvEnd : periodEnd;
+        if (overlapStart > overlapEnd) continue;
+        if (!leaveDateMap.has(lv.employeeId)) leaveDateMap.set(lv.employeeId, new Set());
+        const current = new Date(overlapStart);
+        while (current <= overlapEnd) {
+            leaveDateMap.get(lv.employeeId)!.add(current.toISOString().slice(0, 10));
+            current.setDate(current.getDate() + 1);
+        }
+    }
+    for (const ar of attendanceRecords) {
+        if (ar.status !== 'Absent') continue;
+        const leaveDates = leaveDateMap.get(ar.employeeId);
+        if (leaveDates && leaveDates.has(ar.date)) {
+            const prev = absentMap.get(ar.employeeId) || 0;
+            if (prev > 0) absentMap.set(ar.employeeId, prev - 1);
         }
     }
 
@@ -108,12 +153,30 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         overtimeMap.set(ot.employeeId, (overtimeMap.get(ot.employeeId) || 0) + ot.amount);
     }
 
+    // Check for approved attendance payroll data (workflow step)
+    const approvedAttendances = await db
+        .selectFrom('attendance_payroll_approvals')
+        .selectAll()
+        .where('clientId', '=', clientId)
+        .where('period', '=', run.period)
+        .where('approvedAt', 'is not', null)
+        .execute();
+
+    if (approvedAttendances.length > 0) {
+        for (const aa of approvedAttendances) {
+            absentMap.set(aa.employeeId, aa.absentDays);
+            lateHoursMap.set(aa.employeeId, aa.lateHours);
+            overtimeMap.set(aa.employeeId, aa.overtimeAmount);
+        }
+    }
+
     // Delete existing entries
     await db.deleteFrom('payroll_entries').where('payrollRunId', '=', runId).execute();
 
     // Compute entries
-    const entries = employees.map(emp =>
-        computePayrollEntry(
+    const entries = employees.map(emp => {
+        const payStructure = (emp.payStructure || (client?.payStructure as string) || 'fixed') as 'fixed' | 'prorated';
+        return computePayrollEntry(
             {
                 employeeId: emp.id,
                 employeeName: emp.employeeName,
@@ -129,12 +192,18 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 payStructure,
                 overtimePay: overtimeMap.get(emp.id) || 0,
                 attendanceAbsentDays: absentMap.get(emp.id) || 0,
-                attendanceLateDays: lateMap.get(emp.id) || 0,
+                attendanceLateDays: lateHoursMap.get(emp.id) || 0,
+                pwd: emp.pwd || 'No',
+                otherPension: emp.otherPension || 0,
+                postRetMedical: emp.postRetMedical || 0,
+                mortgageInterest: emp.mortgageInterest || 0,
+                insuranceRelief: emp.insuranceRelief || 0,
+                bonusPay: emp.bonusPay || 0,
             },
             run.period,
             prorate,
         )
-    );
+    });
 
     // Insert entries
     for (const entry of entries) {
@@ -164,10 +233,35 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 overtimePay: entry.overtimePay,
                 absentDays: entry.absentDays,
                 lateDays: entry.lateDays,
+                bonusPay: entry.bonusPay || 0,
+                taxableBonus: entry.taxableBonus || 0,
+                nonTaxableBonus: entry.nonTaxableBonus || 0,
                 status: 'active',
                 createdAt: now,
             })
             .execute();
+    }
+
+    // Auto-manage loans: decrement remainingInstallments, update amountPaid
+    // Only process loans if this run hasn't been generated before (status !== 'completed')
+    if (run.status !== 'completed') {
+        for (const ln of allLoans) {
+            if (ln.remainingInstallments > 0) {
+                const newRemaining = Math.max(0, ln.remainingInstallments - 1);
+                const newAmountPaid = (ln.amountPaid || 0) + (ln.monthlyDeduction || 0);
+                const newStatus = newRemaining === 0 ? 'Paid' : ln.status;
+                await db
+                    .updateTable('loans')
+                    .set({
+                        remainingInstallments: newRemaining,
+                        amountPaid: roundMoney(newAmountPaid),
+                        status: newStatus,
+                        updatedAt: now,
+                    })
+                    .where('id', '=', ln.id)
+                    .execute();
+            }
+        }
     }
 
     // Update run totals
@@ -493,6 +587,20 @@ router.get('/:clientId/payroll-runs/:id/payslip/:employeeId', async (req, res) =
 });
 
 function generatePayslipPDF(doc: any, entry: any, client: any): void {
+    const pageWidth = doc.page.width - 80;
+    if (client?.logoUrl) {
+        try {
+            const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
+            if (fs.existsSync(logoPath)) {
+                doc.image(logoPath, 40, 40, { width: 70 });
+                doc.y = 120;
+            } else {
+                console.warn('Payslip logo not found at:', logoPath);
+            }
+        } catch (e: any) {
+            console.warn('Payslip logo error:', e.message);
+        }
+    }
     doc.fontSize(14).font('Helvetica-Bold').text(client?.name || 'Company', { align: 'center' });
     doc.fontSize(8).font('Helvetica').text(`KRA PIN: ${client?.pin || ''}`, { align: 'center' });
     doc.moveDown(0.3);
@@ -1117,6 +1225,189 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req, res) 
         } else {
             res.status(500).json({ message: err.message || 'Failed to generate compliance files' });
         }
+    }
+});
+
+// ─── Attendance Payroll Approval Workflow ─────────────────────────────────────
+
+// POST /api/clients/:clientId/attendance-payroll-preview
+router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const period = req.query.period as string;
+        if (!period) return res.status(400).json({ message: 'period query parameter is required (YYYY-MM)' });
+
+        const employees = await db.selectFrom('employees').selectAll().where('clientId', '=', clientId).where('employmentStatus', '=', 'Active').execute();
+        const empMap = new Map(employees.map(e => [e.id, e]));
+
+        // Check for existing approvals
+        const existingApprovals = await db
+            .selectFrom('attendance_payroll_approvals')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('period', '=', period)
+            .execute();
+        const approvalMap = new Map(existingApprovals.map(a => [a.employeeId, a]));
+
+        if (existingApprovals.length > 0) {
+            // Return existing approvals
+            return res.json({
+                period,
+                employees: existingApprovals.map(a => ({
+                    employeeId: a.employeeId,
+                    employeeName: a.employeeName,
+                    absentDays: a.absentDays,
+                    lateHours: a.lateHours,
+                    overtimeHours: a.overtimeHours,
+                    overtimeRate: a.overtimeRate,
+                    overtimeMultiplier: a.overtimeMultiplier,
+                    overtimeAmount: a.overtimeAmount,
+                    approved: !!a.approvedAt,
+                })),
+            });
+        }
+
+        // Auto-calculate from attendance records
+        const [yearStr, monthStr] = period.split('-');
+        const year = parseInt(yearStr, 10);
+        const month = parseInt(monthStr, 10);
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const periodStart = `${period}-01`;
+        const periodEnd = `${period}-${String(daysInMonth).padStart(2, '0')}`;
+
+        const attendanceRecords = await db
+            .selectFrom('attendance_records')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('date', '>=', periodStart)
+            .where('date', '<=', periodEnd)
+            .execute();
+
+        const overtimeRecords = await db
+            .selectFrom('overtime_records')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('period', '=', period)
+            .execute();
+
+        const absentMap = new Map<number, number>();
+        const lateHoursMap = new Map<number, number>();
+        const otMap = new Map<number, any>();
+
+        for (const ar of attendanceRecords) {
+            if (ar.status === 'Absent') {
+                absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 1);
+            } else if (ar.status === 'Half-Day') {
+                absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 0.5);
+            } else if (ar.status === 'Late') {
+                const emp = empMap.get(ar.employeeId);
+                const checkIn = ar.checkIn || '';
+                const standardIn = emp?.standardCheckIn || '08:00';
+                const [cH, cM] = checkIn.split(':').map(Number);
+                const [sH, sM] = standardIn.split(':').map(Number);
+                if (!isNaN(cH) && !isNaN(sH)) {
+                    const lateMins = Math.max(0, (cH * 60 + (cM || 0)) - (sH * 60 + (sM || 0)));
+                    lateHoursMap.set(ar.employeeId, (lateHoursMap.get(ar.employeeId) || 0) + lateMins / 60);
+                }
+            }
+        }
+
+        for (const ot of overtimeRecords) {
+            otMap.set(ot.employeeId, ot);
+        }
+
+        const result = employees.map(emp => {
+            const ot = otMap.get(emp.id);
+            return {
+                employeeId: emp.id,
+                employeeName: emp.employeeName,
+                absentDays: absentMap.get(emp.id) || 0,
+                lateHours: Math.round((lateHoursMap.get(emp.id) || 0) * 100) / 100,
+                overtimeHours: ot?.hours || 0,
+                overtimeRate: ot?.rate || Math.round((emp.basicPay || 0) / 240 * 100) / 100,
+                overtimeMultiplier: ot?.multiplier || 1.5,
+                overtimeAmount: ot?.amount || 0,
+                approved: false,
+            };
+        });
+
+        res.json({ period, employees: result });
+    } catch (err) {
+        console.error('Error generating attendance preview:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// POST /api/clients/:clientId/attendance-payroll-approve
+router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const { period, employees: employeeApprovals, approvedBy } = req.body;
+        if (!period || !Array.isArray(employeeApprovals)) {
+            return res.status(400).json({ message: 'period and employees array are required' });
+        }
+
+        // Validate each approval record
+        for (const ea of employeeApprovals) {
+            if (typeof ea.employeeId !== 'number') {
+                return res.status(400).json({ message: `Invalid employeeId for record: ${JSON.stringify(ea)}` });
+            }
+            if ((ea.absentDays || 0) < 0 || (ea.absentDays || 0) > 31) {
+                return res.status(400).json({ message: `absentDays must be between 0 and 31 for employee ${ea.employeeId}` });
+            }
+            if ((ea.lateHours || 0) < 0 || (ea.lateHours || 0) > 744) {
+                return res.status(400).json({ message: `lateHours must be between 0 and 744 for employee ${ea.employeeId}` });
+            }
+            if ((ea.overtimeHours || 0) < 0 || (ea.overtimeHours || 0) > 744) {
+                return res.status(400).json({ message: `overtimeHours must be between 0 and 744 for employee ${ea.employeeId}` });
+            }
+            if ((ea.overtimeRate || 0) < 0) {
+                return res.status(400).json({ message: `overtimeRate must be non-negative for employee ${ea.employeeId}` });
+            }
+            if ((ea.overtimeMultiplier || 0) < 0) {
+                return res.status(400).json({ message: `overtimeMultiplier must be non-negative for employee ${ea.employeeId}` });
+            }
+        }
+
+        const now = new Date().toISOString();
+
+        // Delete existing approvals for this period
+        await db
+            .deleteFrom('attendance_payroll_approvals')
+            .where('clientId', '=', clientId)
+            .where('period', '=', period)
+            .execute();
+
+        // Insert new approvals
+        for (const ea of employeeApprovals) {
+            await db
+                .insertInto('attendance_payroll_approvals')
+                .values({
+                    clientId,
+                    period,
+                    employeeId: ea.employeeId,
+                    employeeName: ea.employeeName || '',
+                    absentDays: ea.absentDays || 0,
+                    lateHours: ea.lateHours || 0,
+                    overtimeHours: ea.overtimeHours || 0,
+                    overtimeRate: ea.overtimeRate || 0,
+                    overtimeMultiplier: ea.overtimeMultiplier || 1.5,
+                    overtimeAmount: ea.overtimeAmount || 0,
+                    approvedBy: approvedBy || null,
+                    approvedAt: now,
+                    createdAt: now,
+                })
+                .execute();
+        }
+
+        res.json({ success: true, approved: employeeApprovals.length });
+    } catch (err) {
+        console.error('Error approving attendance data:', err);
+        res.status(500).json({ message: 'Internal server error' });
     }
 });
 

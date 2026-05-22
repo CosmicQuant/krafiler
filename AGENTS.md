@@ -6,7 +6,7 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 
 - **Monorepo** (`npm workspaces`): `frontend/` (React 18 + Vite + Tailwind) and `backend/` (Express 4 + TypeScript).
 - **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
-- **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker.
+- **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker. The DB file is gitignored and created on first API startup by `initDb()`.
 - **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
 - **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`.
 - **VAT has two modes**: `prepareVatOnly` (download auto-populated data & generate ZIP without filing) and `upload` (file the prepared ZIP).
@@ -45,10 +45,11 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 
 ## Database
 
-- SQLite file at `backend/src/db/krafiler.sqlite`.
-- Migrations auto-run on API startup (`initDb()` in `server.ts`). 15 migrations in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
+- SQLite file at `backend/src/db/krafiler.sqlite` (gitignored; auto-created on API startup).
+- Migrations auto-run on API startup (`initDb()` in `server.ts`). 18 migration files (`001`–`019`, `016` is missing) in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
 - Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
 - Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
+- Root `package.json` has `adm-zip` and `sqlite3` deps that belong in `backend/` — ignore if searching dependency sources.
 - `DB_PATH` env var overrides the SQLite location (default: alongside `kysely.ts`).
 
 ## Environment Variables (Backend)
@@ -63,7 +64,7 @@ From `.env.example` and additional code-read vars:
 | `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
 | `NODE_ENV` | `development` or `production` (changes Playwright headless behavior in some scripts) |
 | `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport). `EMAIL_FROM` is used by `emailService.ts` but is **not** listed in `.env.example`. |
 | `PLAYWRIGHT_HEADLESS=false` | `true` for headless mode |
 | `PLAYWRIGHT_SLOW_MO=0` | Millisecond delay between Playwright actions (debugging) |
 | `KRA_BROWSER_CHANNEL=chrome` | Browser channel: `chrome` or `msedge` |
@@ -139,7 +140,7 @@ Located at `backend/src/services/`:
 
 ## Frontend Architecture
 
-- **Router**: `App.tsx` defines routes: `/` → PracticeLandingPage, `/dashboard` → PracticeDashboard (catch-all for all modules).
+- **Router**: `App.tsx` defines routes: `/` → PracticeLandingPage, `/dashboard` → PracticeDashboard. Old paths (`/accountant`, `/auditor`, `/payroll`, `/kra`) redirect to `/dashboard`.
 - **API client**: `services/api.ts` — Axios-based REST client.
 - **State**: `store/uiStore.ts` — Zustand store for UI state.
 - **Hooks**: `useClients.ts`, `useFilingActions.ts`, `useJobPolling.ts`, `useClientModal.ts` — TanStack Query wrappers in `hooks/`.
@@ -160,6 +161,7 @@ Located at `backend/src/workers/services/`:
 - **Do not log passwords** — plaintext `kraPassword` exists in job payloads; never log it or persist outside the payload.
 - **Worker concurrency must stay at 1** — increasing it risks KRA IP bans.
 - **No CI, no tests, no lint rules** — verify by manual type-checking (`tsc --noEmit`) and local worker runs.
+- **No CI/CD pipelines** — there is no `.github/` directory at all.
 - **Duplicate filing guard**: the API rejects identical pending jobs — an agent modifying filing parameters should be aware of the dedup key.
 - **Search policy**: `AGENTS-node_modules.md` prohibits reading/traversing `node_modules/` without explicit user instruction.
 - **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.

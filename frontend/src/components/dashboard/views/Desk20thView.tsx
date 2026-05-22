@@ -198,7 +198,7 @@ export function Desk20thView({
                                 <>
                                   <a
                                     href={vatGeneratedZipUrl}
-                                    target="_blank"
+                                    download
                                     rel="noreferrer"
                                     className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-100 transition"
                                     title={ob.client.vatZipLabel}
@@ -216,7 +216,7 @@ export function Desk20thView({
                               {vatSourcePackageUrl && (
                                 <a
                                   href={vatSourcePackageUrl}
-                                  target="_blank"
+                                  download
                                   rel="noreferrer"
                                   className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-100/70 border border-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/80 transition"
                                   title={ob.client.vatSourcePackageLabel}
@@ -356,7 +356,7 @@ export function Desk20thView({
                                 {vatSourcePackageUrl && (
                                   <a
                                     href={vatSourcePackageUrl}
-                                    target="_blank"
+                                    download
                                     rel="noreferrer"
                                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-100 px-2.5 py-1.5 font-semibold text-slate-600 hover:bg-slate-100/80 transition"
                                     title={ob.client.vatSourcePackageLabel}
@@ -367,7 +367,7 @@ export function Desk20thView({
                                 {vatGeneratedZipUrl && (
                                   <a
                                     href={vatGeneratedZipUrl}
-                                    target="_blank"
+                                    download
                                     rel="noreferrer"
                                     className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-50 px-2.5 py-1.5 font-semibold text-emerald-600 hover:bg-emerald-100 transition"
                                     title={ob.client.vatZipLabel}
@@ -435,7 +435,7 @@ export function Desk20thView({
                               <div className="flex flex-col gap-1">
                                 <a
                                   href={ob.client.totZipUrl}
-                                  target="_blank"
+                                  download
                                   rel="noreferrer"
                                   className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-100 transition"
                                 >
@@ -492,6 +492,9 @@ export function Desk20thView({
                                   : 'bg-blue-50 border-blue-500/20 text-blue-600 hover:bg-blue-100 hover:text-blue-500'
                               }`}
                             >
+                              {isPendingFilingJob(relevantJob as any) && (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              )}
                               {vatGenerateActionLabel}
                             </button>
                             <button
@@ -509,6 +512,9 @@ export function Desk20thView({
                                   : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
                               }`}
                             >
+                              {isPendingFilingJob(relevantJob as any) && (
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                              )}
                               File VAT (Auto File)
                             </button>
                           </>
@@ -531,6 +537,9 @@ export function Desk20thView({
                                 : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
                             }`}
                           >
+                            {isPendingFilingJob(relevantJob as any) && (
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                            )}
                             Process Return
                           </button>
                         )}
@@ -541,6 +550,9 @@ export function Desk20thView({
                           className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Generate Payment Slip directly without filing"
                         >
+                          {isPendingFilingJob(relevantJob as any) && (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          )}
                           Print PRN
                         </button>
                         {isTerminalFilingJob(relevantJob as any) &&
@@ -549,7 +561,7 @@ export function Desk20thView({
                               {latestReceiptUrl && !unifiedPrnUrl && latestReceiptUrl !== latestPrnUrl && (
                                 <a
                                   href={latestReceiptUrl}
-                                  target="_blank"
+                                  download
                                   rel="noopener noreferrer"
                                   className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-50 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition shadow-sm"
                                 >
@@ -559,7 +571,7 @@ export function Desk20thView({
                               {(latestPrnUrl || unifiedPrnUrl) && (
                                 <a
                                   href={unifiedPrnUrl ?? latestPrnUrl}
-                                  target="_blank"
+                                  download
                                   rel="noopener noreferrer"
                                   className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm"
                                 >

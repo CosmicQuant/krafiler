@@ -85,6 +85,14 @@ export class AxonDataExtractionEngine {
         return amount.toFixed(2);
     }
 
+    private escapeCsv(value: string | number | undefined): string {
+        const str = String(value ?? '');
+        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+            return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+    }
+
     private stripApostrophe(value: string | undefined): string {
         if (!value) return '';
         const normalizedValue = value.replace(/^\uFEFF/, '').replace(/\u0000/g, '').trim();
@@ -467,7 +475,37 @@ export class AxonDataExtractionEngine {
                 const resStatCode = emp.residentialStatus.toLowerCase().includes('resident') && !emp.residentialStatus.toLowerCase().includes('non') ? 'RES' : 'NRES';
 
                 // Fields map to the B_Employees_Dtls_Simp standard EXACTLY as expected by iTax
-                return `${emp.kraPin},${emp.fullName},${emp.residentialStatus},${emp.typeOfEmployee},${emp.pwd},${emp.exemptionCert},${emp.totalCashPay},${emp.carBenefit},${emp.meals},${emp.nonCash},${emp.typeOfHousing},,${emp.housingBenefit || emp.otherBenefits || 0},${emp.grossSalary},${emp.shaContribution},${emp.nssfContribution},${emp.otherPension},${emp.postRetMedical},${emp.mortgage},${emp.ahl},${emp.taxablePay},${emp.personalRelief},${emp.insuranceRelief},${emp.paye},${emp.selfAssessedPaye},${typeEmpCode},0,${resStatCode},DTEMP`;
+                return [
+                    this.escapeCsv(emp.kraPin),
+                    this.escapeCsv(emp.fullName),
+                    this.escapeCsv(emp.residentialStatus),
+                    this.escapeCsv(emp.typeOfEmployee),
+                    this.escapeCsv(emp.pwd),
+                    this.escapeCsv(emp.exemptionCert),
+                    this.escapeCsv(emp.totalCashPay),
+                    this.escapeCsv(emp.carBenefit),
+                    this.escapeCsv(emp.meals),
+                    this.escapeCsv(emp.nonCash),
+                    this.escapeCsv(emp.typeOfHousing),
+                    '',
+                    this.escapeCsv(emp.housingBenefit || emp.otherBenefits || 0),
+                    this.escapeCsv(emp.grossSalary),
+                    this.escapeCsv(emp.shaContribution),
+                    this.escapeCsv(emp.nssfContribution),
+                    this.escapeCsv(emp.otherPension),
+                    this.escapeCsv(emp.postRetMedical),
+                    this.escapeCsv(emp.mortgage),
+                    this.escapeCsv(emp.ahl),
+                    this.escapeCsv(emp.taxablePay),
+                    this.escapeCsv(emp.personalRelief),
+                    this.escapeCsv(emp.insuranceRelief),
+                    this.escapeCsv(emp.paye),
+                    this.escapeCsv(emp.selfAssessedPaye),
+                    this.escapeCsv(typeEmpCode),
+                    '0',
+                    this.escapeCsv(resStatCode),
+                    'DTEMP',
+                ].join(',');
             }).join('\n');
 
             archive.append(simpRows, { name: 'B_Employees_Dtls_Simp.csv' });

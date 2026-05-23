@@ -8,7 +8,7 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 - **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
 - **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker. The DB file is gitignored and created on first API startup by `initDb()`.
 - **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
-- **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`.
+- **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`, `excise_duty`.
 - **VAT has two modes**: `prepareVatOnly` (download auto-populated data & generate ZIP without filing) and `upload` (file the prepared ZIP).
 
 ## Entry Points
@@ -47,7 +47,7 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 ## Database
 
 - SQLite file at `backend/src/db/krafiler.sqlite` (gitignored; auto-created on API startup).
-- Migrations auto-run on API startup (`initDb()` in `server.ts`). 18 migration files (`001`–`019`, `016` is missing) in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
+- Migrations auto-run on API startup (`initDb()` in `server.ts`). 31 migration files (`001`–`032`, `016` is missing) in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
 - Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
 - Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
 - **Work schedule architecture** (`migrations/025`–`027`): `work_schedules` (per-weekday hours config as JSON), `holidays` (date, isRecurring, holidayType), and `employees.workScheduleId`/`offDay`. The payroll engine uses these for prorating `basicPay` against scheduled work days + holidays.
@@ -70,7 +70,7 @@ From `.env.example` and additional code-read vars:
 | `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
 | `NODE_ENV` | `development` or `production` (changes Playwright headless behavior in some scripts) |
 | `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport). `EMAIL_FROM` is used by `emailService.ts` but is **not** listed in `.env.example`. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport). |
 | `PLAYWRIGHT_HEADLESS=false` | `true` for headless mode |
 | `PLAYWRIGHT_SLOW_MO=0` | Millisecond delay between Playwright actions (debugging) |
 | `KRA_BROWSER_CHANNEL=chrome` | Browser channel: `chrome` or `msedge` |
@@ -178,3 +178,27 @@ Located at `backend/src/workers/services/`:
 - **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.
 - **`receipts/` is git-ignored** (`.gitignore` line 19).
 - **Work schedule + holiday proration**: `computePayrollEntry` now accepts optional `workScheduleConfig` and `holidays[]` to prorate `basicPay` against scheduled work days instead of assuming 30 days. `getScheduledWorkDays()` helper counts days with `hours>0` from the config JSON and excludes holidays.
+
+## Enterprise Payroll Pipeline
+
+### New Endpoints
+- `POST /api/payroll/calculate-preview` — Backend-driven single-row preview. Accepts all raw inputs (basicPay, carBenefit, meals, nonCash, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgage, insuranceRelief, pwd, payStructure, period). Returns computed statutory values (grossPay, shaDeduction, nssfDeduction, ahlDeduction, taxablePay, payeTax, netPay, etc.). Called from frontend on cell blur with 300ms debounce.
+- `POST /api/clients/:clientId/payroll-runs/:id/finalize` — Locks the run, creates `loan_transactions` for each loan deduction, decrements `remainingInstallments`, validates 1/3 rule (warning only, not hard stop), marks run status as 'closed'.
+- `POST /api/clients/:clientId/payroll-runs/:id/rollback` — Unlocks the run, deletes all `loan_transactions` for the run, restores `remainingInstallments` on loans, deletes all `payroll_adjustments` for the run, clears `lockedAt`.
+- `GET /api/clients/:clientId/payroll-runs/:id/adjustments` — List dynamic adjustments for a run.
+- `POST /api/clients/:clientId/payroll-runs/:id/adjustments` — Create a dynamic adjustment (employeeId, label, type, amount, isStatutory). Blocked if run is finalized.
+- `PUT /api/clients/:clientId/payroll-runs/:id/adjustments/:adjId` — Update an adjustment. Blocked if run is finalized.
+- `DELETE /api/clients/:clientId/payroll-runs/:id/adjustments/:adjId` — Delete an adjustment. Blocked if run is finalized.
+
+### Architecture Changes
+- **No frontend hardcoded math**: `calculateFields` removed from `PayrollWebView.tsx`. All computed columns (SHA, NSSF, AHL, Taxable Pay, PAYE, Net Pay) come from the backend preview endpoint or the generated entries API.
+- **Ledger-based loans**: `loan_transactions` table tracks every deduction. Loans only mutate `remainingInstallments` on `finalize`, never on draft `generate`. Rollback reverses transactions and restores balances.
+- **Dynamic adjustments**: `payroll_adjustments` table stores per-employee, per-run adjustments (allowance/deduction, free-form label, amount, isStatutory flag). `computePayrollEntry` accepts `adjustments: PayrollAdjustmentInput[]` parameter: allowances increase `benefits`/`grossPay` (and therefore statutory base), non-statutory deductions increase `otherDeductions`. `generateEntriesForRun` reads adjustments from DB and passes them to the engine.
+- **Lock/finalize/rollback**: `lockedAt` column on `payroll_runs` and `payroll_entries` tracks finalize state. Finalize creates loan transactions and locks; rollback reverses everything and unlocks.
+- **1/3 rule**: Minimum net pay must be >= 1/3 of gross pay. Checked in `finalize` endpoint; returns warnings but does NOT block. Admin can override.
+
+### New Tables
+- `loan_transactions` (`028_loan_transactions.ts`): clientId, employeeId, payrollRunId, loanId, amount, type, createdAt.
+- `payroll_adjustments` (`029_payroll_adjustments.ts` + `032_payroll_adjustments_employee_id.ts`): payrollRunId, employeeId, payrollEntryId, type, label, amount, isStatutory, createdAt.
+- `lockedAt` added to `payroll_runs` and `payroll_entries` (`030_add_locked_at.ts`).
+- `updatedAt` added to `payroll_entries` (`031_payroll_entries_updated_at.ts`).

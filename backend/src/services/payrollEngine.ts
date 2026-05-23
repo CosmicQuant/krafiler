@@ -20,6 +20,14 @@ export interface PayrollInput {
     mortgageInterest?: number;
     insuranceRelief?: number;
     bonusPay?: number;
+    standardCheckIn?: string;
+    standardCheckOut?: string;
+}
+
+export interface PayrollAdjustmentInput {
+    type: 'allowance' | 'deduction';
+    amount: number;
+    isStatutory: boolean;
 }
 
 export interface PayrollComputed {
@@ -115,6 +123,7 @@ export function computePayrollEntry(
     prorate: boolean,
     workScheduleConfig?: WorkScheduleConfig,
     holidays: HolidayInfo[] = [],
+    adjustments: PayrollAdjustmentInput[] = [],
 ): PayrollComputed {
     const rawBasicPay = typeof input.basicPay === 'number' ? input.basicPay : parseFloat(String(input.basicPay)) || 0;
     const rawBenefits = typeof input.benefits === 'number' ? input.benefits : parseFloat(String(input.benefits)) || 0;
@@ -187,23 +196,43 @@ export function computePayrollEntry(
     const dailyRate = payStructure === 'prorated'
         ? rawBasicPay / Math.max(1, totalDays)
         : rawBasicPay / scheduledWorkDays;
-    const attendanceDeduction = roundMoney(dailyRate * (absentDays + lateHours / 8));
+
+    // Calculate actual standard working hours per day from employee schedule
+    const standardIn = input.standardCheckIn || '08:00';
+    const standardOut = input.standardCheckOut || '17:00';
+    const [siH, siM] = standardIn.split(':').map(Number);
+    const [soH, soM] = standardOut.split(':').map(Number);
+    const standardWorkingMinutes = (soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0));
+    const standardWorkingHours = Math.max(1, standardWorkingMinutes / 60);
+
+    const attendanceDeduction = roundMoney(dailyRate * (absentDays + lateHours / standardWorkingHours));
 
     const grossPay = roundMoney(basicPay + benefits + overtimePay + taxableBonus - unpaidLeaveDeduction - attendanceDeduction);
 
+    // Apply dynamic adjustments
+    const totalAllowances = adjustments
+        .filter(a => a.type === 'allowance')
+        .reduce((sum, a) => sum + a.amount, 0);
+    const totalNonStatutoryDeductions = adjustments
+        .filter(a => a.type === 'deduction' && !a.isStatutory)
+        .reduce((sum, a) => sum + a.amount, 0);
+
+    const adjustedGrossPay = roundMoney(grossPay + totalAllowances);
+    const adjustedBenefits = roundMoney(benefits + totalAllowances);
+
     const loanDeduction = roundMoney(input.loanDeduction || 0);
 
-    const shaDeduction = roundMoney(grossPay * 0.0275);
+    const shaDeduction = roundMoney(adjustedGrossPay * 0.0275);
 
-    const nssfTier1Gross = Math.min(grossPay, 9000);
+    const nssfTier1Gross = Math.min(adjustedGrossPay, 9000);
     const nssfTier1 = roundMoney(nssfTier1Gross * 0.06);
-    const nssfTier2Gross = Math.max(0, Math.min(grossPay - 9000, 99000));
+    const nssfTier2Gross = Math.max(0, Math.min(adjustedGrossPay - 9000, 99000));
     const nssfTier2 = roundMoney(nssfTier2Gross * 0.06);
     const nssfDeduction = roundMoney(nssfTier1 + nssfTier2);
 
-    const ahlDeduction = roundMoney(grossPay * 0.015);
+    const ahlDeduction = roundMoney(adjustedGrossPay * 0.015);
 
-    const otherDeductions = roundMoney(loanDeduction);
+    const otherDeductions = roundMoney(loanDeduction + totalNonStatutoryDeductions);
 
     // KRA caps per the official P10_Return template
     const otherPension = input.otherPension || 0;
@@ -212,23 +241,23 @@ export function computePayrollEntry(
     const mortgageInterestCapped = Math.min(input.mortgageInterest || 0, 30000);
     const pwdExemption = (input.pwd === 'Yes') ? 12500 : 0;
 
-    const taxablePay = roundMoney(Math.max(0, grossPay - shaDeduction - nssfPensionCapped - postRetMedicalCapped - mortgageInterestCapped - ahlDeduction - pwdExemption));
+    const taxablePay = roundMoney(Math.max(0, adjustedGrossPay - shaDeduction - nssfPensionCapped - postRetMedicalCapped - mortgageInterestCapped - ahlDeduction - pwdExemption));
 
     const personalRelief = 2400;
     const insuranceRelief = Math.min(input.insuranceRelief || 0, 5000);
 
     const grossPayeTax = roundMoney(
         Math.max(0, taxablePay * 0.1)
-            + Math.max(0, (taxablePay - 24000) * 0.15)
-            + Math.max(0, (taxablePay - 32333) * 0.05)
-            + Math.max(0, (taxablePay - 500000) * 0.025)
-            + Math.max(0, (taxablePay - 800000) * 0.025)
+        + Math.max(0, (taxablePay - 24000) * 0.15)
+        + Math.max(0, (taxablePay - 32333) * 0.05)
+        + Math.max(0, (taxablePay - 500000) * 0.025)
+        + Math.max(0, (taxablePay - 800000) * 0.025)
     );
 
     const payeTax = roundMoney(Math.max(0, grossPayeTax - personalRelief - insuranceRelief));
 
     const totalDeductions = roundMoney(shaDeduction + nssfDeduction + ahlDeduction + otherDeductions + payeTax);
-    const netPay = roundMoney(grossPay - totalDeductions + nonTaxableBonus);
+    const netPay = roundMoney(adjustedGrossPay - totalDeductions + nonTaxableBonus);
 
     return {
         employeeId: input.employeeId,
@@ -236,8 +265,8 @@ export function computePayrollEntry(
         kraPin: input.kraPin,
         payrollNumber: input.payrollNumber,
         basicPay,
-        benefits,
-        grossPay,
+        benefits: adjustedBenefits,
+        grossPay: adjustedGrossPay,
         shaDeduction,
         nssfDeduction,
         ahlDeduction,

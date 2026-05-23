@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArrowLeft, Calendar, Download, Save, Plus, Trash2, RefreshCw, AlertCircle, FileSpreadsheet, Cloud, X, Users, Pencil, FileText, Banknote, CalendarCheck, BarChart3, DollarSign, Briefcase, TrendingUp, Mail, Globe, LogIn, User, FolderOpen, Upload } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { ClientObligation } from '../../../types';
@@ -74,64 +74,19 @@ const TABS: { id: TabId; label: string; img?: string }[] = [
   { id: 'audit', label: 'Audit Trail' },
 ];
 
-function roundMoney(amount: number): number {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
-}
-
 function KpiCard({ icon: Icon, label, value, sub, color }: { icon: any; label: string; value: string | number; sub?: string; color?: string }) {
-    return (
-        <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-start gap-2">
-            <div className={`rounded-lg p-2 ${color || 'bg-slate-100'}`}>
-                <Icon className={`h-4 w-4 ${color ? 'text-white' : 'text-slate-600'}`} />
-            </div>
-            <div>
-                <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
-                <p className="text-base font-bold text-slate-900">{typeof value === 'number' ? value.toLocaleString() : value}</p>
-                {sub && <p className="text-[9px] text-slate-500">{sub}</p>}
-            </div>
-        </div>
-    );
-}
-
-function calculateFields(emp: PayrollEmployee): void {
-  const totalCashPay = parseFloat(String(emp[STANDARD_HEADERS[11]])) || 0;
-  const carBenefit = parseFloat(String(emp[STANDARD_HEADERS[12]])) || 0;
-  const meals = parseFloat(String(emp[STANDARD_HEADERS[13]])) || 0;
-  const nonCash = parseFloat(String(emp[STANDARD_HEADERS[14]])) || 0;
-  const housingBenefit = parseFloat(String(emp[STANDARD_HEADERS[16]])) || 0;
-  const otherBenefits = parseFloat(String(emp[STANDARD_HEADERS[17]])) || 0;
-  const otherPension = parseFloat(String(emp[STANDARD_HEADERS[21]])) || 0;
-  const postRetMedical = parseFloat(String(emp[STANDARD_HEADERS[22]])) || 0;
-  const mortgage = parseFloat(String(emp[STANDARD_HEADERS[23]])) || 0;
-  const insuranceRelief = parseFloat(String(emp[STANDARD_HEADERS[27]])) || 0;
-  const pwd = String(emp[STANDARD_HEADERS[9]] || '').toLowerCase() === 'yes';
-
-  const grossSalary = roundMoney(totalCashPay + carBenefit + meals + nonCash + housingBenefit + otherBenefits);
-  const shaContribution = grossSalary > 0 ? roundMoney(grossSalary * 0.0275) : 0;
-  const nssfContribution = grossSalary > 0 ? roundMoney(Math.min(grossSalary * 0.06, 6480)) : 0;
-  const ahl = grossSalary > 0 ? roundMoney(grossSalary * 0.015) : 0;
-  const pwdExemption = pwd ? 150000 : 0;
-  const taxablePay = roundMoney(Math.max(0, grossSalary - shaContribution - nssfContribution - otherPension - postRetMedical - mortgage - ahl - pwdExemption));
-  const personalRelief = totalCashPay > 0 ? 2400 : 0;
-
-  const paye = roundMoney(Math.max(0,
-    Math.max(0, taxablePay * 0.1)
-    + Math.max(0, (taxablePay - 24000) * 0.15)
-    + Math.max(0, (taxablePay - 32333) * 0.05)
-    + Math.max(0, (taxablePay - 500000) * 0.025)
-    + Math.max(0, (taxablePay - 800000) * 0.025)
-    - personalRelief
-    - insuranceRelief,
-  ));
-
-  emp[STANDARD_HEADERS[18]] = grossSalary.toFixed(2);
-  emp[STANDARD_HEADERS[19]] = shaContribution.toFixed(2);
-  emp[STANDARD_HEADERS[20]] = nssfContribution.toFixed(2);
-  emp[STANDARD_HEADERS[24]] = ahl.toFixed(2);
-  emp[STANDARD_HEADERS[25]] = taxablePay.toFixed(2);
-  emp[STANDARD_HEADERS[26]] = personalRelief.toFixed(2);
-  emp[STANDARD_HEADERS[28]] = paye.toFixed(2);
-  emp[STANDARD_HEADERS[29]] = paye.toFixed(2);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-start gap-2">
+      <div className={`rounded-lg p-2 ${color || 'bg-slate-100'}`}>
+        <Icon className={`h-4 w-4 ${color ? 'text-white' : 'text-slate-600'}`} />
+      </div>
+      <div>
+        <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+        <p className="text-base font-bold text-slate-900">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+        {sub && <p className="text-[9px] text-slate-500">{sub}</p>}
+      </div>
+    </div>
+  );
 }
 
 function createEmptyEmployee(index: number): PayrollEmployee {
@@ -151,7 +106,6 @@ function createEmptyEmployee(index: number): PayrollEmployee {
   });
   emp['Std Check-In'] = '08:00';
   emp['Std Check-Out'] = '17:00';
-  calculateFields(emp);
   return emp;
 }
 
@@ -271,6 +225,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
   const [runDetailView, setRunDetailView] = useState<'list' | 'detail'>('list');
   const [savingOvertime, setSavingOvertime] = useState(false);
 
+  // Dynamic adjustments state
+  const [runAdjustments, setRunAdjustments] = useState<any[]>([]);
+  const [loadingAdjustments, setLoadingAdjustments] = useState(false);
+  const [showAdjustmentsForm, setShowAdjustmentsForm] = useState(false);
+  const [adjustmentForm, setAdjustmentForm] = useState({ employeeId: '', label: '', type: 'allowance', amount: 0 });
+
   // Overtime tab state
   const [attendanceOvertimePeriod, setAttendanceOvertimePeriod] = useState(getCurrentFilingPeriod().period);
   const [attendanceOvertimeEmployees, setAttendanceOvertimeEmployees] = useState<any[]>([]);
@@ -349,16 +309,84 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
+  // Debounced preview: call backend calculator on cell blur (300ms)
+  const previewTimers = useRef<Record<number, NodeJS.Timeout>>({});
+
+  const triggerPreview = useCallback(async (empIndex: number, rawValues: PayrollEmployee) => {
+    const basicPay = parseFloat(String(rawValues['Total Cash Pay (A)'] || 0));
+    const carBenefit = parseFloat(String(rawValues['Value of Car Benefit (B)'] || 0));
+    const meals = parseFloat(String(rawValues['Value of Meals (C)'] || 0));
+    const nonCash = parseFloat(String(rawValues['Non Cash Benefits (D)'] || 0));
+    const housingBenefit = parseFloat(String(rawValues['Housing Benefit (F)'] || 0));
+    const otherBenefits = parseFloat(String(rawValues['Other Benefits (G)'] || 0));
+    const otherPension = parseFloat(String(rawValues['Other Pension Contribution (K)'] || 0));
+    const postRetMedical = parseFloat(String(rawValues['Post Retirement Medical Fund (L)'] || 0));
+    const mortgage = parseFloat(String(rawValues['Mortgage Interest (M)'] || 0));
+    const insuranceRelief = parseFloat(String(rawValues['Amount of Insurance Relief (Q)'] || 0));
+    const pwd = String(rawValues['Persons with Disability(PWD)'] || '').toLowerCase() === 'yes';
+    const standardCheckIn = String(rawValues['Std Check-In'] || '08:00');
+    const standardCheckOut = String(rawValues['Std Check-Out'] || '17:00');
+
+    try {
+      const response = await apiFetch('/api/payroll/calculate-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          basicPay,
+          carBenefit,
+          meals,
+          nonCash,
+          housingBenefit,
+          otherBenefits,
+          otherPension,
+          postRetMedical,
+          mortgage,
+          insuranceRelief,
+          pwd,
+          standardCheckIn,
+          standardCheckOut,
+          payStructure: 'fixed',
+          period: newRunPeriod || getCurrentFilingPeriod().period,
+        }),
+      });
+      if (!response.ok) throw new Error('Preview API failed');
+      const data = await response.json();
+
+      setEmployees(prev => prev.map((e, i) => {
+        if (i !== empIndex) return e;
+        return {
+          ...e,
+          'Total Gross Pay (Ksh) (H)': (data.grossPay ?? 0).toFixed(2),
+          'Social Health Insurance Fund (I)': (data.shaDeduction ?? 0).toFixed(2),
+          'NSSF Contribution (J)': (data.nssfDeduction ?? 0).toFixed(2),
+          'Affordable Housing Levy (N)': (data.ahlDeduction ?? 0).toFixed(2),
+          'Taxable Pay(Ksh) (O)': (data.taxablePay ?? 0).toFixed(2),
+          'Monthly Personal Relief (Ksh) (P)': '2400.00',
+          'PAYE Tax (Ksh) (R)': (data.payeTax ?? 0).toFixed(2),
+          'Self Assessed PAYE Tax (Ksh) (S)': (data.payeTax ?? 0).toFixed(2),
+        };
+      }));
+    } catch (err) {
+      console.error('Preview failed:', err);
+    }
+  }, [newRunPeriod]);
+
   const updateField = (empIndex: number, header: string, value: string) => {
     setEmployees(prev => {
       const updated = prev.map((emp, i) => {
         if (i !== empIndex) return emp;
-        const next = { ...emp, [header]: value };
-        if (!COMPUTED_COLUMNS.has(header)) {
-          calculateFields(next);
-        }
-        return next;
+        return { ...emp, [header]: value };
       });
+
+      if (!COMPUTED_COLUMNS.has(header)) {
+        if (previewTimers.current[empIndex]) {
+          clearTimeout(previewTimers.current[empIndex]);
+        }
+        previewTimers.current[empIndex] = setTimeout(() => {
+          triggerPreview(empIndex, updated[empIndex]);
+        }, 300);
+      }
+
       return updated;
     });
   };
@@ -729,10 +757,14 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       const otMap = new Map<number, { hours: number; rate: number; multiplier: number }>();
       for (const ot of otRecords) otMap.set(ot.employeeId, { hours: ot.hours || 0, rate: ot.rate || 0, multiplier: ot.multiplier || 1 });
 
-      const attMap = new Map<number, Map<string, string>>();
-      for (const a of attRecords) {
+      // Sort by id desc so most recent record per day wins
+      const sortedAtt = [...attRecords].sort((a: any, b: any) => (b.id || 0) - (a.id || 0));
+      const attMap = new Map<number, Map<string, { status: string; id: number }>>();
+      for (const a of sortedAtt) {
         if (!attMap.has(a.employeeId)) attMap.set(a.employeeId, new Map());
-        attMap.get(a.employeeId)!.set(a.date, a.status || 'Present');
+        if (!attMap.get(a.employeeId)!.has(a.date)) {
+          attMap.get(a.employeeId)!.set(a.date, { status: a.status || 'Present', id: a.id });
+        }
       }
 
       // Build holidays set: date strings for the month
@@ -930,6 +962,14 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
       const entriesRes = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/entries`);
       if (entriesRes.ok) setRunEntries(await entriesRes.json());
     } catch { /* ignore */ } finally { setLoadingEntries(false); }
+  }, [client.id]);
+
+  const fetchRunAdjustments = useCallback(async (runId: number) => {
+    setLoadingAdjustments(true);
+    try {
+      const res = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/adjustments`);
+      if (res.ok) setRunAdjustments(await res.json());
+    } catch { setRunAdjustments([]); } finally { setLoadingAdjustments(false); }
   }, [client.id]);
 
   // Auto-load portal dashboard when token exists and tab is portal
@@ -1220,6 +1260,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
         setStatusMessage(editingAttendance ? 'Attendance record updated' : 'Attendance record created');
         setShowAttendanceModal(false);
         setEditingAttendance(null);
+        // Refresh calendar + review data so changes appear immediately
+        await fetchOvertimeForAttendance(attendanceOvertimePeriod);
       } else {
         const err = await res.json().catch(() => ({}));
         setError(err.message || 'Save failed');
@@ -1279,7 +1321,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
               <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-mono text-slate-500">{client.pin}</span>
             </div>
             {clients && clients.length > 0 && onClientChange && (
-                <select
+              <select
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 w-64"
                 value={client.id}
                 onChange={(e) => {
@@ -1328,11 +1370,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={`flex flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition border-b-2 ${
-                activeTab === id
+              className={`flex flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold transition border-b-2 ${activeTab === id
                   ? 'border-slate-900 text-slate-900'
                   : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
+                }`}
             >
               {img ? (
                 <img src={img} alt={label} className="h-10 w-10 object-contain" />
@@ -1510,7 +1551,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
 
               <div className="mb-4 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-left text-xs">
-                    <thead>
+                  <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500 border-r border-slate-200 min-w-[3rem]">
                         #
@@ -1522,9 +1563,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                         return (
                           <th
                             key={header}
-                            className={`px-3 py-2.5 text-xs font-semibold uppercase tracking-wider whitespace-nowrap ${
-                              COMPUTED_COLUMNS.has(header) ? 'text-slate-400' : 'text-slate-500'
-                            } ${numeric ? 'text-right' : ''}`}
+                            className={`px-3 py-2.5 text-xs font-semibold uppercase tracking-wider whitespace-nowrap ${COMPUTED_COLUMNS.has(header) ? 'text-slate-400' : 'text-slate-500'
+                              } ${numeric ? 'text-right' : ''}`}
                           >
                             {header}
                           </th>
@@ -1732,8 +1772,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 </span>
               </div>
             </>
-              )}
-            </>
+          )}
+        </>
       )}
 
       {/* ───── Time & Attendance Tab ───── */}
@@ -1766,8 +1806,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
               >
-                {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
-                  <option key={m} value={m}>{new Date(2020, parseInt(m)-1, 1).toLocaleString('en-US', { month: 'short' })}</option>
+                {['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'].map(m => (
+                  <option key={m} value={m}>{new Date(2020, parseInt(m) - 1, 1).toLocaleString('en-US', { month: 'short' })}</option>
                 ))}
               </select>
               {isPastDeadline(attendanceOvertimePeriod) && (
@@ -1821,12 +1861,13 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                               <td key={i} className="w-8 px-0 py-1.5 text-center">
                                 <button
                                   onClick={() => {
-                                    const existingStatus = emp._att?.get(dateKey) || 'Present';
+                                    const existing = emp._att?.get(dateKey);
+                                    const existingStatus = existing?.status || 'Present';
                                     setAttendanceForm({
                                       employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
                                       date: dateKey, checkIn: '', checkOut: '', status: existingStatus, notes: '',
                                     });
-                                    setEditingAttendance(null);
+                                    setEditingAttendance(existing?.id ? { id: existing.id } : null);
                                     setShowAttendanceModal(true);
                                   }}
                                   className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 transition hover:ring-1 hover:ring-purple-300"
@@ -1840,12 +1881,13 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                               <td key={i} className="w-8 px-0 py-1.5 text-center">
                                 <button
                                   onClick={() => {
-                                    const existingStatus = emp._att?.get(dateKey) || 'Present';
+                                    const existing = emp._att?.get(dateKey);
+                                    const existingStatus = existing?.status || 'Present';
                                     setAttendanceForm({
                                       employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
                                       date: dateKey, checkIn: '', checkOut: '', status: existingStatus, notes: '',
                                     });
-                                    setEditingAttendance(null);
+                                    setEditingAttendance(existing?.id ? { id: existing.id } : null);
                                     setShowAttendanceModal(true);
                                   }}
                                   className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-slate-100 text-slate-400 transition hover:ring-1 hover:ring-slate-300"
@@ -1855,17 +1897,18 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             );
                           }
 
-                          const status = emp._att?.get(dateKey) || 'Present';
+                          const attRecord = emp._att?.get(dateKey);
+                          const status = attRecord?.status || 'Present';
                           const color = status === 'Present' ? 'bg-emerald-50 text-emerald-700' :
-                                        status === 'Absent' ? 'bg-red-50 text-red-700' :
-                                        status === 'Late' ? 'bg-amber-50 text-amber-700' :
-                                        status === 'Half-Day' ? 'bg-orange-50 text-orange-700' :
-                                        status === 'Leave' ? 'bg-blue-50 text-blue-700' : 'text-slate-300';
+                            status === 'Absent' ? 'bg-red-50 text-red-700' :
+                              status === 'Late' ? 'bg-amber-50 text-amber-700' :
+                                status === 'Half-Day' ? 'bg-orange-50 text-orange-700' :
+                                  status === 'Leave' ? 'bg-blue-50 text-blue-700' : 'text-slate-300';
                           const label = status === 'Present' ? 'P' :
-                                        status === 'Absent' ? 'A' :
-                                        status === 'Late' ? 'L' :
-                                        status === 'Half-Day' ? 'H' :
-                                        status === 'Leave' ? 'Lv' : '·';
+                            status === 'Absent' ? 'A' :
+                              status === 'Late' ? 'L' :
+                                status === 'Half-Day' ? 'H' :
+                                  status === 'Leave' ? 'Lv' : '·';
                           return (
                             <td key={i} className="w-8 px-0 py-1.5 text-center">
                               <button
@@ -1874,7 +1917,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                                     employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
                                     date: dateKey, checkIn: '', checkOut: '', status: status || 'Present', notes: '',
                                   });
-                                  setEditingAttendance(null);
+                                  setEditingAttendance(attRecord?.id ? { id: attRecord.id } : null);
                                   setShowAttendanceModal(true);
                                 }}
                                 className={`inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold transition ${color} hover:ring-1 hover:ring-slate-400`}
@@ -1964,38 +2007,38 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       {attendanceOvertimeEmployees
                         .filter((e: any) => (e.ot?.hours || 0) > 0 || (e.ot?.amount || 0) > 0)
                         .map((emp: any) => (
-                        <tr key={emp.id} className="hover:bg-slate-50/50 transition">
-                          <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
-                          <td className="px-3 py-2 text-right">
-                            <input type="number" value={emp.ot.hours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, hours: val } } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <input type="number" value={emp.ot.rate} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, rate: val } } : e)); }} className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <input type="number" value={emp.ot.multiplier} step="0.5" onChange={e => { const val = parseFloat(e.target.value) || 1; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, multiplier: val } } : e)); }} className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
-                            {(emp.ot.hours * emp.ot.rate * emp.ot.multiplier).toFixed(2)}
-                          </td>
-                          <td className="px-3 py-2">
-                            <button
-                              onClick={async () => {
-                                if (!window.confirm(`Delete overtime for ${emp.employeeName}?`)) return;
-                                try {
-                                  await apiFetch(`/clients/${client.id}/employees/${emp.id}/overtime?period=${attendanceOvertimePeriod}`, { method: 'DELETE' });
-                                  setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 } } : e));
-                                  setStatusMessage('Overtime record deleted.');
-                                } catch { setError('Failed to delete overtime.'); }
-                              }}
-                              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
-                              title="Delete"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                          <tr key={emp.id} className="hover:bg-slate-50/50 transition">
+                            <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
+                            <td className="px-3 py-2 text-right">
+                              <input type="number" value={emp.ot.hours} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, hours: val } } : e)); }} className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input type="number" value={emp.ot.rate} onChange={e => { const val = parseFloat(e.target.value) || 0; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, rate: val } } : e)); }} className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input type="number" value={emp.ot.multiplier} step="0.5" onChange={e => { const val = parseFloat(e.target.value) || 1; setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { ...e.ot, multiplier: val } } : e)); }} className="w-14 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-right text-slate-900" />
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                              {(emp.ot.hours * emp.ot.rate * emp.ot.multiplier).toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm(`Delete overtime for ${emp.employeeName}?`)) return;
+                                  try {
+                                    await apiFetch(`/clients/${client.id}/employees/${emp.id}/overtime?period=${attendanceOvertimePeriod}`, { method: 'DELETE' });
+                                    setAttendanceOvertimeEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, ot: { hours: 0, rate: Math.round((e.basicPay || 0) / 240), multiplier: 1.5 } } : e));
+                                    setStatusMessage('Overtime record deleted.');
+                                  } catch { setError('Failed to delete overtime.'); }
+                                }}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                   {attendanceOvertimeEmployees.filter((e: any) => (e.ot?.hours || 0) > 0 || (e.ot?.amount || 0) > 0).length === 0 && (
@@ -2033,12 +2076,11 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                             <td className="px-3 py-2 font-mono text-slate-700">{rec.endDate}</td>
                             <td className="px-3 py-2 text-right font-mono text-slate-900">{rec.daysCount}</td>
                             <td className="px-3 py-2">
-                              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                rec.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
-                                rec.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
-                                rec.status === 'Rejected' ? 'bg-red-50 text-red-700' :
-                                'bg-slate-100 text-slate-500'
-                              }`}>{rec.status}</span>
+                              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${rec.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
+                                  rec.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
+                                    rec.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                      'bg-slate-100 text-slate-500'
+                                }`}>{rec.status}</span>
                             </td>
                             <td className="px-3 py-2">
                               <button onClick={() => openLeaveModal(rec)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition" title="Edit">
@@ -2112,13 +2154,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                       <td className="px-3 py-2 text-right font-mono text-slate-900">{rec.installments}</td>
                       <td className="px-3 py-2 text-right font-mono text-slate-900">{rec.remainingInstallments}</td>
                       <td className="px-3 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          rec.status === 'Active' ? 'bg-blue-50 text-blue-700' :
-                          rec.status === 'Paid' ? 'bg-emerald-50 text-emerald-700' :
-                          rec.status === 'Defaulted' ? 'bg-red-50 text-red-700' :
-                          rec.status === 'Approved' ? 'bg-amber-50 text-amber-700' :
-                          'bg-slate-100 text-slate-500'
-                        }`}>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${rec.status === 'Active' ? 'bg-blue-50 text-blue-700' :
+                            rec.status === 'Paid' ? 'bg-emerald-50 text-emerald-700' :
+                              rec.status === 'Defaulted' ? 'bg-red-50 text-red-700' :
+                                rec.status === 'Approved' ? 'bg-amber-50 text-amber-700' :
+                                  'bg-slate-100 text-slate-500'
+                          }`}>
                           {rec.status}
                         </span>
                       </td>
@@ -2802,9 +2843,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                         </span>
                       </td>
                       <td className="px-3 py-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          h.status === 'sent' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                        }`}>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${h.status === 'sent' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                          }`}>
                           {h.status}
                         </span>
                       </td>
@@ -3074,11 +3114,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                                         </button>
                                       </>
                                     )}
-                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                      l.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
-                                      l.status === 'Rejected' ? 'bg-red-50 text-red-700' :
-                                      'bg-amber-50 text-amber-700'
-                                    }`}>{l.status}</span>
+                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${l.status === 'Approved' ? 'bg-emerald-50 text-emerald-700' :
+                                        l.status === 'Rejected' ? 'bg-red-50 text-red-700' :
+                                          'bg-amber-50 text-amber-700'
+                                      }`}>{l.status}</span>
                                   </div>
                                 </div>
                               ))}
@@ -3094,11 +3133,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                               {portalDashboard.recentLoans.map((l: any) => (
                                 <div key={l.id} className="flex items-center justify-between text-xs">
                                   <span className="text-slate-700">{l.loanType} · KES {Number(l.principal).toLocaleString()}</span>
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                    l.status === 'Paid' ? 'bg-emerald-50 text-emerald-700' :
-                                    l.status === 'Active' ? 'bg-blue-50 text-blue-700' :
-                                    'bg-amber-50 text-amber-700'
-                                  }`}>{l.status}</span>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${l.status === 'Paid' ? 'bg-emerald-50 text-emerald-700' :
+                                      l.status === 'Active' ? 'bg-blue-50 text-blue-700' :
+                                        'bg-amber-50 text-amber-700'
+                                    }`}>{l.status}</span>
                                 </div>
                               ))}
                             </div>
@@ -3154,24 +3192,24 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                                     className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200 transition"
                                   >
                                     Download
-                  </button>
-                  <button
-                    onClick={handleImportFromMasterCsv}
-                    disabled={importingEmployees}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
-                  >
-                    {importingEmployees ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Importing...</> : <><Cloud className="h-3.5 w-3.5" /> Import to DB</>}
-                  </button>
-                  <button
-                    onClick={() => openEmployeeModal()}
-                    className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-900 transition"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Add Employee
-                  </button>
-                </div>
+                                  </button>
+                                  <button
+                                    onClick={handleImportFromMasterCsv}
+                                    disabled={importingEmployees}
+                                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                                  >
+                                    {importingEmployees ? <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Importing...</> : <><Cloud className="h-3.5 w-3.5" /> Import to DB</>}
+                                  </button>
+                                  <button
+                                    onClick={() => openEmployeeModal()}
+                                    className="inline-flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-900 transition"
+                                  >
+                                    <Plus className="h-3.5 w-3.5" /> Add Employee
+                                  </button>
+                                </div>
                               ))}
-              </div>
-            </div>
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -3412,32 +3450,32 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                   />
                 </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</label>
-                    <input
-                      type="date"
-                      value={attendanceForm.date}
-                      onChange={e => setAttendanceForm((f: any) => ({ ...f, date: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check In</label>
-                    <input
-                      type="time"
-                      value={attendanceForm.checkIn}
-                      onChange={e => setAttendanceForm((f: any) => ({ ...f, checkIn: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</label>
+                  <input
+                    type="date"
+                    value={attendanceForm.date}
+                    onChange={e => setAttendanceForm((f: any) => ({ ...f, date: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
                 </div>
-                  <div>
-                    <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check Out</label>
-                    <input
-                      type="time"
-                      value={attendanceForm.checkOut}
-                      onChange={e => setAttendanceForm((f: any) => ({ ...f, checkOut: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check In</label>
+                  <input
+                    type="time"
+                    value={attendanceForm.checkIn}
+                    onChange={e => setAttendanceForm((f: any) => ({ ...f, checkIn: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Check Out</label>
+                  <input
+                    type="time"
+                    value={attendanceForm.checkOut}
+                    onChange={e => setAttendanceForm((f: any) => ({ ...f, checkOut: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</label>
@@ -3729,21 +3767,21 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Start Date</label>
-                    <input
-                      type="date"
-                      value={leaveForm.startDate}
-                      onChange={e => setLeaveForm((f: any) => ({ ...f, startDate: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
+                  <input
+                    type="date"
+                    value={leaveForm.startDate}
+                    onChange={e => setLeaveForm((f: any) => ({ ...f, startDate: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">End Date</label>
-                    <input
-                      type="date"
-                      value={leaveForm.endDate}
-                      onChange={e => setLeaveForm((f: any) => ({ ...f, endDate: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
+                  <input
+                    type="date"
+                    value={leaveForm.endDate}
+                    onChange={e => setLeaveForm((f: any) => ({ ...f, endDate: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Days Count</label>
@@ -3904,11 +3942,10 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                         <tr key={run.id} className="hover:bg-slate-50/50 transition">
                           <td className="px-3 py-2 font-semibold text-slate-900">{run.periodLabel} <span className="text-slate-400 font-mono">({run.period})</span></td>
                           <td className="px-3 py-2">
-                            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              run.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
-                              run.status === 'processing' ? 'bg-blue-50 text-blue-700' :
-                              'bg-slate-100 text-slate-500'
-                            }`}>{run.status}</span>
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${run.status === 'completed' ? 'bg-emerald-50 text-emerald-700' :
+                                run.status === 'processing' ? 'bg-blue-50 text-blue-700' :
+                                  'bg-slate-100 text-slate-500'
+                              }`}>{run.status}</span>
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-slate-900">{run.totalEmployees}</td>
                           <td className="px-3 py-2 text-right font-mono text-slate-900">{Number(run.totalGross).toLocaleString()}</td>
@@ -3917,7 +3954,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           <td className="px-3 py-2">
                             <div className="flex items-center justify-end gap-1">
                               <button
-                                onClick={() => { setSelectedRun(run); fetchRunEntries(run.id); setRunDetailView('detail'); if (client.payeZipUrl) { setComplianceResult({ payeZipUrl: client.payeZipUrl, payeZipLabel: client.payeZipLabel, nssfFileUrl: client.nssfFileUrl, nssfFileLabel: client.nssfFileLabel, shaFileUrl: client.shaFileUrl, shaFileLabel: client.shaFileLabel, summaryAmounts: { payeAmount: client.payeAmount || 0, nitaAmount: client.nitaAmount || 0, housingLevyAmount: client.housingLevyAmount || 0, nssfAmount: client.nssfAmount || 0, shaAmount: client.shaAmount || 0 } }); } }}
+                                onClick={() => { setSelectedRun(run); fetchRunEntries(run.id); fetchRunAdjustments(run.id); setRunDetailView('detail'); if (client.payeZipUrl) { setComplianceResult({ payeZipUrl: client.payeZipUrl, payeZipLabel: client.payeZipLabel, nssfFileUrl: client.nssfFileUrl, nssfFileLabel: client.nssfFileLabel, shaFileUrl: client.shaFileUrl, shaFileLabel: client.shaFileLabel, summaryAmounts: { payeAmount: client.payeAmount || 0, nitaAmount: client.nitaAmount || 0, housingLevyAmount: client.housingLevyAmount || 0, nssfAmount: client.nssfAmount || 0, shaAmount: client.shaAmount || 0 } }); } }}
                                 className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
                                 title="View"
                               ><FileText className="h-3.5 w-3.5" /></button>
@@ -3938,7 +3975,8 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                                       const e = await r.json();
                                       setError(e.hint || e.message || 'Failed');
                                     }
-                                  } catch { setError('Network error'); } finally { setGeneratingRun(false);
+                                  } catch { setError('Network error'); } finally {
+                                    setGeneratingRun(false);
                                   }
                                 }}
                                 disabled={generatingRun}
@@ -3982,7 +4020,183 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   {selectedRun?.periodLabel} — {selectedRun?.status}
                 </span>
+                {selectedRun?.lockedAt && (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Finalized
+                  </span>
+                )}
               </div>
+
+              {/* Run Action Bar */}
+              {runEntries.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <button
+                    disabled={selectedRun?.lockedAt}
+                    onClick={async () => {
+                      if (!selectedRun) return;
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/finalize`, { method: 'POST' });
+                        const d = await r.json();
+                        if (r.ok) {
+                          setSelectedRun((prev: any) => ({ ...prev, lockedAt: d.finalizedAt, status: 'closed' }));
+                          setStatusMessage(d.warnings?.length ? `Finalized with ${d.warnings.length} warning(s)` : 'Run finalized');
+                          if (d.warnings?.length) console.warn('1/3 rule warnings:', d.warnings);
+                        } else setError(d.message || 'Finalize failed');
+                      } catch { setError('Network error'); }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition disabled:opacity-40"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Finalize Run
+                  </button>
+                  <button
+                    disabled={!selectedRun?.lockedAt}
+                    onClick={async () => {
+                      if (!selectedRun) return;
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/rollback`, { method: 'POST' });
+                        const d = await r.json();
+                        if (r.ok) {
+                          setSelectedRun((prev: any) => ({ ...prev, lockedAt: null, status: 'completed' }));
+                          setStatusMessage('Run rolled back');
+                        } else setError(d.message || 'Rollback failed');
+                      } catch { setError('Network error'); }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition disabled:opacity-40"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Rollback
+                  </button>
+                  <button
+                    disabled={selectedRun?.lockedAt}
+                    onClick={async () => {
+                      if (!selectedRun) return;
+                      setGeneratingRun(true);
+                      try {
+                        const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prorate: true }) });
+                        if (r.ok) { await fetchRunEntries(selectedRun.id); setStatusMessage('Regenerated'); }
+                        else { const d = await r.json(); setError(d.message || 'Failed'); }
+                      } catch { setError('Network error'); }
+                      finally { setGeneratingRun(false); }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                  >
+                    {generatingRun ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Regenerate
+                  </button>
+                  <button
+                    onClick={() => setShowAdjustmentsForm(v => !v)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
+                  >
+                    <DollarSign className="h-3.5 w-3.5" /> {showAdjustmentsForm ? 'Hide' : 'Show'} Adjustments
+                  </button>
+                </div>
+              )}
+
+              {/* Dynamic Adjustments Panel */}
+              {showAdjustmentsForm && (
+                <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Dynamic Adjustments</h4>
+                  {loadingAdjustments ? (
+                    <div className="flex items-center justify-center py-6"><RefreshCw className="h-4 w-4 animate-spin text-slate-400" /></div>
+                  ) : (
+                    <>
+                      {runAdjustments.length > 0 && (
+                        <table className="mb-3 w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50">
+                              <th className="px-2 py-1.5 font-semibold text-slate-500">Label</th>
+                              <th className="px-2 py-1.5 font-semibold text-slate-500">Type</th>
+                              <th className="px-2 py-1.5 font-semibold text-slate-500 text-right">Amount</th>
+                              <th className="px-2 py-1.5 font-semibold text-slate-500">Statutory</th>
+                              <th className="px-2 py-1.5" />
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {runAdjustments.map((adj: any) => (
+                              <tr key={adj.id}>
+                                <td className="px-2 py-1.5 text-slate-900">{adj.label}</td>
+                                <td className="px-2 py-1.5 capitalize text-slate-700">{adj.type}</td>
+                                <td className="px-2 py-1.5 text-right font-mono text-slate-900">{Number(adj.amount).toLocaleString()}</td>
+                                <td className="px-2 py-1.5 text-slate-500">{adj.isStatutory ? 'Yes' : 'No'}</td>
+                                <td className="px-2 py-1.5 text-right">
+                                  <button
+                                    disabled={selectedRun?.lockedAt}
+                                    onClick={async () => {
+                                      if (!selectedRun) return;
+                                      try {
+                                        const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/adjustments/${adj.id}`, { method: 'DELETE' });
+                                        if (r.ok) { setRunAdjustments(prev => prev.filter(a => a.id !== adj.id)); }
+                                      } catch { /* ignore */ }
+                                    }}
+                                    className="rounded p-1 text-rose-400 hover:bg-rose-50 hover:text-rose-700 transition disabled:opacity-40"
+                                  ><Trash2 className="h-3 w-3" /></button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      <div className="flex flex-wrap items-end gap-2">
+                        <select
+                          value={adjustmentForm.employeeId}
+                          onChange={e => setAdjustmentForm(f => ({ ...f, employeeId: e.target.value }))}
+                          className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                        >
+                          <option value="">Select employee</option>
+                          {runEntries.map((e: any) => (
+                            <option key={e.employeeId} value={e.employeeId}>{e.employeeName}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          placeholder="Label e.g. Transport Allowance"
+                          value={adjustmentForm.label}
+                          onChange={e => setAdjustmentForm(f => ({ ...f, label: e.target.value }))}
+                          className="w-40 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                        />
+                        <select
+                          value={adjustmentForm.type}
+                          onChange={e => setAdjustmentForm(f => ({ ...f, type: e.target.value }))}
+                          className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900"
+                        >
+                          <option value="allowance">Allowance</option>
+                          <option value="deduction">Deduction</option>
+                        </select>
+                        <input
+                          type="number"
+                          placeholder="Amount"
+                          value={adjustmentForm.amount || ''}
+                          onChange={e => setAdjustmentForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+                          className="w-24 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-right text-slate-900"
+                        />
+                        <button
+                          disabled={!adjustmentForm.employeeId || !adjustmentForm.label || selectedRun?.lockedAt}
+                          onClick={async () => {
+                            if (!selectedRun || !adjustmentForm.employeeId) return;
+                            try {
+                              const r = await apiFetch(`/clients/${client.id}/payroll-runs/${selectedRun.id}/adjustments`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  employeeId: Number(adjustmentForm.employeeId),
+                                  label: adjustmentForm.label,
+                                  type: adjustmentForm.type,
+                                  amount: adjustmentForm.amount,
+                                }),
+                              });
+                              if (r.ok) {
+                                setAdjustmentForm({ employeeId: '', label: '', type: 'allowance', amount: 0 });
+                                await fetchRunAdjustments(selectedRun.id);
+                              } else { const d = await r.json(); setError(d.message || 'Failed'); }
+                            } catch { setError('Network error'); }
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Add
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {loadingEntries ? (
                 <div className="flex items-center justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-slate-400" /></div>

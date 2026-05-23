@@ -195,6 +195,19 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
     // Delete existing entries
     await db.deleteFrom('payroll_entries').where('payrollRunId', '=', runId).execute();
 
+    // Load dynamic adjustments for this run
+    const adjustments = await db
+        .selectFrom('payroll_adjustments')
+        .selectAll()
+        .where('payrollRunId', '=', runId)
+        .execute();
+    const adjustmentsByEmployee = new Map<number, { type: 'allowance' | 'deduction'; amount: number; isStatutory: boolean }[]>();
+    for (const adj of adjustments) {
+        const list = adjustmentsByEmployee.get(adj.employeeId) || [];
+        list.push({ type: adj.type as 'allowance' | 'deduction', amount: adj.amount, isStatutory: !!adj.isStatutory });
+        adjustmentsByEmployee.set(adj.employeeId, list);
+    }
+
     // Compute entries
     const entries = employees.map(emp => {
         const payStructure = (emp.payStructure || (client?.payStructure as string) || 'fixed') as 'fixed' | 'prorated';
@@ -225,11 +238,14 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 mortgageInterest: emp.mortgageInterest || 0,
                 insuranceRelief: emp.insuranceRelief || 0,
                 bonusPay: emp.bonusPay || 0,
+                standardCheckIn: emp.standardCheckIn || '08:00',
+                standardCheckOut: emp.standardCheckOut || '17:00',
             },
             run.period,
             prorate,
             scheduleConfig,
             holidays,
+            adjustmentsByEmployee.get(emp.id) || [],
         );
     });
 
@@ -265,31 +281,11 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 taxableBonus: entry.taxableBonus || 0,
                 nonTaxableBonus: entry.nonTaxableBonus || 0,
                 status: 'active',
+                lockedAt: null,
                 createdAt: now,
+                updatedAt: now,
             })
             .execute();
-    }
-
-    // Auto-manage loans: decrement remainingInstallments, update amountPaid
-    // Only process loans if this run hasn't been generated before (status !== 'completed')
-    if (run.status !== 'completed') {
-        for (const ln of allLoans) {
-            if (ln.remainingInstallments > 0) {
-                const newRemaining = Math.max(0, ln.remainingInstallments - 1);
-                const newAmountPaid = (ln.amountPaid || 0) + (ln.monthlyDeduction || 0);
-                const newStatus = newRemaining === 0 ? 'Paid' : ln.status;
-                await db
-                    .updateTable('loans')
-                    .set({
-                        remainingInstallments: newRemaining,
-                        amountPaid: roundMoney(newAmountPaid),
-                        status: newStatus,
-                        updatedAt: now,
-                    })
-                    .where('id', '=', ln.id)
-                    .execute();
-            }
-        }
     }
 
     // Update run totals
@@ -1333,7 +1329,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
         const employees = await db.selectFrom('employees').selectAll().where('clientId', '=', clientId).where('employmentStatus', '=', 'Active').execute();
         const empMap = new Map(employees.map(e => [e.id, e]));
 
-        // Check for existing approvals
+        // Check for existing approvals (used only for the approved flag)
         const existingApprovals = await db
             .selectFrom('attendance_payroll_approvals')
             .selectAll()
@@ -1342,25 +1338,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
             .execute();
         const approvalMap = new Map(existingApprovals.map(a => [a.employeeId, a]));
 
-        if (existingApprovals.length > 0) {
-            // Return existing approvals
-            return res.json({
-                period,
-                employees: existingApprovals.map(a => ({
-                    employeeId: a.employeeId,
-                    employeeName: a.employeeName,
-                    absentDays: a.absentDays,
-                    lateHours: a.lateHours,
-                    overtimeHours: a.overtimeHours,
-                    overtimeRate: a.overtimeRate,
-                    overtimeMultiplier: a.overtimeMultiplier,
-                    overtimeAmount: a.overtimeAmount,
-                    approved: !!a.approvedAt,
-                })),
-            });
-        }
-
-        // Auto-calculate from attendance records
+        // Always recalculate from live attendance records so new marks appear immediately
         const [yearStr, monthStr] = period.split('-');
         const year = parseInt(yearStr, 10);
         const month = parseInt(monthStr, 10);
@@ -1368,13 +1346,24 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
         const periodStart = `${period}-01`;
         const periodEnd = `${period}-${String(daysInMonth).padStart(2, '0')}`;
 
+        // Fetch attendance records, sorted by most recent first so we can deduplicate
         const attendanceRecords = await db
             .selectFrom('attendance_records')
             .selectAll()
             .where('clientId', '=', clientId)
             .where('date', '>=', periodStart)
             .where('date', '<=', periodEnd)
+            .orderBy('id', 'desc')
             .execute();
+
+        // Deduplicate: keep only the most recent record per employee per day
+        const latestAttByDay = new Map<string, typeof attendanceRecords[0]>();
+        for (const ar of attendanceRecords) {
+            const key = `${ar.employeeId}-${ar.date}`;
+            if (!latestAttByDay.has(key)) {
+                latestAttByDay.set(key, ar);
+            }
+        }
 
         const overtimeRecords = await db
             .selectFrom('overtime_records')
@@ -1387,7 +1376,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
         const lateHoursMap = new Map<number, number>();
         const otMap = new Map<number, any>();
 
-        for (const ar of attendanceRecords) {
+        for (const ar of latestAttByDay.values()) {
             if (ar.status === 'Absent') {
                 absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 1);
             } else if (ar.status === 'Half-Day') {
@@ -1411,6 +1400,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
 
         const result = employees.map(emp => {
             const ot = otMap.get(emp.id);
+            const existingApproval = approvalMap.get(emp.id);
             return {
                 employeeId: emp.id,
                 employeeName: emp.employeeName,
@@ -1420,7 +1410,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
                 overtimeRate: ot?.rate || Math.round((emp.basicPay || 0) / 240 * 100) / 100,
                 overtimeMultiplier: ot?.multiplier || 1.5,
                 overtimeAmount: ot?.amount || 0,
-                approved: false,
+                approved: !!existingApproval?.approvedAt,
             };
         });
 
@@ -1479,6 +1469,21 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
             .where('notes', 'like', '%review%')
             .execute();
 
+        // Also delete ALL absent/half-day records for employees now approved with 0 absent days
+        const zeroAbsentEmpIds = employeeApprovals
+            .filter((ea: any) => !(ea.absentDays > 0))
+            .map((ea: any) => ea.employeeId);
+        if (zeroAbsentEmpIds.length > 0) {
+            console.log(`[approvals] Deleting all absent records for ${zeroAbsentEmpIds.length} employees with 0 absent days...`);
+            await db.deleteFrom('attendance_records')
+                .where('clientId', '=', clientId)
+                .where('date', '>=', `${period}-01`)
+                .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
+                .where('employeeId', 'in', zeroAbsentEmpIds)
+                .where('status', 'in', ['Absent', 'Half-Day'])
+                .execute();
+        }
+
         // Refresh existing set after cleanup
         const allExistingAfterCleanup = await db
             .selectFrom('attendance_records')
@@ -1489,7 +1494,7 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
             .execute();
         const existingSetAfterCleanup = new Set(allExistingAfterCleanup.map(r => `${r.employeeId}-${r.date}`));
         const effectiveExistingSet = existingSetAfterCleanup;
-        console.log(`[approvals] Found ${allExisting.length} existing records`);
+        console.log(`[approvals] Found ${allExistingAfterCleanup.length} existing records after cleanup`);
 
         // Delete existing approvals for this period
         console.log('[approvals] Deleting old approvals...');
@@ -1526,7 +1531,7 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
 
         // Build absent records to insert (batch across all employees)
         const newRecords: any[] = [];
-        const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
         for (const ea of employeeApprovals) {
             const emp = empMap2.get(ea.employeeId);
@@ -1613,6 +1618,244 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
         console.log('[approvals] ERROR:', err);
         console.timeEnd('approvals');
         res.status(500).json({ message: 'Internal server error', error: err instanceof Error ? err.message : String(err) });
+    }
+});
+
+// POST /:clientId/payroll-runs/:id/finalize — Create loan transactions, decrement remainingInstallments, lock void
+router.post('/:clientId/payroll-runs/:id/finalize', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const run = await db
+            .selectFrom('payroll_runs')
+            .selectAll()
+            .where('id', '=', payrollRunId)
+            .executeTakeFirst();
+        if (!run) return res.status(404).json({ message: 'Payroll run not found' });
+        if (run.lockedAt) return res.status(409).json({ message: 'This payroll run is already finalized.' });
+
+        // Load entries
+        const entries = await db
+            .selectFrom('payroll_entries')
+            .selectAll()
+            .where('payrollRunId', '=', payrollRunId)
+            .execute();
+
+        const now = new Date().toISOString();
+        const warnings: string[] = [];
+
+        // 1/3 rule validation
+        for (const e of entries) {
+            // Minimum net = gross / 3
+            if (e.netPay < e.grossPay / 3) {
+                warnings.push(
+                    `1/3 rule: ${e.employeeName} net pay KES ${Math.round(e.netPay).toLocaleString()} is below 1/3 of gross KES ${Math.round(e.grossPay / 3).toLocaleString()}`,
+                );
+            }
+        }
+
+        // Process loan deductions (ledger-based)
+        for (const entry of entries) {
+            if (entry.loanDeduction <= 0) continue;
+            // Find active loan for this employee
+            const loans = await db
+                .selectFrom('loans')
+                .selectAll()
+                .where('clientId', '=', entry.clientId)
+                .where('employeeId', '=', entry.employeeId)
+                .where('remainingInstallments', '>', 0)
+                .execute();
+            const loan = loans[0];
+            if (!loan) continue;
+
+            await db
+                .insertInto('loan_transactions')
+                .values({
+                    clientId: entry.clientId,
+                    employeeId: entry.employeeId,
+                    payrollRunId,
+                    loanId: loan.id,
+                    amount: entry.loanDeduction,
+                    type: 'deduction',
+                    createdAt: now,
+                })
+                .execute();
+            await db
+                .updateTable('loans')
+                .set({
+                    remainingInstallments: loan.remainingInstallments - 1,
+                    updatedAt: now,
+                })
+                .where('id', '=', loan.id)
+                .execute();
+        }
+
+        // Lock the run
+        await db
+            .updateTable('payroll_runs')
+            .set({ lockedAt: now, updatedAt: now, status: 'closed' })
+            .where('id', '=', payrollRunId)
+            .execute();
+
+        res.json({ success: true, finalizedAt: now, warnings, entryCount: entries.length });
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to finalize run', error: err.message });
+    }
+});
+
+// POST /:clientId/payroll-runs/:id/rollback — Reverse loan transactions, restore balances, unlock void
+router.post('/:clientId/payroll-runs/:id/rollback', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const run = await db
+            .selectFrom('payroll_runs')
+            .selectAll()
+            .where('id', '=', payrollRunId)
+            .executeTakeFirst();
+        if (!run) return res.status(404).json({ message: 'Payroll run not found' });
+        if (!run.lockedAt) return res.status(409).json({ message: 'This payroll run is not finalized yet.' });
+
+        const transactions = await db
+            .selectFrom('loan_transactions')
+            .selectAll()
+            .where('payrollRunId', '=', payrollRunId)
+            .execute();
+
+        const now = new Date().toISOString();
+
+        // Restore loan installments
+        for (const tx of transactions) {
+            const loan = await db
+                .selectFrom('loans')
+                .selectAll()
+                .where('id', '=', tx.loanId)
+                .executeTakeFirst();
+            if (loan) {
+                await db
+                    .updateTable('loans')
+                    .set({
+                        remainingInstallments: loan.remainingInstallments + 1,
+                        updatedAt: now,
+                    })
+                    .where('id', '=', loan.id)
+                    .execute();
+            }
+        }
+
+        // Delete loan transactions
+        await db.deleteFrom('loan_transactions').where('payrollRunId', '=', payrollRunId).execute();
+
+        // Delete any dynamic adjustments for this run
+        await db.deleteFrom('payroll_adjustments').where('payrollRunId', '=', payrollRunId).execute();
+
+        // Unlock run
+        await db
+            .updateTable('payroll_runs')
+            .set({ lockedAt: null, updatedAt: now })
+            .where('id', '=', payrollRunId)
+            .execute();
+
+        res.json({ success: true, restoredLoans: transactions.length });
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to rollback run', error: err.message });
+    }
+});
+
+// GET /:clientId/payroll-runs/:id/adjustments — List dynamic adjustments for a run
+router.get('/:clientId/payroll-runs/:id/adjustments', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const adjustments = await db
+            .selectFrom('payroll_adjustments')
+            .selectAll()
+            .where('payrollRunId', '=', payrollRunId)
+            .execute();
+        res.json(adjustments);
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to load adjustments', error: err.message });
+    }
+});
+
+// POST /:clientId/payroll-runs/:id/adjustments — Create a dynamic adjustment
+router.post('/:clientId/payroll-runs/:id/adjustments', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const { employeeId, type, label, amount, isStatutory = false } = req.body;
+        if (!employeeId || !type || !label || amount === undefined) {
+            return res.status(400).json({ message: 'Missing required fields: employeeId, type, label, amount' });
+        }
+        const run = await db.selectFrom('payroll_runs').select('lockedAt').where('id', '=', payrollRunId).executeTakeFirst();
+        if (run?.lockedAt) {
+            return res.status(409).json({ message: 'Cannot modify adjustments on a finalized run.' });
+        }
+        const now = new Date().toISOString();
+        const result = await db
+            .insertInto('payroll_adjustments')
+            .values({
+                payrollRunId,
+                employeeId: Number(employeeId),
+                payrollEntryId: 0, // not used; employeeId is the stable key
+                type,
+                label,
+                amount: Number(amount),
+                isStatutory: isStatutory ? 1 : 0,
+                createdAt: now,
+            })
+            .returningAll()
+            .executeTakeFirst();
+        res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to create adjustment', error: err.message });
+    }
+});
+
+// PUT /:clientId/payroll-runs/:id/adjustments/:adjId — Update an adjustment
+router.put('/:clientId/payroll-runs/:id/adjustments/:adjId', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const adjId = parseInt(req.params.adjId, 10);
+        const { type, label, amount, isStatutory } = req.body;
+        const run = await db.selectFrom('payroll_runs').select('lockedAt').where('id', '=', payrollRunId).executeTakeFirst();
+        if (run?.lockedAt) {
+            return res.status(409).json({ message: 'Cannot modify adjustments on a finalized run.' });
+        }
+        const updateData: any = {};
+        if (type !== undefined) updateData.type = type;
+        if (label !== undefined) updateData.label = label;
+        if (amount !== undefined) updateData.amount = Number(amount);
+        if (isStatutory !== undefined) updateData.isStatutory = isStatutory ? 1 : 0;
+        if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ message: 'No fields to update' });
+        }
+        await db
+            .updateTable('payroll_adjustments')
+            .set(updateData)
+            .where('id', '=', adjId)
+            .where('payrollRunId', '=', payrollRunId)
+            .execute();
+        const adj = await db.selectFrom('payroll_adjustments').selectAll().where('id', '=', adjId).executeTakeFirst();
+        res.json(adj);
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to update adjustment', error: err.message });
+    }
+});
+
+// DELETE /:clientId/payroll-runs/:id/adjustments/:adjId — Delete an adjustment
+router.delete('/:clientId/payroll-runs/:id/adjustments/:adjId', async (req, res) => {
+    try {
+        const payrollRunId = parseInt(req.params.id, 10);
+        const adjId = parseInt(req.params.adjId, 10);
+        const run = await db.selectFrom('payroll_runs').select('lockedAt').where('id', '=', payrollRunId).executeTakeFirst();
+        if (run?.lockedAt) {
+            return res.status(409).json({ message: 'Cannot delete adjustments on a finalized run.' });
+        }
+        await db
+            .deleteFrom('payroll_adjustments')
+            .where('id', '=', adjId)
+            .where('payrollRunId', '=', payrollRunId)
+            .execute();
+        res.json({ success: true });
+    } catch (err: any) {
+        res.status(500).json({ message: 'Failed to delete adjustment', error: err.message });
     }
 });
 

@@ -7,7 +7,7 @@ export interface ClientsTable {
     pin: string;
     password: string;
     obligations: string;
-    
+
     // Files
     masterFileUrl: string | null;
     masterFileLabel: string | null;
@@ -20,7 +20,7 @@ export interface ClientsTable {
     nssfFileLabel: string | null;
     shaFileUrl: string | null;
     shaFileLabel: string | null;
-    
+
     // Statuses
     paye: string | null;
     nssf: string | null;
@@ -34,7 +34,7 @@ export interface ClientsTable {
     incomeTaxNonResidentIndividual: string | null;
     incomeTaxCompany: string | null;
     exciseDuty: string | null;
-    
+
     // Amounts
     payeAmount: number | null;
     nitaAmount: number | null;
@@ -236,6 +236,7 @@ export interface PayrollRunsTable {
     totalDeductions: number;
     totalNet: number;
     notes: string | null;
+    lockedAt: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -269,6 +270,31 @@ export interface PayrollEntriesTable {
     taxableBonus: number;
     nonTaxableBonus: number;
     status: string;
+    lockedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface LoanTransactionsTable {
+    id: Generated<number>;
+    clientId: number;
+    employeeId: number;
+    payrollRunId: number;
+    loanId: number;
+    amount: number;
+    type: string; // 'deduction' | 'repayment' | 'reversal'
+    createdAt: string;
+}
+
+export interface PayrollAdjustmentsTable {
+    id: Generated<number>;
+    payrollRunId: number;
+    employeeId: number;
+    payrollEntryId: number;
+    type: string; // 'allowance' | 'deduction'
+    label: string;
+    amount: number;
+    isStatutory: number; // 1 for NSSF/SHA/AHL/PAYE, 0 for custom
     createdAt: string;
 }
 
@@ -378,4 +404,6 @@ export interface Database {
     attendance_payroll_approvals: AttendancePayrollApprovalsTable;
     work_schedules: WorkSchedulesTable;
     holidays: HolidaysTable;
+    loan_transactions: LoanTransactionsTable;
+    payroll_adjustments: PayrollAdjustmentsTable;
 }

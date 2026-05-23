@@ -7,6 +7,7 @@ import * as ExcelJS from 'exceljs';
 import { generateComplianceFiles } from '../scripts/axon-extraction-engine';
 import { processAndStandardizePayroll } from '../scripts/ai-mapper';
 import { openDb } from '../db/database';
+import { computePayrollEntry } from '../services/payrollEngine';
 
 const router = Router();
 
@@ -208,6 +209,73 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Reque
     } catch (error: any) {
         console.error('Error generating payroll files:', error, error.stack);
         res.status(500).json({ error: error.message || 'Failed to generate unified payroll files.' });
+    }
+});
+
+// POST /api/payroll/calculate-preview — Preview payroll calculations for a single row
+// Accepts all raw input fields from the master grid and returns computed statutory values.
+router.post('/calculate-preview', async (req: Request, res: Response) => {
+    try {
+        const {
+            basicPay = 0,
+            carBenefit = 0,
+            meals = 0,
+            nonCash = 0,
+            housingBenefit = 0,
+            otherBenefits = 0,
+            overtimePay = 0,
+            absentDays = 0,
+            lateHours = 0,
+            bonusPay = 0,
+            loanDeduction = 0,
+            unpaidLeaveDays = 0,
+            otherPension = 0,
+            postRetMedical = 0,
+            mortgage = 0,
+            insuranceRelief = 0,
+            pwd = false,
+            standardCheckIn = '08:00',
+            standardCheckOut = '17:00',
+            payStructure = 'fixed',
+            period = '2026-01',
+        } = req.body;
+
+        // Combine all cash + non-cash benefits into the single benefits field used by the engine
+        const benefits = carBenefit + meals + nonCash + housingBenefit + otherBenefits;
+
+        const preview = computePayrollEntry(
+            {
+                employeeId: 0,
+                employeeName: 'Preview',
+                kraPin: '',
+                payrollNumber: '',
+                basicPay,
+                benefits,
+                dateJoined: '',
+                dateLeft: null,
+                employmentStatus: 'Active',
+                loanDeduction,
+                unpaidLeaveDays,
+                payStructure: payStructure as 'fixed' | 'prorated',
+                overtimePay,
+                attendanceAbsentDays: absentDays,
+                attendanceLateDays: lateHours,
+                pwd: pwd ? 'Yes' : 'No',
+                otherPension,
+                postRetMedical,
+                mortgageInterest: mortgage,
+                insuranceRelief,
+                bonusPay,
+                standardCheckIn,
+                standardCheckOut,
+            },
+            period,
+            false, // no prorating for preview
+        );
+
+        res.json(preview);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Preview calculation failed.' });
     }
 });
 

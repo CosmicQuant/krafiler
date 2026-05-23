@@ -1433,6 +1433,8 @@ router.post('/:clientId/attendance-payroll-preview', async (req, res) => {
 
 // POST /api/clients/:clientId/attendance-payroll-approve
 router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
+    console.log('[approvals] START attendance-payroll-approve');
+    console.time('approvals');
     try {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
@@ -1442,60 +1444,68 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
             return res.status(400).json({ message: 'period and employees array are required' });
         }
 
-        // Validate each approval record
-        for (const ea of employeeApprovals) {
-            if (typeof ea.employeeId !== 'number') {
-                return res.status(400).json({ message: `Invalid employeeId for record: ${JSON.stringify(ea)}` });
-            }
-            if ((ea.absentDays || 0) < 0 || (ea.absentDays || 0) > 31) {
-                return res.status(400).json({ message: `absentDays must be between 0 and 31 for employee ${ea.employeeId}` });
-            }
-            if ((ea.lateHours || 0) < 0 || (ea.lateHours || 0) > 744) {
-                return res.status(400).json({ message: `lateHours must be between 0 and 744 for employee ${ea.employeeId}` });
-            }
-            if ((ea.overtimeHours || 0) < 0 || (ea.overtimeHours || 0) > 744) {
-                return res.status(400).json({ message: `overtimeHours must be between 0 and 744 for employee ${ea.employeeId}` });
-            }
-            if ((ea.overtimeRate || 0) < 0) {
-                return res.status(400).json({ message: `overtimeRate must be non-negative for employee ${ea.employeeId}` });
-            }
-            if ((ea.overtimeMultiplier || 0) < 0) {
-                return res.status(400).json({ message: `overtimeMultiplier must be non-negative for employee ${ea.employeeId}` });
-            }
-        }
-
         const now = new Date().toISOString();
         const [periodYear, periodMonth] = period.split('-').map(Number);
         const daysInMonth = new Date(periodYear, periodMonth, 0).getDate();
 
+        console.log(`[approvals] Processing ${employeeApprovals.length} employees for client ${clientId}, period ${period}...`);
+
         // Fetch employee + schedule info for per-day record creation
         const empIds = [...new Set(employeeApprovals.map((ea: any) => ea.employeeId))];
+        console.log(`[approvals] Fetching ${empIds.length} employees...`);
         const employees = await db.selectFrom('employees').selectAll().where('id', 'in', empIds).where('clientId', '=', clientId).execute();
         const empMap2 = new Map(employees.map(e => [e.id, e]));
+        console.log(`[approvals] Found ${employees.length} employees`);
+
         const schedules = await db.selectFrom('work_schedules').selectAll().where('clientId', '=', clientId).execute();
         const scheduleMap2 = new Map(schedules.map(s => [s.id, s]));
+        console.log(`[approvals] Found ${schedules.length} schedules`);
 
-        // Existing individual attendance for the period (don't override)
+        // Build a Set of all existing (clientId, employeeId, date) for O(1) lookups
+        console.log('[approvals] Fetching existing attendance...');
         const allExisting = await db
             .selectFrom('attendance_records')
-            .selectAll()
+            .select(['id', 'employeeId', 'date'])
             .where('clientId', '=', clientId)
             .where('date', '>=', `${period}-01`)
             .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
             .execute();
+        // Clean up old auto-generated attendance records for this period (from previous review runs)
+        console.log('[approvals] Cleaning up old auto-generated attendance_records...');
+        await db.deleteFrom('attendance_records')
+            .where('clientId', '=', clientId)
+            .where('date', '>=', `${period}-01`)
+            .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
+            .where('notes', 'like', '%review%')
+            .execute();
+
+        // Refresh existing set after cleanup
+        const allExistingAfterCleanup = await db
+            .selectFrom('attendance_records')
+            .select(['id', 'employeeId', 'date'])
+            .where('clientId', '=', clientId)
+            .where('date', '>=', `${period}-01`)
+            .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
+            .execute();
+        const existingSetAfterCleanup = new Set(allExistingAfterCleanup.map(r => `${r.employeeId}-${r.date}`));
+        const effectiveExistingSet = existingSetAfterCleanup;
+        console.log(`[approvals] Found ${allExisting.length} existing records`);
 
         // Delete existing approvals for this period
+        console.log('[approvals] Deleting old approvals...');
         await db
             .deleteFrom('attendance_payroll_approvals')
             .where('clientId', '=', clientId)
             .where('period', '=', period)
             .execute();
+        console.log('[approvals] Old approvals deleted');
 
-        // Insert new approvals
-        for (const ea of employeeApprovals) {
+        // Insert new approvals (batch)
+        if (employeeApprovals.length > 0) {
+            console.log('[approvals] Inserting new approvals...');
             await db
                 .insertInto('attendance_payroll_approvals')
-                .values({
+                .values(employeeApprovals.map(ea => ({
                     clientId,
                     period,
                     employeeId: ea.employeeId,
@@ -1509,25 +1519,29 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
                     approvedBy: approvedBy || null,
                     approvedAt: now,
                     createdAt: now,
-                })
+                })))
                 .execute();
+            console.log('[approvals] New approvals inserted');
         }
 
-        // Create per-day attendance records based on approved data (assume 100% Present, then mark absences)
-        const dayNames: Record<number, string> = {0:'Sunday',1:'Monday',2:'Tuesday',3:'Wednesday',4:'Thursday',5:'Friday',6:'Saturday'};
+        // Build absent records to insert (batch across all employees)
+        const newRecords: any[] = [];
+        const dayNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
         for (const ea of employeeApprovals) {
             const emp = empMap2.get(ea.employeeId);
             if (!emp) continue;
 
+            const absentCount = (ea.absentDays || 0);
+            if (absentCount <= 0) continue; // No absences → nothing to create
+
             // Get schedule config
             const ws = emp.workScheduleId ? scheduleMap2.get(emp.workScheduleId) : null;
             const scheduleConfig = ws && ws.config ? JSON.parse(ws.config) : null;
 
-            // Find which days this employee works (based on schedule or default Mon-Fri)
+            // Find work days for this employee
             const workDays: string[] = [];
             for (let d = 1; d <= daysInMonth; d++) {
-                const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                 const dt = new Date(periodYear, periodMonth - 1, d);
                 const dayName = dayNames[dt.getDay()];
                 const shortName = dayName.substring(0, 3);
@@ -1535,59 +1549,49 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
                 let isWorkDay = true;
                 if (scheduleConfig) {
                     if (!scheduleConfig[shortName] || scheduleConfig[shortName] === 0) isWorkDay = false;
-                } else {
-                    // Default: Mon-Fri only
-                    if (dt.getDay() === 0 || dt.getDay() === 6) isWorkDay = false;
+                } else if (dt.getDay() === 0 || dt.getDay() === 6) {
+                    isWorkDay = false;
                 }
-
-                // Also check employee offDay rotation
                 if (emp.offDay && emp.offDay === dayName) isWorkDay = false;
-
-                if (isWorkDay) {
-                    workDays.push(dateStr);
-                }
+                if (isWorkDay) workDays.push(`${period}-${String(d).padStart(2, '0')}`);
             }
 
-            // Mark absences: last N work days as Absent
-            const absentCount = ea.absentDays || 0;
-            const absentDays = workDays.slice(-absentCount);
-            const presentDays = workDays.slice(0, Math.max(0, workDays.length - absentCount));
-
-            // Insert/update per-day records (skip if existing individual record)
-            for (const dateStr of [...presentDays, ...absentDays]) {
-                // If employee already has a record for this day, skip (preserve manually entered data)
-                const existingRec = allExisting.find(r => r.employeeId === emp.id && r.date === dateStr);
-                const isAbsent = absentDays.includes(dateStr);
-                const status = isAbsent ? 'Absent' : 'Present';
-
-                if (!existingRec) {
-                    // No existing individual record → create
-                    await db.insertInto('attendance_records').values({
-                        clientId,
-                        employeeId: emp.id,
-                        employeeName: emp.employeeName || '',
-                        kraPin: emp.kraPin || '',
-                        date: dateStr,
-                        checkIn: scheduleConfig ? (ws?.standardCheckIn || '08:00') : '08:00',
-                        checkOut: isAbsent ? '' : (scheduleConfig ? (ws?.standardCheckOut || '17:00') : '17:00'),
-                        status,
-                        notes: isAbsent ? 'Marked absent from review' : 'Auto-marked present from review',
-                        createdAt: now,
-                        updatedAt: now,
-                    }).execute();
-                }
+            // Last N work days → Absent (skip if already has a manual record)
+            for (const dateStr of workDays.slice(-absentCount)) {
+                if (effectiveExistingSet.has(`${emp.id}-${dateStr}`)) continue;
+                newRecords.push({
+                    clientId, employeeId: emp.id,
+                    employeeName: emp.employeeName || '', kraPin: emp.kraPin || '',
+                    date: dateStr, checkIn: '', checkOut: '',
+                    status: 'Absent', notes: 'Marked absent from review',
+                    createdAt: now, updatedAt: now,
+                });
             }
+        }
 
-            // Auto-calculate overtime for the period based on supplied OT hours
-            if ((ea.overtimeHours || 0) > 0) {
-                await db
-                    .deleteFrom('overtime_records')
-                    .where('clientId', '=', clientId)
-                    .where('employeeId', '=', ea.employeeId)
-                    .where('period', '=', period)
-                    .execute();
+        // Single batch insert across ALL employees
+        if (newRecords.length > 0) {
+            console.log(`[approvals] Inserting ${newRecords.length} absent-day records...`);
+            await db.insertInto('attendance_records').values(newRecords).execute();
+            console.log('[approvals] Absent-day records inserted');
+        } else {
+            console.log('[approvals] No absent-day records to insert');
+        }
 
-                await db.insertInto('overtime_records').values({
+        // Handle overtime
+        const employeesWithOt = employeeApprovals.filter((ea: any) => (ea.overtimeHours || 0) > 0);
+        if (employeesWithOt.length > 0) {
+            const otEmpIds = employeesWithOt.map((ea: any) => ea.employeeId);
+            await db
+                .deleteFrom('overtime_records')
+                .where('clientId', '=', clientId)
+                .where('period', '=', period)
+                .where('employeeId', 'in', otEmpIds)
+                .execute();
+
+            await db
+                .insertInto('overtime_records')
+                .values(employeesWithOt.map((ea: any) => ({
                     clientId,
                     employeeId: ea.employeeId,
                     period,
@@ -1597,12 +1601,18 @@ router.post('/:clientId/attendance-payroll-approve', async (req, res) => {
                     amount: ea.overtimeAmount || 0,
                     description: 'Auto-generated from review',
                     createdAt: now,
-                }).execute();
-            }
+                })))
+                .execute();
+            console.log(`[approvals] ${employeesWithOt.length} OT records inserted`);
         }
+
+        console.timeEnd('approvals');
+        console.log('[approvals] DONE');
+        res.json({ success: true, approved: employeeApprovals.length });
     } catch (err) {
-        console.error('Error approving attendance data:', err);
-        res.status(500).json({ message: 'Internal server error' });
+        console.log('[approvals] ERROR:', err);
+        console.timeEnd('approvals');
+        res.status(500).json({ message: 'Internal server error', error: err instanceof Error ? err.message : String(err) });
     }
 });
 

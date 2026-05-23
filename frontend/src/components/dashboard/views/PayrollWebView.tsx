@@ -805,6 +805,7 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
           _att: attMap.get(e.id) || new Map(),
           _offDaySet: offDaySet,
           _holidaySet: holidaySet,
+          _holidayNames: holidayNames,
         };
       });
       setAttendanceOvertimeEmployees(merged);
@@ -1815,21 +1816,46 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           const isOffDay = emp._offDaySet?.has(dateKey);
 
                           if (isHoliday) {
+                            const holidayName = emp._holidayNames?.get(dateKey) || '';
                             return (
                               <td key={i} className="w-8 px-0 py-1.5 text-center">
-                                <span className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 cursor-default" title={`${emp.employeeName} — ${dateKey}: Holiday`}>H</span>
+                                <button
+                                  onClick={() => {
+                                    const existingStatus = emp._att?.get(dateKey) || 'Present';
+                                    setAttendanceForm({
+                                      employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
+                                      date: dateKey, checkIn: '', checkOut: '', status: existingStatus, notes: '',
+                                    });
+                                    setEditingAttendance(null);
+                                    setShowAttendanceModal(true);
+                                  }}
+                                  className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 transition hover:ring-1 hover:ring-purple-300"
+                                  title={`${emp.employeeName} — ${dateKey}: Holiday${holidayName ? ': ' + holidayName : ''}`}
+                                >H</button>
                               </td>
                             );
                           }
                           if (isOffDay) {
                             return (
                               <td key={i} className="w-8 px-0 py-1.5 text-center">
-                                <span className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-slate-100 text-slate-400 cursor-default" title={`${emp.employeeName} — ${dateKey}: Off Day`}>OFF</span>
+                                <button
+                                  onClick={() => {
+                                    const existingStatus = emp._att?.get(dateKey) || 'Present';
+                                    setAttendanceForm({
+                                      employeeId: emp.id, employeeName: emp.employeeName, kraPin: emp.kraPin,
+                                      date: dateKey, checkIn: '', checkOut: '', status: existingStatus, notes: '',
+                                    });
+                                    setEditingAttendance(null);
+                                    setShowAttendanceModal(true);
+                                  }}
+                                  className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-semibold bg-slate-100 text-slate-400 transition hover:ring-1 hover:ring-slate-300"
+                                  title={`${emp.employeeName} — ${dateKey}: Off Day${emp.offDay ? ' (' + emp.offDay + ')' : ''}`}
+                                >OFF</button>
                               </td>
                             );
                           }
 
-                          const status = emp._att?.get(dateKey) || '';
+                          const status = emp._att?.get(dateKey) || 'Present';
                           const color = status === 'Present' ? 'bg-emerald-50 text-emerald-700' :
                                         status === 'Absent' ? 'bg-red-50 text-red-700' :
                                         status === 'Late' ? 'bg-amber-50 text-amber-700' :
@@ -4691,9 +4717,12 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                   disabled={savingAttendanceApproval || attendanceApprovalData.length === 0}
                   onClick={async () => {
                     setSavingAttendanceApproval(true);
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
                     try {
                       const r = await apiFetch(`/clients/${client.id}/attendance-payroll-approve`, {
                         method: 'POST',
+                        signal: controller.signal,
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           period: attendanceApprovalPeriod,
@@ -4710,13 +4739,16 @@ export function PayrollWebView({ client, onBack, onEditClient, onUploadMasterCsv
                           approvedBy: 'admin',
                         }),
                       });
+                      clearTimeout(timeoutId);
                       if (r.ok) {
                         setStatusMessage('Attendance data approved and saved.');
                         setShowAttendanceApprovalModal(false);
                         fetchOvertimeForAttendance(attendanceApprovalPeriod);
                       } else { setError('Failed to save approval'); }
-                    } catch { setError('Network error'); }
-                    finally { setSavingAttendanceApproval(false); }
+                    } catch (err: any) {
+                      if (err?.name === 'AbortError') setError('Request timed out. Please try again.');
+                      else setError('Network error');
+                    } finally { setSavingAttendanceApproval(false); }
                   }}
                   className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
                 >

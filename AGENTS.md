@@ -42,6 +42,7 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 - Backend: `cd backend && npx tsc --noEmit`
 - Frontend: `cd frontend && npx tsc --noEmit` (note: frontend tsconfig has `noUnusedLocals`, `noUnusedParameters` — expect extra strictness)
 - No tests, no lint config, no formatter config exist.
+- **Backend uses `--transpile-only`** in dev mode (`ts-node-dev --transpile-only`), so a passing `tsc --noEmit` is the only safety net — runtime errors can pass silently.
 
 ## Database
 
@@ -49,6 +50,11 @@ Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http:/
 - Migrations auto-run on API startup (`initDb()` in `server.ts`). 18 migration files (`001`–`019`, `016` is missing) in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
 - Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
 - Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
+- **Work schedule architecture** (`migrations/025`–`027`): `work_schedules` (per-weekday hours config as JSON), `holidays` (date, isRecurring, holidayType), and `employees.workScheduleId`/`offDay`. The payroll engine uses these for prorating `basicPay` against scheduled work days + holidays.
+- **Holiday seeding**: `POST /api/clients/:clientId/holidays/seed-kenyan` generates Kenyan public holidays (Easter via Gaussian algorithm, Eid al-Fitr via lookup table). Use `date` in `YYYY-MM-DD` format.
+- **When absentDays=0**: the approval endpoint skips all `attendance_records` creation. **Old code** created Absent records for ALL work days due to `slice(-0)` returning the entire array. The endpoint now **cleans up old auto-generated `attendance_records`** (matching `notes LIKE '%review%'`) before re-approving.
+- **Performance**: `attendance-payroll-approve` uses batch `INSERT`s, a `Set` for O(1) existing-record lookups, and skips employees with `absentDays=0` entirely.
+- **"Present" is the default** in the attendance calendar: days without individual records show `P` (Present) not `·`, reflecting the 100% attendance assumption.
 - Root `package.json` has `adm-zip` and `sqlite3` deps that belong in `backend/` — ignore if searching dependency sources.
 - `DB_PATH` env var overrides the SQLite location (default: alongside `kysely.ts`).
 
@@ -105,6 +111,11 @@ Routes are mounted in `backend/src/server.ts:87-104`:
 
 ### `/api/payroll` — Payroll Processing (`payroll.routes.ts`)
 - `POST /api/payroll/generate-unified` — Payroll processing.
+
+### `attendance-payroll-approve` — Review & Approve Attendance (`payroll-runs.routes.ts`)
+- On approval, deletes old auto-generated `attendance_records` (notes LIKE '%review%'), then creates new ones matching approved `absentDays`.
+- **Batch approach**: bulk `INSERT` into `attendance_payroll_approvals`, bulk `INSERT` into `attendance_records`, and a single `DELETE` + `INSERT` for overtime — all in one transaction per employee (skips entirely if `absentDays=0`).
+- **Performance gotcha**: `slice(-absentCount)` when `absentCount=0` returns the ENTIRE array (not empty). Always guard with `if (absentCount > 0)` before slicing.
 
 ### `/api/clients` — Practice Management
 All mounted under `/api/clients`:
@@ -166,3 +177,4 @@ Located at `backend/src/workers/services/`:
 - **Search policy**: `AGENTS-node_modules.md` prohibits reading/traversing `node_modules/` without explicit user instruction.
 - **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.
 - **`receipts/` is git-ignored** (`.gitignore` line 19).
+- **Work schedule + holiday proration**: `computePayrollEntry` now accepts optional `workScheduleConfig` and `holidays[]` to prorate `basicPay` against scheduled work days instead of assuming 30 days. `getScheduledWorkDays()` helper counts days with `hours>0` from the config JSON and excludes holidays.

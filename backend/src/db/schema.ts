@@ -251,6 +251,14 @@ export interface PayrollEntriesTable {
     payrollNumber: string;
     basicPay: number;
     benefits: number;
+    // Individual benefits (new)
+    carBenefit: number;
+    mealsBenefit: number;
+    nonCashBenefits: number;
+    housingBenefit: number;
+    otherBenefits: number;
+    // Per-run input overrides (JSON string)
+    overrides: string | null;
     grossPay: number;
     shaDeduction: number;
     nssfDeduction: number;

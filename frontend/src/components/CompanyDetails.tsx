@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud, Calendar, Clock, Trash2, Edit, Plus } from 'lucide-react';
 import { ClientObligation } from '../types';
+import { WorkScheduleManager } from './payroll-pipeline/steps/WorkScheduleManager';
+import { LeaveTypesManager } from './payroll-pipeline/steps/LeaveTypesManager';
+import { DepartmentsView } from './dashboard/views/DepartmentsView';
 
 interface CompanyDetailsProps {
     client: ClientObligation;
@@ -491,6 +495,21 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                         )}
                     </div>
 
+                    {/* Work Schedules */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <WorkScheduleManager clientId={String(client.id)} />
+                    </div>
+
+                    {/* Leave Types */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <LeaveTypesManager clientId={String(client.id)} />
+                    </div>
+
+                    {/* Departments */}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+                        <DepartmentsView client={{ id: client.id, name: client.name }} />
+                    </div>
+
                     {/* Conditional Tax Sections based on Obligations */}
                     {selectedObligations.includes('vat') && (
                         <div className="rounded-2xl border border-blue-500/20 bg-white p-6">
@@ -562,13 +581,13 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                             <h3 className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500">Payroll Data</h3>
                             <div className="space-y-3">
                                 {onGoToPayrollView && (
-                                    <button
-                                        onClick={onGoToPayrollView}
+                                    <Link
+                                        to={`/dashboard/client/${client.id}/payroll`}
                                         className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 hover:text-slate-900 transition"
                                     >
                                         <FileArchive className="h-4 w-4" />
                                         Open Payroll View
-                                    </button>
+                                    </Link>
                                 )}
                                 {formData.masterFileUrl ? (
                                     <div className="flex flex-col gap-2">

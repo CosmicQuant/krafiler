@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
-import { computePayrollEntry } from '../services/payrollEngine';
+import { computePayrollEntry, getScheduledWorkDays } from '../services/payrollEngine';
 import { generateComplianceFromPayrollRun } from '../services/complianceFileGenerator';
 import PDFDocument from 'pdfkit';
 import path from 'path';
@@ -215,6 +215,21 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         const scheduleId = emp.workScheduleId || null;
         const schedule = scheduleId ? scheduleMap.get(scheduleId) : null;
         const scheduleConfig = schedule ? JSON.parse(schedule.config) : null;
+        const scheduledDays = getScheduledWorkDays(scheduleConfig, run.period, holidays);
+
+        // Compute attendance-adjusted basic pay
+        const absentCount = absentMap.get(emp.id) || 0;
+        const lateHrs = lateHoursMap.get(emp.id) || 0;
+        const otAmount = overtimeMap.get(emp.id) || 0;
+        const presentDays = Math.max(0, scheduledDays - absentCount);
+        const dailyRate = (emp.basicPay || 0) / Math.max(1, scheduledDays);
+        const [siH, siM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
+        const [soH, soM] = (emp.standardCheckOut || '17:00').split(':').map(Number);
+        const stdWorkingMins = (soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0));
+        const stdWorkingHours = Math.max(1, stdWorkingMins / 60);
+        const lateDeduction = dailyRate * (lateHrs / stdWorkingHours);
+        const adjustedBasicPay = Math.max(0, presentDays * dailyRate - lateDeduction + otAmount);
+
         return computePayrollEntry(
             {
                 employeeId: emp.id,
@@ -222,16 +237,22 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 kraPin: emp.kraPin,
                 payrollNumber: emp.payrollNumber,
                 basicPay: emp.basicPay,
-                benefits: 0,
+                basicPayOverride: adjustedBasicPay,
+                // Individual benefits from employee master record (not prorated — fixed monthly values)
+                carBenefit: emp.carBenefit || 0,
+                mealsBenefit: emp.mealsBenefit || 0,
+                nonCashBenefits: emp.nonCashBenefits || 0,
+                housingBenefit: emp.housingBenefit || 0,
+                otherBenefits: emp.otherBenefits || 0,
                 dateJoined: emp.dateJoined,
                 dateLeft: emp.dateLeft,
                 employmentStatus: emp.employmentStatus,
                 loanDeduction: loanMap.get(emp.id) || 0,
                 unpaidLeaveDays: leaveMap.get(emp.id) || 0,
                 payStructure,
-                overtimePay: overtimeMap.get(emp.id) || 0,
-                attendanceAbsentDays: absentMap.get(emp.id) || 0,
-                attendanceLateDays: lateHoursMap.get(emp.id) || 0,
+                overtimePay: 0,
+                attendanceAbsentDays: 0,
+                attendanceLateDays: 0,
                 pwd: emp.pwd || 'No',
                 otherPension: emp.otherPension || 0,
                 postRetMedical: emp.postRetMedical || 0,
@@ -262,6 +283,11 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 payrollNumber: entry.payrollNumber,
                 basicPay: entry.basicPay,
                 benefits: entry.benefits,
+                carBenefit: entry.carBenefit,
+                mealsBenefit: entry.mealsBenefit,
+                nonCashBenefits: entry.nonCashBenefits,
+                housingBenefit: entry.housingBenefit,
+                otherBenefits: entry.otherBenefits,
                 grossPay: entry.grossPay,
                 shaDeduction: entry.shaDeduction,
                 nssfDeduction: entry.nssfDeduction,
@@ -504,9 +530,87 @@ router.get('/:clientId/payroll-runs/:id/entries', async (req, res) => {
             .orderBy('employeeName', 'asc')
             .execute();
 
-        res.json(entries);
+        // Parse and merge overrides into each entry for frontend consumption
+        const entriesWithOverrides = entries.map((entry: any) => {
+            const merged = { ...entry };
+            if (entry.overrides) {
+                try {
+                    const overrides = JSON.parse(entry.overrides);
+                    // Mark which fields have overrides
+                    merged._overrideKeys = Object.keys(overrides);
+                    // Merge override values
+                    Object.assign(merged, overrides);
+                } catch {
+                    merged._overrideKeys = [];
+                }
+            } else {
+                merged._overrideKeys = [];
+            }
+            return merged;
+        });
+
+        res.json(entriesWithOverrides);
     } catch (err) {
         console.error('Error fetching payroll entries:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// POST /api/clients/:clientId/payroll-runs/:id/update-entry — persist per-run input overrides
+router.post('/:clientId/payroll-runs/:id/update-entry', async (req, res) => {
+    try {
+        const runId = parseInt(req.params.id, 10);
+        const clientId = parseInt(req.params.clientId, 10);
+        if (isNaN(runId) || isNaN(clientId)) return res.status(400).json({ message: 'Invalid ID' });
+
+        const { employeeId } = req.body;
+        if (!employeeId) return res.status(400).json({ message: 'employeeId is required' });
+
+        // Build override object from allowed input fields
+        const allowedOverrides = [
+            'basicPay', 'carBenefit', 'mealsBenefit', 'nonCashBenefits',
+            'housingBenefit', 'otherBenefits', 'bonusPay', 'insuranceRelief',
+            'absentDays', 'lateHours', 'overtimePay',
+        ];
+
+        const overridePayload: Record<string, number> = {};
+        for (const key of allowedOverrides) {
+            if (req.body[key] !== undefined) {
+                const val = parseFloat(String(req.body[key]));
+                if (!isNaN(val)) overridePayload[key] = val;
+            }
+        }
+
+        // Find the existing entry
+        const entry = await db
+            .selectFrom('payroll_entries')
+            .selectAll()
+            .where('payrollRunId', '=', runId)
+            .where('clientId', '=', clientId)
+            .where('employeeId', '=', employeeId)
+            .executeTakeFirst();
+
+        if (!entry) return res.status(404).json({ message: 'Payroll entry not found' });
+
+        // Merge with existing overrides
+        let existingOverrides: Record<string, number> = {};
+        if (entry.overrides) {
+            try {
+                existingOverrides = JSON.parse(entry.overrides);
+            } catch { /* ignore parse errors */ }
+        }
+
+        const mergedOverrides = { ...existingOverrides, ...overridePayload };
+
+        await db
+            .updateTable('payroll_entries')
+            .set({ overrides: JSON.stringify(mergedOverrides) })
+            .where('id', '=', entry.id)
+            .execute();
+
+        res.json({ success: true, overrides: mergedOverrides });
+    } catch (err) {
+        console.error('Error updating payroll entry override:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

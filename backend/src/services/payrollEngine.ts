@@ -4,7 +4,12 @@ export interface PayrollInput {
     kraPin: string;
     payrollNumber: string;
     basicPay: number;
-    benefits: number;
+    // Individual benefits (new — fixed monthly values, not prorated)
+    carBenefit?: number;
+    mealsBenefit?: number;
+    nonCashBenefits?: number;
+    housingBenefit?: number;
+    otherBenefits?: number;
     dateJoined: string;
     dateLeft: string | null;
     employmentStatus: string;
@@ -22,6 +27,7 @@ export interface PayrollInput {
     bonusPay?: number;
     standardCheckIn?: string;
     standardCheckOut?: string;
+    basicPayOverride?: number;
 }
 
 export interface PayrollAdjustmentInput {
@@ -36,7 +42,13 @@ export interface PayrollComputed {
     kraPin: string;
     payrollNumber: string;
     basicPay: number;
-    benefits: number;
+    benefits: number; // total benefits sum
+    // Individual benefits (new)
+    carBenefit: number;
+    mealsBenefit: number;
+    nonCashBenefits: number;
+    housingBenefit: number;
+    otherBenefits: number;
     grossPay: number;
     shaDeduction: number;
     nssfDeduction: number;
@@ -86,7 +98,7 @@ function dayName(date: Date): string {
     return days[date.getDay()];
 }
 
-function getScheduledWorkDays(config: WorkScheduleConfig, period: string, holidays: HolidayInfo[] = []): number {
+export function getScheduledWorkDays(config: WorkScheduleConfig, period: string, holidays: HolidayInfo[] = []): number {
     if (Object.keys(config).length === 0) return 30; // Fallback to legacy
 
     const [yearStr, monthStr] = period.split('-');
@@ -126,8 +138,8 @@ export function computePayrollEntry(
     adjustments: PayrollAdjustmentInput[] = [],
 ): PayrollComputed {
     const rawBasicPay = typeof input.basicPay === 'number' ? input.basicPay : parseFloat(String(input.basicPay)) || 0;
-    const rawBenefits = typeof input.benefits === 'number' ? input.benefits : parseFloat(String(input.benefits)) || 0;
     const payStructure = input.payStructure || 'fixed';
+    const hasOverride = input.basicPayOverride !== undefined && input.basicPayOverride !== null;
 
     const [yearStr, monthStr] = period.split('-');
     const year = parseInt(yearStr, 10);
@@ -141,7 +153,7 @@ export function computePayrollEntry(
 
     let daysWorked = scheduledWorkDays;
 
-    if (prorate) {
+    if (prorate && !hasOverride) {
         let activeDays = totalDays;
 
         const joined = input.dateJoined ? new Date(input.dateJoined) : null;
@@ -175,12 +187,21 @@ export function computePayrollEntry(
         }
     }
 
-    const prorationFactor = payStructure === 'prorated' && prorate
+    const prorationFactor = payStructure === 'prorated' && prorate && !hasOverride
         ? daysWorked / totalDays
         : daysWorked / scheduledWorkDays;
 
-    const basicPay = roundMoney(rawBasicPay * prorationFactor);
-    const benefits = roundMoney(rawBenefits * prorationFactor);
+    const basicPay = hasOverride
+        ? roundMoney(input.basicPayOverride!)
+        : roundMoney(rawBasicPay * prorationFactor);
+
+    // Benefits are fixed monthly values — NOT prorated
+    const carBenefit = roundMoney(input.carBenefit || 0);
+    const mealsBenefit = roundMoney(input.mealsBenefit || 0);
+    const nonCashBenefits = roundMoney(input.nonCashBenefits || 0);
+    const housingBenefit = roundMoney(input.housingBenefit || 0);
+    const otherBenefits = roundMoney(input.otherBenefits || 0);
+    const totalBenefits = roundMoney(carBenefit + mealsBenefit + nonCashBenefits + housingBenefit + otherBenefits);
 
     const unpaidLeaveDays = input.unpaidLeaveDays || 0;
     const unpaidLeaveDeduction = roundMoney((rawBasicPay / scheduledWorkDays) * unpaidLeaveDays);
@@ -191,8 +212,8 @@ export function computePayrollEntry(
     const taxableBonus = isLowIncome ? 0 : roundMoney(rawBonusPay);
     const nonTaxableBonus = isLowIncome ? roundMoney(rawBonusPay) : 0;
 
-    const absentDays = input.attendanceAbsentDays || 0;
-    const lateHours = input.attendanceLateDays || 0;
+    const absentDays = hasOverride ? 0 : (input.attendanceAbsentDays || 0);
+    const lateHours = hasOverride ? 0 : (input.attendanceLateDays || 0);
     const dailyRate = payStructure === 'prorated'
         ? rawBasicPay / Math.max(1, totalDays)
         : rawBasicPay / scheduledWorkDays;
@@ -205,9 +226,11 @@ export function computePayrollEntry(
     const standardWorkingMinutes = (soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0));
     const standardWorkingHours = Math.max(1, standardWorkingMinutes / 60);
 
-    const attendanceDeduction = roundMoney(dailyRate * (absentDays + lateHours / standardWorkingHours));
+    const attendanceDeduction = hasOverride
+        ? 0
+        : roundMoney(dailyRate * (absentDays + lateHours / standardWorkingHours));
 
-    const grossPay = roundMoney(basicPay + benefits + overtimePay + taxableBonus - unpaidLeaveDeduction - attendanceDeduction);
+    const grossPay = roundMoney(basicPay + totalBenefits + overtimePay + taxableBonus - unpaidLeaveDeduction - attendanceDeduction);
 
     // Apply dynamic adjustments
     const totalAllowances = adjustments
@@ -218,7 +241,7 @@ export function computePayrollEntry(
         .reduce((sum, a) => sum + a.amount, 0);
 
     const adjustedGrossPay = roundMoney(grossPay + totalAllowances);
-    const adjustedBenefits = roundMoney(benefits + totalAllowances);
+    const adjustedBenefits = roundMoney(totalBenefits + totalAllowances);
 
     const loanDeduction = roundMoney(input.loanDeduction || 0);
 
@@ -266,6 +289,12 @@ export function computePayrollEntry(
         payrollNumber: input.payrollNumber,
         basicPay,
         benefits: adjustedBenefits,
+        // Individual benefits (new)
+        carBenefit,
+        mealsBenefit,
+        nonCashBenefits,
+        housingBenefit,
+        otherBenefits,
         grossPay: adjustedGrossPay,
         shaDeduction,
         nssfDeduction,

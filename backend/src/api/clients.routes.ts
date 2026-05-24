@@ -176,6 +176,35 @@ router.post('/', async (req, res) => {
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
+
+        // Seed default leave types for new client
+        try {
+            const now = new Date().toISOString();
+            const defaults = [
+                { name: 'Annual', isPaid: 1, maxDaysPerYear: 21 },
+                { name: 'Sick', isPaid: 1, maxDaysPerYear: 10 },
+                { name: 'Maternity', isPaid: 1, maxDaysPerYear: 90 },
+                { name: 'Paternity', isPaid: 1, maxDaysPerYear: 14 },
+                { name: 'Compassionate', isPaid: 1, maxDaysPerYear: 5 },
+                { name: 'Study', isPaid: 1, maxDaysPerYear: 0 },
+                { name: 'Unpaid', isPaid: 0, maxDaysPerYear: 0 },
+            ];
+                const clientId = Number(result.lastID);
+                await kyselyDb
+                .insertInto('leave_types')
+                .values(defaults.map(d => ({
+                    clientId,
+                    name: d.name,
+                    isPaid: d.isPaid,
+                    maxDaysPerYear: d.maxDaysPerYear,
+                    createdAt: now,
+                    updatedAt: now,
+                })))
+                .execute();
+        } catch (seedErr) {
+            console.error('Error seeding default leave types:', seedErr);
+        }
+
         res.status(201).json(newClient);
     } catch (err) {
         console.error('Error adding client:', err);

@@ -240,9 +240,6 @@ router.post('/calculate-preview', async (req: Request, res: Response) => {
             period = '2026-01',
         } = req.body;
 
-        // Combine all cash + non-cash benefits into the single benefits field used by the engine
-        const benefits = carBenefit + meals + nonCash + housingBenefit + otherBenefits;
-
         const preview = computePayrollEntry(
             {
                 employeeId: 0,
@@ -250,7 +247,12 @@ router.post('/calculate-preview', async (req: Request, res: Response) => {
                 kraPin: '',
                 payrollNumber: '',
                 basicPay,
-                benefits,
+                // Individual benefits (new — passed separately, not combined)
+                carBenefit,
+                mealsBenefit: meals,
+                nonCashBenefits: nonCash,
+                housingBenefit,
+                otherBenefits,
                 dateJoined: '',
                 dateLeft: null,
                 employmentStatus: 'Active',

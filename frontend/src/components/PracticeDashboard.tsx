@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useParams, useLocation, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import CompanyDetails from './CompanyDetails';
 import { useUIStore } from '../store/uiStore';
@@ -11,13 +12,15 @@ import { Desk9thView } from './dashboard/views/Desk9thView';
 import { Desk20thView } from './dashboard/views/Desk20thView';
 import { DeskNilView } from './dashboard/views/DeskNilView';
 import { ClientsView } from './dashboard/views/ClientsView';
-import { PayrollWebView } from './dashboard/views/PayrollWebView';
+import { PayrollPipelineDashboard } from './payroll-pipeline/PayrollPipelineDashboard';
+import { PipelineWizard } from './payroll-pipeline/PipelineWizard';
 import { apiFetch } from '../services/api';
 
 import {
   Building2,
   Menu,
   Plus,
+  RefreshCw,
   Search,
   X,
 } from 'lucide-react';
@@ -26,6 +29,9 @@ import { ClientObligation, ActiveDashboardJob, FilingJobState, VatPreparationSum
 import { normalizeClientObligation, buildStoredArtifactUrl, isTerminalFilingJob } from '../utils/dashboardUtils';
 
 export default function PracticeDashboard() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { clientId: routeClientId } = useParams<{ clientId: string }>();
   const queryClient = useQueryClient();
 
   // UI Store
@@ -56,15 +62,10 @@ export default function PracticeDashboard() {
 
   // Local state
   const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
-  const [showPayrollView, setShowPayrollView] = useState(false);
   const hasObligation = (val?: string | null) => !!val && val !== 'na';
-  const isPayrollClient = selectedClient
-    ? hasObligation(selectedClient.paye) || hasObligation(selectedClient.nssf) || hasObligation(selectedClient.sha)
-    : false;
 
   const handleGoToPayrollView = (client: ClientObligation) => {
-    setSelectedClient(client);
-    setShowPayrollView(true);
+    navigate(`/dashboard/client/${client.id}/payroll`);
   };
 
   const [isGeneratingZips, setIsGeneratingZips] = useState(false);
@@ -465,46 +466,59 @@ export default function PracticeDashboard() {
               </div>
             )}
 
-            {selectedClient && showPayrollView && isPayrollClient && (
-              <div className="mt-10">
-                <PayrollWebView
-                  client={selectedClient}
-                  clients={clients}
-                  onClientChange={(c) => setSelectedClient(c)}
-                  onBack={() => { setSelectedClient(null); setShowPayrollView(false); }}
-                  onEditClient={() => setShowPayrollView(false)}
-                  onUploadMasterCsv={filingActions.uploadMasterCsv}
-                  onRemoveMasterCsv={filingActions.removeMasterCsv}
-                  onGeneratePayrollPacks={filingActions.generateClientZip}
-                  onAutoFilePaye={filingActions.autoFile}
-                  onAutoFileNssf={filingActions.fileNssf}
-                  onGenerateCompliance={(client, result) => {
-                    setSelectedClient(prev => prev?.id === client.id ? {
-                      ...prev,
-                      payeZipUrl: result.payeZipUrl,
-                      payeZipLabel: result.payeZipLabel,
-                      nssfFileUrl: result.nssfFileUrl,
-                      nssfFileLabel: result.nssfFileLabel,
-                      shaFileUrl: result.shaFileUrl,
-                      shaFileLabel: result.shaFileLabel,
-                      payeAmount: result.summaryAmounts?.payeAmount,
-                      nitaAmount: result.summaryAmounts?.nitaAmount,
-                      housingLevyAmount: result.summaryAmounts?.housingLevyAmount,
-                      nssfAmount: result.summaryAmounts?.nssfAmount,
-                      shaAmount: result.summaryAmounts?.shaAmount,
-                    } : prev);
-                  }}
-                />
-              </div>
-            )}
+            {/* Payroll Pipeline Routes — explicit pathname matching */}
+            {(() => {
+              const resolvedClient = clients.find((c) => c.id === routeClientId) || selectedClient || null;
 
-            {selectedClient && !showPayrollView && (
+              if (!fetchedClients) {
+                return (
+                  <div className="mt-10 flex items-center justify-center py-20">
+                    <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
+                  </div>
+                );
+              }
+
+              if (!resolvedClient) {
+                return <Navigate to="/dashboard" replace />;
+              }
+
+              const p = location.pathname;
+              const isPayroll = p.startsWith('/dashboard/client/') && p.includes('/payroll');
+              const isPayrollNew = p.endsWith('/payroll/new');
+              const isPayrollRun = p.includes('/payroll/run/');
+
+              if (!isPayroll) return null;
+
+              return (
+                <div className="mt-10">
+                  {isPayrollNew || isPayrollRun ? (
+                    <PipelineWizard
+                      client={resolvedClient}
+                      onBack={() => {
+                        setSelectedClient(null);
+                        navigate('/dashboard');
+                      }}
+                    />
+                  ) : (
+                    <PayrollPipelineDashboard
+                      client={resolvedClient}
+                      onBack={() => {
+                        setSelectedClient(null);
+                        navigate('/dashboard');
+                      }}
+                    />
+                  )}
+                </div>
+              );
+            })()}
+
+            {selectedClient && !location.pathname.includes('/payroll') && (
               <div className="mt-10">
                 <CompanyDetails
                   client={selectedClient}
                   onBack={() => setSelectedClient(null)}
                   onSave={handleSaveClientDetails}
-                  onGoToPayrollView={isPayrollClient ? () => setShowPayrollView(true) : undefined}
+                  onGoToPayrollView={() => handleGoToPayrollView(selectedClient)}
                 />
               </div>
             )}
@@ -520,7 +534,7 @@ export default function PracticeDashboard() {
               />
             )}
 
-            {!selectedClient && view === 'payroll' && (
+            {!selectedClient && view === 'payroll' && !location.pathname.includes('/payroll') && (
               <Desk9thView
                 clients={clients}
                 activeJobs={activeJobs}

@@ -13,9 +13,10 @@ interface Employee {
 interface Step1SetupProps {
     client: ClientObligation;
     onValidationChange?: (valid: boolean) => void;
+    onPeriodChange?: (period: string) => void;
 }
 
-export function Step1Setup({ client, onValidationChange }: Step1SetupProps) {
+export function Step1Setup({ client, onValidationChange, onPeriodChange }: Step1SetupProps) {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [attendanceApproved, setAttendanceApproved] = useState(false);
 
@@ -46,6 +47,7 @@ export function Step1Setup({ client, onValidationChange }: Step1SetupProps) {
             <AttendanceCalendarGrid
                 clientId={client.id}
                 onApproved={() => setAttendanceApproved(true)}
+                onPeriodChange={onPeriodChange}
             />
 
             {/* Loan & Leave */}

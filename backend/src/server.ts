@@ -77,7 +77,8 @@ const filingLimiter = rateLimit({
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 
 // Limit body size to prevent large-payload DoS attacks
-app.use(express.json({ limit: '10kb' }));
+// Bulk attendance inserts can exceed 10KB with many employees/days.
+app.use(express.json({ limit: '5mb' }));
 
 // Serve receipts statically
 app.use('/api/receipts', express.static(path.resolve(__dirname, '..', '..', 'receipts')));

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
+import { getCurrentFilingPeriod } from '../../../utils/taxPeriods';
 
 interface PayrollEntry {
     id: number;
@@ -23,6 +24,7 @@ interface PayrollEntry {
     employeeName: string;
     kraPin: string;
     daysWorked: number;
+    totalStdHours: number;
     basicPay: number;
     carBenefit: number;
     mealsBenefit: number;
@@ -68,9 +70,11 @@ interface Step5ReviewPreviewProps {
     clientId: string;
     runId?: number;
     onRunCreated?: (runId: number) => void;
+    period?: string;
+    autoGenerate?: boolean;
 }
 
-export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5ReviewPreviewProps) {
+export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: periodProp, autoGenerate }: Step5ReviewPreviewProps) {
     const [entries, setEntries] = useState<PayrollEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -94,11 +98,23 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
 
     const debounceRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
     const entriesRef = useRef<PayrollEntry[]>(entries);
+    const autoGenTriggered = useRef(false);
     useEffect(() => { entriesRef.current = entries; }, [entries]);
 
     const [generating, setGenerating] = useState(false);
     const [genMessage, setGenMessage] = useState<string | null>(null);
-    const [period, setPeriod] = useState('2026-01');
+    const [period, setPeriod] = useState(periodProp || getCurrentFilingPeriod().period);
+
+    useEffect(() => {
+        if (periodProp) setPeriod(periodProp);
+    }, [periodProp]);
+
+    useEffect(() => {
+        if (autoGenerate && !autoGenTriggered.current && !generating) {
+            autoGenTriggered.current = true;
+            handleGenerate();
+        }
+    }, [autoGenerate]);
 
     const fetchEntries = useCallback(async () => {
         if (!effectiveRunId) return;
@@ -149,7 +165,10 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prorate: true }),
                 });
-                if (!genRes.ok) throw new Error('Failed to regenerate entries');
+                if (!genRes.ok) {
+                    const errData = await genRes.json().catch(() => ({}));
+                    throw new Error(errData.detail || errData.message || 'Failed to regenerate entries');
+                }
                 newRunId = existingRunId;
             } else {
                 const createRes = await apiFetch(`/clients/${clientId}/payroll-runs`, {
@@ -157,7 +176,10 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ period, notes: '', prorate: true }),
                 });
-                if (!createRes.ok) throw new Error('Failed to create run');
+                if (!createRes.ok) {
+                    const errData = await createRes.json().catch(() => ({}));
+                    throw new Error(errData.detail || errData.message || 'Failed to create run');
+                }
                 const data = await createRes.json();
                 newRunId = data.run.id;
             }
@@ -196,7 +218,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                     payStructure: 'fixed',
                     period: '2026-01',
                 };
-                const res = await apiFetch('/api/payroll/calculate-preview', {
+                const res = await apiFetch('/payroll/calculate-preview', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
@@ -231,7 +253,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                 if (preview) {
                     setPreviewCache((prev) => ({ ...prev, [entryId]: preview }));
                 }
-            }, 300);
+            }, 150);
         },
         [calculatePreview]
     );
@@ -315,7 +337,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
 
     const exportCSV = () => {
         const headers = [
-            'employeeName', 'kraPin', 'daysWorked', 'basicPay', 'carBenefit', 'mealsBenefit',
+            'employeeName', 'kraPin', 'totalStdHours', 'basicPay', 'carBenefit', 'mealsBenefit',
             'nonCashBenefits', 'housingBenefit', 'otherBenefits', 'overtimePay', 'grossPay',
             'payeTax', 'shaDeduction', 'nssfDeduction', 'ahlDeduction', 'absentDays', 'lateDays', 'netPay',
         ];
@@ -448,7 +470,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
         { basicPay: 0, grossPay: 0, payeTax: 0, shaDeduction: 0, nssfDeduction: 0, ahlDeduction: 0, netPay: 0, loanDeduction: 0, totalDeductions: 0, taxablePay: 0 }
     );
 
-    const colCount = compareMode ? 23 : 21;
+    const colCount = compareMode ? 22 : 20;
     const sortableHeaderClass = 'cursor-pointer select-none hover:bg-slate-100 transition';
 
     if (loading) {
@@ -459,8 +481,21 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
         );
     }
 
-    // Show Generate UI when no run exists yet
+    // Show loading when auto-generating; otherwise show manual Generate UI
     if (!effectiveRunId) {
+        if (autoGenerate) {
+            return (
+                <div className="flex flex-col items-center justify-center py-12">
+                    <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
+                    <span className="mt-2 text-sm text-slate-500">Generating payroll for {period}...</span>
+                    {error && (
+                        <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                            <AlertCircle className="h-4 w-4" /> {error}
+                        </div>
+                    )}
+                </div>
+            );
+        }
         return (
             <div className="space-y-6">
                 {error && (
@@ -619,28 +654,25 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                                     >
                                         KRA PIN {sortColumn === 'kraPin' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('daysWorked')}
-                                    >
-                                        Days {sortColumn === 'daysWorked' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
-                                    </th>
+                                     <th
+                                         className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
+                                         onClick={() => handleSort('totalStdHours')}
+                                     >
+                                         Total Std Hrs {sortColumn === 'totalStdHours' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
+                                     </th>
                                     <th
                                         className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
                                         onClick={() => handleSort('basicPay')}
                                     >
                                         Basic Pay {sortColumn === 'basicPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        Benefits
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        OT
-                                    </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('bonusPay')}
-                                    >
+                                     <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
+                                         Benefits
+                                     </th>
+                                     <th
+                                         className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
+                                         onClick={() => handleSort('bonusPay')}
+                                     >
                                         Bonus Pay {sortColumn === 'bonusPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
                                     <th
@@ -752,16 +784,9 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                                                 <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">
                                                     {entry.kraPin}
                                                 </td>
-                                                <td className="px-3 py-2 text-right">
-                                                    <input
-                                                        type="number"
-                                                        value={entry.daysWorked}
-                                                        onChange={(e) =>
-                                                            updateEntryField(entry.id, 'daysWorked', parseFloat(e.target.value) || 0)
-                                                        }
-                                                        className="w-14 rounded border border-slate-200 bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                                                    />
-                                                </td>
+                                                 <td className="px-3 py-2 text-right font-mono text-blue-600">
+                                                     {(entry.totalStdHours ?? entry.daysWorked).toFixed(1)}
+                                                 </td>
                                                 <td className="px-3 py-2 text-right">
                                                     <input
                                                         type="number"
@@ -777,29 +802,19 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                                                         )}
                                                     />
                                                 </td>
-                                                <td className="px-3 py-2 text-right bg-amber-50/50">
-                                                    <button
-                                                        onClick={() => toggleBenefits(entry.id)}
-                                                        className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700 hover:bg-slate-200 transition"
-                                                    >
-                                                        {(entry.carBenefit + entry.mealsBenefit + entry.nonCashBenefits + entry.housingBenefit + entry.otherBenefits).toLocaleString()}
-                                                        {expandedBenefits.has(entry.id) ? (
-                                                            <ChevronUp className="h-3 w-3" />
-                                                        ) : (
-                                                            <ChevronDown className="h-3 w-3" />
-                                                        )}
-                                                    </button>
-                                                </td>
-                                                <td className="px-3 py-2 text-right">
-                                                    <input
-                                                        type="number"
-                                                        value={entry.overtimePay}
-                                                        onChange={(e) =>
-                                                            updateEntryField(entry.id, 'overtimePay', parseFloat(e.target.value) || 0)
-                                                        }
-                                                        className="w-20 rounded border border-slate-200 bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                                                    />
-                                                </td>
+                                                 <td className="px-3 py-2 text-right bg-amber-50/50">
+                                                     <button
+                                                         onClick={() => toggleBenefits(entry.id)}
+                                                         className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700 hover:bg-slate-200 transition"
+                                                     >
+                                                         {(entry.carBenefit + entry.mealsBenefit + entry.nonCashBenefits + entry.housingBenefit + entry.otherBenefits).toLocaleString()}
+                                                         {expandedBenefits.has(entry.id) ? (
+                                                             <ChevronUp className="h-3 w-3" />
+                                                         ) : (
+                                                             <ChevronDown className="h-3 w-3" />
+                                                         )}
+                                                     </button>
+                                                 </td>
                                                 <td className="px-3 py-2 text-right">
                                                     <input
                                                         type="number"
@@ -901,12 +916,10 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated }: Step5Revie
                                                                     { key: 'nonCashBenefits', label: 'Non-Cash' },
                                                                     { key: 'housingBenefit', label: 'Housing' },
                                                                     { key: 'otherBenefits', label: 'Other Benefits' },
-                                                                    { key: 'overtimePay', label: 'Overtime' },
                                                                     { key: 'bonusPay', label: 'Bonus Pay' },
                                                                     { key: 'unpaidLeaveDays', label: 'Unpaid Leave Days' },
                                                                     { key: 'absentDays', label: 'Absent Days' },
                                                                     { key: 'lateDays', label: 'Late Hours' },
-                                                                    { key: 'daysWorked', label: 'Days Worked' },
                                                                     { key: 'insuranceRelief', label: 'Insurance Relief' },
                                                                 ].map((f) => (
                                                                     <div key={f.key} className="flex items-center justify-between gap-2">

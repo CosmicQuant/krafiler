@@ -144,6 +144,7 @@ export interface EmployeesTable {
     passwordChangedAt: string | null;
     workScheduleId: number | null;
     offDay: string | null; // e.g. "Monday" for rotating/case-by-case
+    hourlyRate: number;
     createdAt: string;
     updatedAt: string;
 }
@@ -158,6 +159,7 @@ export interface LeaveRequestsTable {
     startDate: string;
     endDate: string;
     daysCount: number;
+    hours: number;
     reason: string;
     status: string;
     isPaid: number; // 1 = paid, 0 = unpaid
@@ -269,6 +271,7 @@ export interface PayrollEntriesTable {
     payeTax: number;
     netPay: number;
     daysWorked: number;
+    totalStdHours: number;
     unpaidLeaveDays: number;
     loanDeduction: number;
     overtimePay: number;

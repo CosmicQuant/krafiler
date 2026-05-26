@@ -36,7 +36,7 @@ router.post('/:clientId/employees', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay, workScheduleId, offDay } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, departmentId, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay, workScheduleId, offDay, hourlyRate } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
@@ -84,6 +84,7 @@ router.post('/:clientId/employees', async (req, res) => {
                 bonusPay: bonusPay || 0,
                 workScheduleId: workScheduleId || null,
                 offDay: offDay || null,
+                hourlyRate: hourlyRate ?? 0,
                 createdAt: now,
                 updatedAt: now,
             })
@@ -129,7 +130,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Employee not found' });
 
-        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay, workScheduleId, offDay } = req.body;
+        const { payrollNumber, employeeName, idNumber, kraPin, nssfNo, shaNo, phone, email, bankName, bankAccount, bankCode, department, jobTitle, employmentType, employmentStatus, dateJoined, dateLeft, basicPay, role, departmentId, standardCheckOut, standardCheckIn, identityType, residentialStatus, typeOfEmployee, pwd, exemptionCert, carBenefit, mealsBenefit, nonCashBenefits, typeOfHousing, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgageInterest, insuranceRelief, payStructure, bonusPay, workScheduleId, offDay, hourlyRate } = req.body;
 
         await db
             .updateTable('employees')
@@ -175,6 +176,7 @@ router.put('/:clientId/employees/:id', async (req, res) => {
                 bonusPay: bonusPay !== undefined ? bonusPay : existing.bonusPay,
                 workScheduleId: workScheduleId !== undefined ? (workScheduleId ? parseInt(workScheduleId, 10) : null) : existing.workScheduleId,
                 offDay: offDay !== undefined ? (offDay || null) : existing.offDay,
+                hourlyRate: hourlyRate !== undefined ? hourlyRate : existing.hourlyRate,
                 updatedAt: new Date().toISOString(),
             })
             .where('id', '=', id)
@@ -327,6 +329,7 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     insuranceRelief: 0,
                     payStructure: 'fixed',
                     bonusPay: 0,
+                    hourlyRate: 0,
                     createdAt: now,
                     updatedAt: now,
                 })

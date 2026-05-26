@@ -110,33 +110,78 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         .where('date', '<=', periodEndStr)
         .execute();
 
-    const absentMap = new Map<number, number>();
+    // Compute attendance-adjusted pay using actual hours worked (matches frontend grid)
+    const totalStdHoursMap = new Map<number, number>();
+    const otHoursMap = new Map<number, number>();
     const lateHoursMap = new Map<number, number>();
+    const lateCountMap = new Map<number, number>();
+    const presentCountMap = new Map<number, number>();
+    const halfCountMap = new Map<number, number>();
+    const absentCountMap = new Map<number, number>();
+    const leaveCountMap = new Map<number, number>();
+    const offCountMap = new Map<number, number>();
+    const paidLeaveHoursMap = new Map<number, number>();
+
     for (const ar of attendanceRecords) {
+        const emp = employees.find(e => e.id === ar.employeeId);
+        if (!emp) continue;
+
+        const standardIn = emp.standardCheckIn || '08:00';
+        const standardOut = emp.standardCheckOut || '17:00';
+        const [siH, siM] = standardIn.split(':').map(Number);
+        const [soH, soM] = standardOut.split(':').map(Number);
+        const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+
         if (ar.status === 'Absent') {
-            absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 1);
-        } else if (ar.status === 'Half-Day') {
-            absentMap.set(ar.employeeId, (absentMap.get(ar.employeeId) || 0) + 0.5);
-        } else if (ar.status === 'Late') {
-            const emp = employees.find(e => e.id === ar.employeeId);
-            const checkIn = ar.checkIn || '';
-            const standardIn = emp?.standardCheckIn || '08:00';
-            const [cH, cM] = checkIn.split(':').map(Number);
-            const [sH, sM] = standardIn.split(':').map(Number);
-            if (!isNaN(cH) && !isNaN(sH)) {
-                const lateMins = (cH * 60 + (cM || 0)) - (sH * 60 + (sM || 0));
-                if (lateMins > 0) {
-                    const lateHours = lateMins / 60;
-                    lateHoursMap.set(ar.employeeId, (lateHoursMap.get(ar.employeeId) || 0) + lateHours);
-                }
+            absentCountMap.set(ar.employeeId, (absentCountMap.get(ar.employeeId) || 0) + 1);
+            continue;
+        }
+        if (ar.status === 'Off Day') {
+            offCountMap.set(ar.employeeId, (offCountMap.get(ar.employeeId) || 0) + 1);
+            continue;
+        }
+        if (ar.status === 'On Leave') {
+            leaveCountMap.set(ar.employeeId, (leaveCountMap.get(ar.employeeId) || 0) + 1);
+            // Paid leave hours tracked separately; NOT added to totalStdHours
+            const leaveInfo = leaveRecords.find(lr => lr.employeeId === ar.employeeId && lr.status === 'Approved' && ar.date >= lr.startDate && ar.date <= lr.endDate);
+            if (leaveInfo && leaveInfo.isPaid === 1) {
+                paidLeaveHoursMap.set(ar.employeeId, (paidLeaveHoursMap.get(ar.employeeId) || 0) + (leaveInfo.hours || dailyHours));
             }
+            continue;
+        }
+
+        const [ciH, ciM] = (ar.checkIn || standardIn).split(':').map(Number);
+        const [coH, coM] = (ar.checkOut || standardOut).split(':').map(Number);
+        const actualMins = Math.max(0, (coH * 60 + (coM || 0)) - (ciH * 60 + (ciM || 0)));
+        const actualHours = actualMins / 60;
+
+        // Late hours for ANY working day (not just status === 'Late')
+        if (!isNaN(ciH) && !isNaN(siH)) {
+            const lateMins = Math.max(0, (ciH * 60 + (ciM || 0)) - (siH * 60 + (siM || 0)));
+            if (lateMins > 0) {
+                lateHoursMap.set(ar.employeeId, (lateHoursMap.get(ar.employeeId) || 0) + lateMins / 60);
+            }
+        }
+
+        if (ar.status === 'Half-Day') {
+            halfCountMap.set(ar.employeeId, (halfCountMap.get(ar.employeeId) || 0) + 1);
+            totalStdHoursMap.set(ar.employeeId, (totalStdHoursMap.get(ar.employeeId) || 0) + Math.min(actualHours, dailyHours * 0.5));
+        } else if (ar.status === 'Late') {
+            lateCountMap.set(ar.employeeId, (lateCountMap.get(ar.employeeId) || 0) + 1);
+            totalStdHoursMap.set(ar.employeeId, (totalStdHoursMap.get(ar.employeeId) || 0) + Math.min(actualHours, dailyHours));
+            otHoursMap.set(ar.employeeId, (otHoursMap.get(ar.employeeId) || 0) + Math.max(0, actualHours - dailyHours));
+        } else if (ar.status === 'Present') {
+            presentCountMap.set(ar.employeeId, (presentCountMap.get(ar.employeeId) || 0) + 1);
+            totalStdHoursMap.set(ar.employeeId, (totalStdHoursMap.get(ar.employeeId) || 0) + Math.min(actualHours, dailyHours));
+            otHoursMap.set(ar.employeeId, (otHoursMap.get(ar.employeeId) || 0) + Math.max(0, actualHours - dailyHours));
         }
     }
 
-    // Exclude approved leave days from absent counts
-    const leaveDateMap = new Map<number, Set<string>>();
+    // Add paid leave hours for approved leave without attendance records
     for (const lv of leaveRecords) {
         if (lv.status !== 'Approved') continue;
+        const isUnpaid = lv.isPaid === 0 || lv.leaveType.toLowerCase().includes('unpaid');
+        if (isUnpaid) continue;
         const lvStartStr = lv.startDate || '';
         const lvEndStr = lv.endDate || '';
         if (!lvStartStr) continue;
@@ -147,48 +192,20 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         const overlapStart = lvStart > periodStart ? lvStart : periodStart;
         const overlapEnd = lvEnd < periodEnd ? lvEnd : periodEnd;
         if (overlapStart > overlapEnd) continue;
-        if (!leaveDateMap.has(lv.employeeId)) leaveDateMap.set(lv.employeeId, new Set());
+
+        const emp = employees.find(e => e.id === lv.employeeId);
+        const [siH, siM] = (emp?.standardCheckIn || '08:00').split(':').map(Number);
+        const [soH, soM] = (emp?.standardCheckOut || '17:00').split(':').map(Number);
+        const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+
         const current = new Date(overlapStart);
         while (current <= overlapEnd) {
-            leaveDateMap.get(lv.employeeId)!.add(current.toISOString().slice(0, 10));
+            const dateStr = current.toISOString().slice(0, 10);
+            const hasRecord = attendanceRecords.some(ar => ar.employeeId === lv.employeeId && ar.date === dateStr);
+            if (!hasRecord) {
+                paidLeaveHoursMap.set(lv.employeeId, (paidLeaveHoursMap.get(lv.employeeId) || 0) + (lv.hours || dailyHours));
+            }
             current.setDate(current.getDate() + 1);
-        }
-    }
-    for (const ar of attendanceRecords) {
-        if (ar.status !== 'Absent') continue;
-        const leaveDates = leaveDateMap.get(ar.employeeId);
-        if (leaveDates && leaveDates.has(ar.date)) {
-            const prev = absentMap.get(ar.employeeId) || 0;
-            if (prev > 0) absentMap.set(ar.employeeId, prev - 1);
-        }
-    }
-
-    // Fetch overtime records for the period
-    const overtimeRecords = await db
-        .selectFrom('overtime_records')
-        .selectAll()
-        .where('clientId', '=', clientId)
-        .where('period', '=', run.period)
-        .execute();
-    const overtimeMap = new Map<number, number>();
-    for (const ot of overtimeRecords) {
-        overtimeMap.set(ot.employeeId, (overtimeMap.get(ot.employeeId) || 0) + ot.amount);
-    }
-
-    // Check for approved attendance payroll data (workflow step)
-    const approvedAttendances = await db
-        .selectFrom('attendance_payroll_approvals')
-        .selectAll()
-        .where('clientId', '=', clientId)
-        .where('period', '=', run.period)
-        .where('approvedAt', 'is not', null)
-        .execute();
-
-    if (approvedAttendances.length > 0) {
-        for (const aa of approvedAttendances) {
-            absentMap.set(aa.employeeId, aa.absentDays);
-            lateHoursMap.set(aa.employeeId, aa.lateHours);
-            overtimeMap.set(aa.employeeId, aa.overtimeAmount);
         }
     }
 
@@ -214,23 +231,31 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         // Determine work schedule for this employee
         const scheduleId = emp.workScheduleId || null;
         const schedule = scheduleId ? scheduleMap.get(scheduleId) : null;
-        const scheduleConfig = schedule ? JSON.parse(schedule.config) : null;
+        const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
         const scheduledDays = getScheduledWorkDays(scheduleConfig, run.period, holidays);
 
-        // Compute attendance-adjusted basic pay
-        const absentCount = absentMap.get(emp.id) || 0;
+        // Compute attendance-adjusted basic pay from actual hours worked (matches frontend)
+        const totalStdHours = totalStdHoursMap.get(emp.id) || 0;
+        const otHours = otHoursMap.get(emp.id) || 0;
+        const paidLeaveHours = paidLeaveHoursMap.get(emp.id) || 0;
         const lateHrs = lateHoursMap.get(emp.id) || 0;
-        const otAmount = overtimeMap.get(emp.id) || 0;
-        const presentDays = Math.max(0, scheduledDays - absentCount);
-        const dailyRate = (emp.basicPay || 0) / Math.max(1, scheduledDays);
+        const absentCount = absentCountMap.get(emp.id) || 0;
         const [siH, siM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
         const [soH, soM] = (emp.standardCheckOut || '17:00').split(':').map(Number);
-        const stdWorkingMins = (soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0));
-        const stdWorkingHours = Math.max(1, stdWorkingMins / 60);
-        const lateDeduction = dailyRate * (lateHrs / stdWorkingHours);
-        const adjustedBasicPay = Math.max(0, presentDays * dailyRate - lateDeduction + otAmount);
+        const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+        const monthlyHours = dailyHours * scheduledDays;
+        const hourlyRate = (emp.hourlyRate || (emp.basicPay / Math.max(1, monthlyHours))) || 0;
+        const otRate = Math.round(hourlyRate * 1.5 * 100) / 100;
+        const paidLeaveAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
+        const overtimePay = Math.round(otHours * otRate * 100) / 100;
 
-        return computePayrollEntry(
+        // For prorated: override basicPay with hours-based amount (OT included in override)
+        // For fixed: let computePayrollEntry use rawBasicPay with natural proration, pass OT separately
+        const adjustedBasicPay = payStructure === 'prorated'
+            ? Math.round((totalStdHours * hourlyRate + paidLeaveAmount + overtimePay) * 100) / 100
+            : undefined;
+
+        const entry: any = computePayrollEntry(
             {
                 employeeId: emp.id,
                 employeeName: emp.employeeName,
@@ -238,7 +263,6 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 payrollNumber: emp.payrollNumber,
                 basicPay: emp.basicPay,
                 basicPayOverride: adjustedBasicPay,
-                // Individual benefits from employee master record (not prorated — fixed monthly values)
                 carBenefit: emp.carBenefit || 0,
                 mealsBenefit: emp.mealsBenefit || 0,
                 nonCashBenefits: emp.nonCashBenefits || 0,
@@ -250,7 +274,7 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 loanDeduction: loanMap.get(emp.id) || 0,
                 unpaidLeaveDays: leaveMap.get(emp.id) || 0,
                 payStructure,
-                overtimePay: 0,
+                overtimePay: payStructure === 'fixed' ? overtimePay : 0,
                 attendanceAbsentDays: 0,
                 attendanceLateDays: 0,
                 pwd: emp.pwd || 'No',
@@ -268,6 +292,10 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
             holidays,
             adjustmentsByEmployee.get(emp.id) || [],
         );
+        entry.totalStdHours = Math.round(totalStdHours * 100) / 100;
+        entry.absentDays = absentCount;
+        entry.lateDays = Math.round(lateHrs * 100) / 100;
+        return entry;
     });
 
     // Insert entries
@@ -298,6 +326,7 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 payeTax: entry.payeTax,
                 netPay: entry.netPay,
                 daysWorked: entry.daysWorked,
+                totalStdHours: entry.totalStdHours || 0,
                 unpaidLeaveDays: entry.unpaidLeaveDays,
                 loanDeduction: entry.loanDeduction,
                 overtimePay: entry.overtimePay,
@@ -510,7 +539,7 @@ router.post('/:clientId/payroll-runs/:id/generate', async (req, res) => {
         if (err.message === 'No active employees found') {
             res.status(400).json({ message: err.message });
         } else {
-            res.status(500).json({ message: 'Internal server error' });
+            res.status(500).json({ message: 'Internal server error', detail: err?.message || String(err), stack: err?.stack });
         }
     }
 });

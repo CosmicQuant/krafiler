@@ -250,15 +250,23 @@ router.post('/:clientId/attendance/bulk', async (req, res) => {
             updatedAt: now,
         }));
 
-        const result = await db
-            .insertInto('attendance_records')
-            .values(values)
-            .execute();
+        // SQLite has a limit of ~999 host parameters per statement;
+        // batch into chunks of 50 records to stay well under the limit.
+        const BATCH_SIZE = 50;
+        let totalInserted = 0;
+        for (let i = 0; i < values.length; i += BATCH_SIZE) {
+            const chunk = values.slice(i, i + BATCH_SIZE);
+            const result = await db
+                .insertInto('attendance_records')
+                .values(chunk)
+                .execute();
+            totalInserted += result.length;
+        }
 
-        res.status(201).json({ inserted: result.length });
-    } catch (err) {
+        res.status(201).json({ inserted: totalInserted });
+    } catch (err: any) {
         console.error('Error bulk inserting attendance records:', err);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: 'Internal server error', detail: err?.message });
     }
 });
 

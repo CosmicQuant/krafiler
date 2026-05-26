@@ -99,7 +99,7 @@ function dayName(date: Date): string {
 }
 
 export function getScheduledWorkDays(config: WorkScheduleConfig, period: string, holidays: HolidayInfo[] = []): number {
-    if (Object.keys(config).length === 0) return 30; // Fallback to legacy
+    if (!config || Object.keys(config).length === 0) return 30; // Fallback to legacy
 
     const [yearStr, monthStr] = period.split('-');
     const year = parseInt(yearStr, 10);

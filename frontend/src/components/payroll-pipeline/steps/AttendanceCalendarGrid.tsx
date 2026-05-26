@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, CalendarCheck, CheckCircle2, Pencil, Trash2, X } from 'lucide-react';
+import { RefreshCw, CalendarCheck, CheckCircle2, Pencil, Trash2, X, Plus, CalendarDays } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { EmployeeEditModal, type Employee } from './EmployeeEditModal';
 import { getCurrentFilingPeriod } from '../../../utils/taxPeriods';
@@ -18,6 +18,26 @@ interface WorkSchedule {
     id: number;
     name: string;
     config: string;
+    standardCheckIn: string;
+    standardCheckOut: string;
+}
+
+interface Holiday {
+    id: number;
+    date: string;
+    isRecurring: number;
+    name: string;
+}
+
+interface LeaveRequest {
+    id: number;
+    employeeId: number;
+    startDate: string;
+    endDate: string;
+    status: string;
+    leaveType: string;
+    isPaid: number;
+    hours: number;
 }
 
 interface AttendanceSummary {
@@ -25,15 +45,25 @@ interface AttendanceSummary {
     absentDays: number;
     lateHours: number;
     halfDays: number;
+    presentDays: number;
+    leaveDays: number;
+    offDays: number;
     overtimeHours: number;
     overtimeRate: number;
     overtimeMultiplier: number;
     overtimeAmount: number;
+    hourlyRate: number;
+    totalStdHours: number;
+    stdPay: number;
+    paidLeaveHours: number;
+    unpaidLeaveHours: number;
+    paidLeaveAmount: number;
 }
 
 interface AttendanceCalendarGridProps {
     clientId: string;
     onApproved?: () => void;
+    onPeriodChange?: (period: string) => void;
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -48,19 +78,72 @@ function parseConfig(config: string) {
     try { return JSON.parse(config); } catch { return null; }
 }
 
-function getScheduledWorkDays(config: any, year: number, month: number, offDay: string | null): number {
+function getScheduledWorkDays(config: any, year: number, month: number, offDay: string | null, holidays: Holiday[]): number {
+    if (!config || Object.keys(config).length === 0) return 30; // Match backend fallback
+
     const total = daysInMonth(year, month);
     let count = 0;
     for (let d = 1; d <= total; d++) {
         const date = new Date(year, month - 1, d);
         const dayName = DAY_LABELS[date.getDay()];
-        let isWork = true;
-        if (config && config[dayName] === 0) isWork = false;
-        else if (!config && (date.getDay() === 0 || date.getDay() === 6)) isWork = false;
-        if (offDay && offDay.startsWith(FULL_DAY_NAMES[date.getDay()])) isWork = false;
-        if (isWork) count++;
+        const hours = config[dayName] || 0;
+        if (hours <= 0) continue;
+
+        // Check holidays (match backend logic)
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const monthDay = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        let isHoliday = false;
+        for (const h of holidays) {
+            if (h.date === dateStr) { isHoliday = true; break; }
+            if (h.isRecurring === 1 && h.date.substring(5) === monthDay) { isHoliday = true; break; }
+        }
+        if (isHoliday) continue;
+
+        if (offDay && offDay.startsWith(FULL_DAY_NAMES[date.getDay()])) continue;
+        count++;
     }
     return count || 30;
+}
+
+function isScheduledWorkDay(config: any, year: number, month: number, day: number, offDay: string | null, holidays: Holiday[]): boolean {
+    const date = new Date(year, month - 1, day);
+    const dayName = DAY_LABELS[date.getDay()];
+    if (config && config[dayName] === 0) return false;
+    if (!config && (date.getDay() === 0 || date.getDay() === 6)) return false;
+    if (offDay && offDay.startsWith(FULL_DAY_NAMES[date.getDay()])) return false;
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const monthDay = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    for (const h of holidays) {
+        if (h.date === dateStr) return false;
+        if (h.isRecurring === 1) {
+            const hd = h.date.substring(5);
+            if (hd === monthDay) return false;
+        }
+    }
+    return true;
+}
+
+function isHoliday(config: any, year: number, month: number, day: number, offDay: string | null, holidays: Holiday[]): { isHoliday: boolean; label?: string; isOffDay?: boolean } {
+    const date = new Date(year, month - 1, day);
+    const dayName = DAY_LABELS[date.getDay()];
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const monthDay = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+    // Check holidays FIRST (priority over off-days)
+    for (const h of holidays) {
+        if (h.date === dateStr) return { isHoliday: true, label: h.name || 'Holiday' };
+        if (h.isRecurring === 1) {
+            const hd = h.date.substring(5);
+            if (hd === monthDay) return { isHoliday: true, label: h.name || 'Holiday' };
+        }
+    }
+
+    // Then check off-days
+    if (config && config[dayName] === 0) return { isHoliday: true, label: 'Off Day', isOffDay: true };
+    if (!config && (date.getDay() === 0 || date.getDay() === 6)) return { isHoliday: true, label: 'Off Day', isOffDay: true };
+    if (offDay && offDay.startsWith(FULL_DAY_NAMES[date.getDay()])) return { isHoliday: true, label: 'Off Day', isOffDay: true };
+
+    return { isHoliday: false };
 }
 
 function getStandardWorkingHours(checkIn: string, checkOut: string) {
@@ -70,17 +153,39 @@ function getStandardWorkingHours(checkIn: string, checkOut: string) {
     return Math.max(1, mins / 60);
 }
 
-export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalendarGridProps) {
+function isLateRecord(rec: AttendanceRecord | undefined, standardCheckIn: string): boolean {
+    if (!rec || !rec.checkIn) return false;
+    const [cH, cM] = rec.checkIn.split(':').map(Number);
+    const [sH, sM] = standardCheckIn.split(':').map(Number);
+    if (isNaN(cH) || isNaN(sH)) return false;
+    const checkInMins = cH * 60 + (cM || 0);
+    const standardMins = sH * 60 + (sM || 0);
+    return checkInMins > standardMins;
+}
+
+function isOnLeave(employeeId: number, dateStr: string, leaveRequests: LeaveRequest[]): LeaveRequest | null {
+    for (const lr of leaveRequests) {
+        if (lr.employeeId !== employeeId) continue;
+        if (lr.status !== 'Approved') continue;
+        if (dateStr >= lr.startDate && dateStr <= lr.endDate) return lr;
+    }
+    return null;
+}
+
+export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }: AttendanceCalendarGridProps) {
     const [period, setPeriod] = useState(getCurrentFilingPeriod().period);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [attendanceMap, setAttendanceMap] = useState<Map<string, AttendanceRecord>>(new Map());
     const [schedules, setSchedules] = useState<Map<number, WorkSchedule>>(new Map());
+    const [holidays, setHolidays] = useState<Holiday[]>([]);
+    const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
     const [summaries, setSummaries] = useState<Map<number, AttendanceSummary>>(new Map());
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [approved, setApproved] = useState(false);
+    const [payStructure, setPayStructure] = useState<'fixed' | 'prorated'>('fixed');
 
     // Modals
     const [modalEmployee, setModalEmployee] = useState<Employee | null>(null);
@@ -95,10 +200,12 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
         setLoading(true);
         setError(null);
         try {
-            const [empsRes, attRes, schedRes] = await Promise.all([
+            const [empsRes, attRes, schedRes, holRes, leaveRes] = await Promise.all([
                 apiFetch(`/clients/${clientId}/employees`),
                 apiFetch(`/clients/${clientId}/attendance?dateFrom=${period}-01&dateTo=${period}-${String(totalDays).padStart(2, '0')}`),
                 apiFetch(`/clients/${clientId}/work-schedules`),
+                apiFetch(`/clients/${clientId}/holidays`),
+                apiFetch(`/clients/${clientId}/leave`),
             ]);
 
             let emps: Employee[] = [];
@@ -123,41 +230,115 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
             }
             setSchedules(schedMap);
 
-            // Build summaries from attendance data
+            let hols: Holiday[] = [];
+            if (holRes.ok) hols = await holRes.json();
+            setHolidays(hols);
+
+            let leaves: LeaveRequest[] = [];
+            if (leaveRes.ok) leaves = await leaveRes.json();
+            setLeaveRequests(leaves);
+
+            // Build summaries from attendance data using actual hours worked
             const sumMap = new Map<number, AttendanceSummary>();
             for (const emp of emps) {
                 let absent = 0;
                 let late = 0;
+                let lateCount = 0;
                 let half = 0;
+                let present = 0;
+                let leave = 0;
+                let off = 0;
+                let totalStdHours = 0;
+                let otHours = 0;
+                let paidLeaveHours = 0;
+                let unpaidLeaveHours = 0;
+                const dailyHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut);
                 for (let d = 1; d <= totalDays; d++) {
                     const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                     const rec = attMap.get(`${emp.id}-${dateStr}`);
-                    if (!rec) continue;
-                    if (rec.status === 'Absent') absent += 1;
-                    else if (rec.status === 'Half-Day') half += 1;
-                    else if (rec.status === 'Late') {
-                        const [cH, cM] = (rec.checkIn || '').split(':').map(Number);
+                    const leaveInfo = isOnLeave(emp.id, dateStr, leaves);
+
+                    if (rec) {
+                        // Status counters (informational)
+                        if (rec.status === 'Absent') { absent += 1; continue; }
+                        if (rec.status === 'Off Day') { off += 1; continue; }
+                        if (rec.status === 'On Leave') {
+                            leave += 1;
+                            if (leaveInfo && leaveInfo.isPaid === 1) {
+                                paidLeaveHours += leaveInfo.hours || dailyHours;
+                            } else {
+                                unpaidLeaveHours += leaveInfo ? (leaveInfo.hours || dailyHours) : dailyHours;
+                            }
+                            continue;
+                        }
+
+                        // Compute actual hours from check-in / check-out
+                        const [ciH, ciM] = (rec.checkIn || emp.standardCheckIn || '08:00').split(':').map(Number);
+                        const [coH, coM] = (rec.checkOut || emp.standardCheckOut || '17:00').split(':').map(Number);
+                        const actualMins = Math.max(0, (coH * 60 + (coM || 0)) - (ciH * 60 + (ciM || 0)));
+                        const actualHours = actualMins / 60;
+
+                        // Compute late hours for ANY working day (not just status === 'Late')
                         const [sH, sM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
-                        if (!isNaN(cH) && !isNaN(sH)) {
-                            const lateMins = Math.max(0, (cH * 60 + (cM || 0)) - (sH * 60 + (sM || 0)));
-                            late += lateMins / 60;
+                        if (!isNaN(ciH) && !isNaN(sH)) {
+                            const lateMins = Math.max(0, (ciH * 60 + (ciM || 0)) - (sH * 60 + (sM || 0)));
+                            if (lateMins > 0) late += lateMins / 60;
+                        }
+
+                        if (rec.status === 'Half-Day') {
+                            half += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours * 0.5);
+                        } else if (rec.status === 'Late') {
+                            lateCount += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours);
+                            otHours += Math.max(0, actualHours - dailyHours);
+                        } else if (rec.status === 'Present') {
+                            present += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours);
+                            otHours += Math.max(0, actualHours - dailyHours);
+                        }
+                    } else if (leaveInfo) {
+                        // Approved leave without attendance record
+                        leave += 1;
+                        if (leaveInfo.isPaid === 1) {
+                            paidLeaveHours += leaveInfo.hours || dailyHours;
+                        } else {
+                            unpaidLeaveHours += leaveInfo.hours || dailyHours;
                         }
                     }
                 }
                 const ws = emp.workScheduleId ? schedMap.get(emp.workScheduleId) : null;
                 const config = ws ? parseConfig(ws.config) : null;
-                const schedDays = getScheduledWorkDays(config, year, month, emp.offDay);
-                const monthlyHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut) * schedDays;
-                const hourlyRate = Math.round(((emp.basicPay || 0) / Math.max(1, monthlyHours)) * 100) / 100;
+                const schedDays = getScheduledWorkDays(config, year, month, emp.offDay, holidays);
+                const monthlyHours = dailyHours * schedDays;
+                const computedRate = Math.round(((emp.basicPay || 0) / Math.max(1, monthlyHours)) * 100) / 100;
+                const hourlyRate = (emp.hourlyRate || computedRate) || 0;
+                const mult = 1.5;
+                const otRate = Math.round(hourlyRate * mult * 100) / 100;
+                const stdPay = payStructure === 'fixed'
+                    ? Math.round((emp.basicPay || 0) * 100) / 100
+                    : Math.round(totalStdHours * hourlyRate * 100) / 100;
+                const paidLeaveAmount = payStructure === 'fixed'
+                    ? 0
+                    : Math.round(paidLeaveHours * hourlyRate * 100) / 100;
                 sumMap.set(emp.id, {
                     employeeId: emp.id,
                     absentDays: absent,
                     lateHours: Math.round(late * 100) / 100,
                     halfDays: half,
-                    overtimeHours: 0,
-                    overtimeRate: hourlyRate,
-                    overtimeMultiplier: 1.5,
-                    overtimeAmount: 0,
+                    presentDays: present + lateCount,
+                    leaveDays: leave,
+                    offDays: off,
+                    overtimeHours: Math.round(otHours * 100) / 100,
+                    overtimeRate: otRate,
+                    overtimeMultiplier: mult,
+                    overtimeAmount: Math.round(otHours * otRate * 100) / 100,
+                    hourlyRate,
+                    totalStdHours: Math.round(totalStdHours * 100) / 100,
+                    stdPay,
+                    paidLeaveHours: Math.round(paidLeaveHours * 100) / 100,
+                    unpaidLeaveHours: Math.round(unpaidLeaveHours * 100) / 100,
+                    paidLeaveAmount,
                 });
             }
             setSummaries(sumMap);
@@ -173,17 +354,64 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
         loadData();
     }, [loadData]);
 
+    // Set payStructure from first active employee when data loads
+    useEffect(() => {
+        if (employees.length > 0) {
+            const firstWithStructure = employees.find(e => e.payStructure === 'fixed' || e.payStructure === 'prorated');
+            if (firstWithStructure) {
+                setPayStructure(firstWithStructure.payStructure as 'fixed' | 'prorated');
+            }
+        }
+    }, [employees]);
+
+    // Recompute summaries when payStructure toggles
+    useEffect(() => {
+        if (employees.length > 0 && attendanceMap.size > 0) {
+            recomputeAllSummaries(attendanceMap);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [payStructure]);
+
     const openCellModal = (employeeId: number, day: number) => {
         const dateStr = `${period}-${String(day).padStart(2, '0')}`;
         const key = `${employeeId}-${dateStr}`;
         const existing = attendanceMap.get(key);
+        const leaveInfo = isOnLeave(employeeId, dateStr, leaveRequests);
+        const emp = employees.find(e => e.id === employeeId);
+        const defaultStatus = existing?.status || (leaveInfo ? 'On Leave' : 'Present');
         setCellModal({ employeeId, day, record: existing });
         setCellForm({
-            status: existing?.status || 'Present',
-            checkIn: existing?.checkIn || '',
-            checkOut: existing?.checkOut || '',
-            notes: existing?.notes || '',
+            status: defaultStatus,
+            checkIn: existing?.checkIn || (emp?.standardCheckIn || '08:00'),
+            checkOut: existing?.checkOut || (emp?.standardCheckOut || '17:00'),
+            notes: existing?.notes || (leaveInfo ? `${leaveInfo.leaveType} leave` : ''),
         });
+    };
+
+    const deleteCell = async () => {
+        if (!cellModal?.record?.id) return;
+        const { employeeId, day, record } = cellModal;
+        const dateStr = `${period}-${String(day).padStart(2, '0')}`;
+        const key = `${employeeId}-${dateStr}`;
+
+        const updatedMap = new Map([...attendanceMap].filter(([k]) => k !== key));
+        setAttendanceMap(updatedMap);
+        recomputeAllSummaries(updatedMap);
+        setCellModal(null);
+
+        try {
+            await apiFetch(`/clients/${clientId}/attendance/${record.id}`, { method: 'DELETE' });
+            const attRes = await apiFetch(`/clients/${clientId}/attendance?dateFrom=${period}-01&dateTo=${period}-${String(totalDays).padStart(2, '0')}`);
+            if (attRes.ok) {
+                const records: AttendanceRecord[] = await attRes.json();
+                const newMap = new Map<string, AttendanceRecord>();
+                for (const r of records) newMap.set(`${r.employeeId}-${r.date}`, r);
+                setAttendanceMap(newMap);
+                recomputeAllSummaries(newMap);
+            }
+        } catch {
+            setError('Failed to delete attendance record');
+        }
     };
 
     const saveCell = async () => {
@@ -192,6 +420,21 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
         const dateStr = `${period}-${String(day).padStart(2, '0')}`;
         const key = `${employeeId}-${dateStr}`;
         const emp = employees.find(e => e.id === employeeId);
+
+        const optimisticRecord: AttendanceRecord = {
+            id: record?.id ?? -1,
+            employeeId,
+            date: dateStr,
+            status: cellForm.status,
+            checkIn: cellForm.checkIn,
+            checkOut: cellForm.checkOut,
+            notes: cellForm.notes,
+        };
+
+        const updatedMap = new Map([...attendanceMap, [key, optimisticRecord]]);
+        setAttendanceMap(updatedMap);
+        recomputeAllSummaries(updatedMap);
+        setCellModal(null);
 
         try {
             if (record && record.id > 0) {
@@ -229,7 +472,6 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                     });
                 }
             }
-            // Refresh attendance map for this cell
             const attRes = await apiFetch(`/clients/${clientId}/attendance?dateFrom=${period}-01&dateTo=${period}-${String(totalDays).padStart(2, '0')}`);
             if (attRes.ok) {
                 const records: AttendanceRecord[] = await attRes.json();
@@ -238,9 +480,60 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                 setAttendanceMap(newMap);
                 recomputeAllSummaries(newMap);
             }
-            setCellModal(null);
         } catch {
-            setError('Failed to save attendance record');
+            setError('Failed to save attendance record (sync error)');
+        }
+    };
+
+    const bulkMarkScheduledDays = async () => {
+        const records: any[] = [];
+        for (const emp of employees) {
+            const ws = emp.workScheduleId ? schedules.get(emp.workScheduleId) : null;
+            const config = ws ? parseConfig(ws.config) : null;
+            for (let d = 1; d <= totalDays; d++) {
+                const dateStr = `${period}-${String(d).padStart(2, '0')}`;
+                const key = `${emp.id}-${dateStr}`;
+                const existing = attendanceMap.get(key);
+                if (existing) continue;
+                const isWork = isScheduledWorkDay(config, year, month, d, emp.offDay, holidays);
+                if (!isWork) continue;
+                records.push({
+                    employeeId: emp.id,
+                    employeeName: emp.employeeName,
+                    kraPin: emp.kraPin,
+                    date: dateStr,
+                    status: 'Present',
+                    checkIn: ws?.standardCheckIn || emp.standardCheckIn || '08:00',
+                    checkOut: ws?.standardCheckOut || emp.standardCheckOut || '17:00',
+                    notes: 'Auto-marked scheduled day',
+                });
+            }
+        }
+        if (records.length === 0) {
+            setMessage('All scheduled days are already marked for all employees.');
+            return;
+        }
+        try {
+            const res = await apiFetch(`/clients/${clientId}/attendance/bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ records }),
+            });
+            if (res.ok) {
+                setMessage(`Marked ${records.length} scheduled days as Present across ${employees.length} employees.`);
+                const attRes = await apiFetch(`/clients/${clientId}/attendance?dateFrom=${period}-01&dateTo=${period}-${String(totalDays).padStart(2, '0')}`);
+                if (attRes.ok) {
+                    const recs: AttendanceRecord[] = await attRes.json();
+                    const newMap = new Map<string, AttendanceRecord>();
+                    for (const r of recs) newMap.set(`${r.employeeId}-${r.date}`, r);
+                    setAttendanceMap(newMap);
+                    recomputeAllSummaries(newMap);
+                }
+            } else {
+                setError('Bulk mark failed');
+            }
+        } catch {
+            setError('Network error during bulk mark');
         }
     };
 
@@ -250,39 +543,95 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
             for (const emp of employees) {
                 let absent = 0;
                 let late = 0;
+                let lateCount = 0;
                 let half = 0;
+                let present = 0;
+                let leave = 0;
+                let off = 0;
+                let totalStdHours = 0;
+                let otHours = 0;
+                let paidLeaveHours = 0;
+                let unpaidLeaveHours = 0;
+                const dailyHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut);
                 for (let d = 1; d <= totalDays; d++) {
                     const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                     const rec = map.get(`${emp.id}-${dateStr}`);
-                    if (!rec) continue;
-                    if (rec.status === 'Absent') absent += 1;
-                    else if (rec.status === 'Half-Day') half += 1;
-                    else if (rec.status === 'Late') {
-                        const [cH, cM] = (rec.checkIn || '').split(':').map(Number);
+                    const leaveInfo = isOnLeave(emp.id, dateStr, leaveRequests);
+
+                    if (rec) {
+                        if (rec.status === 'Absent') { absent += 1; continue; }
+                        if (rec.status === 'Off Day') { off += 1; continue; }
+                        if (rec.status === 'On Leave') {
+                            leave += 1;
+                            if (leaveInfo && leaveInfo.isPaid === 1) {
+                                paidLeaveHours += leaveInfo.hours || dailyHours;
+                            } else {
+                                unpaidLeaveHours += leaveInfo ? (leaveInfo.hours || dailyHours) : dailyHours;
+                            }
+                            continue;
+                        }
+
+                        const [ciH, ciM] = (rec.checkIn || emp.standardCheckIn || '08:00').split(':').map(Number);
+                        const [coH, coM] = (rec.checkOut || emp.standardCheckOut || '17:00').split(':').map(Number);
+                        const actualMins = Math.max(0, (coH * 60 + (coM || 0)) - (ciH * 60 + (ciM || 0)));
+                        const actualHours = actualMins / 60;
+
+                        // Compute late hours for ANY working day (not just status === 'Late')
                         const [sH, sM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
-                        if (!isNaN(cH) && !isNaN(sH)) {
-                            const lateMins = Math.max(0, (cH * 60 + (cM || 0)) - (sH * 60 + (sM || 0)));
-                            late += lateMins / 60;
+                        if (!isNaN(ciH) && !isNaN(sH)) {
+                            const lateMins = Math.max(0, (ciH * 60 + (ciM || 0)) - (sH * 60 + (sM || 0)));
+                            if (lateMins > 0) late += lateMins / 60;
+                        }
+
+                        if (rec.status === 'Half-Day') {
+                            half += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours * 0.5);
+                        } else if (rec.status === 'Late') {
+                            lateCount += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours);
+                            otHours += Math.max(0, actualHours - dailyHours);
+                        } else if (rec.status === 'Present') {
+                            present += 1;
+                            totalStdHours += Math.min(actualHours, dailyHours);
+                            otHours += Math.max(0, actualHours - dailyHours);
+                        }
+                    } else if (leaveInfo) {
+                        leave += 1;
+                        if (leaveInfo.isPaid === 1) {
+                            paidLeaveHours += leaveInfo.hours || dailyHours;
+                        } else {
+                            unpaidLeaveHours += leaveInfo.hours || dailyHours;
                         }
                     }
                 }
                 const existing = next.get(emp.id);
                 if (existing) {
-                    next.set(emp.id, { ...existing, absentDays: absent, lateHours: Math.round(late * 100) / 100, halfDays: half });
+                    const otRate = Math.round(existing.hourlyRate * existing.overtimeMultiplier * 100) / 100;
+                    const stdPay = payStructure === 'fixed'
+                        ? Math.round((emp.basicPay || 0) * 100) / 100
+                        : Math.round(totalStdHours * existing.hourlyRate * 100) / 100;
+                    const paidLeaveAmount = payStructure === 'fixed'
+                        ? 0
+                        : Math.round(paidLeaveHours * existing.hourlyRate * 100) / 100;
+                    next.set(emp.id, {
+                        ...existing,
+                        absentDays: absent,
+                        lateHours: Math.round(late * 100) / 100,
+                        halfDays: half,
+                        presentDays: present + lateCount,
+                        leaveDays: leave,
+                        offDays: off,
+                        overtimeHours: Math.round(otHours * 100) / 100,
+                        totalStdHours: Math.round(totalStdHours * 100) / 100,
+                        stdPay,
+                        paidLeaveHours: Math.round(paidLeaveHours * 100) / 100,
+                        unpaidLeaveHours: Math.round(unpaidLeaveHours * 100) / 100,
+                        paidLeaveAmount,
+                        overtimeRate: otRate,
+                        overtimeAmount: Math.round(otHours * otRate * 100) / 100,
+                    });
                 }
             }
-            return next;
-        });
-    };
-
-    const updateSummaryField = (employeeId: number, field: keyof AttendanceSummary, value: number) => {
-        setSummaries(prev => {
-            const next = new Map(prev);
-            const s = next.get(employeeId);
-            if (!s) return prev;
-            const updated = { ...s, [field]: value };
-            updated.overtimeAmount = Math.round(updated.overtimeHours * updated.overtimeRate * updated.overtimeMultiplier * 100) / 100;
-            next.set(employeeId, updated);
             return next;
         });
     };
@@ -290,14 +639,7 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
     const computedBasicPay = (emp: Employee): number => {
         const s = summaries.get(emp.id);
         if (!s) return emp.basicPay;
-        const ws = emp.workScheduleId ? schedules.get(emp.workScheduleId) : null;
-        const config = ws ? parseConfig(ws.config) : null;
-        const schedDays = getScheduledWorkDays(config, year, month, emp.offDay);
-        const dailyRate = emp.basicPay / Math.max(1, schedDays);
-        const presentDays = Math.max(0, schedDays - s.absentDays - s.halfDays * 0.5);
-        const stdHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut);
-        const lateDeduction = dailyRate * (s.lateHours / Math.max(1, stdHours));
-        const computed = presentDays * dailyRate + s.overtimeAmount - lateDeduction;
+        const computed = s.stdPay + s.paidLeaveAmount + s.overtimeAmount;
         return Math.max(0, Math.round(computed * 100) / 100);
     };
 
@@ -322,7 +664,7 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                     absentDays: s?.absentDays || 0,
                     lateHours: s?.lateHours || 0,
                     overtimeHours: s?.overtimeHours || 0,
-                    overtimeRate: s?.overtimeRate || 0,
+                    overtimeRate: s?.hourlyRate || 0,
                     overtimeMultiplier: s?.overtimeMultiplier || 1.5,
                     overtimeAmount: s?.overtimeAmount || 0,
                 };
@@ -347,23 +689,39 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
         }
     };
 
-    const cellClass = (status: string | undefined) => {
-        if (!status) return 'bg-white text-slate-300 border-slate-100';
-        switch (status) {
-            case 'Present': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-            case 'Absent': return 'bg-rose-50 text-rose-700 border-rose-200';
-            case 'Late': return 'bg-amber-50 text-amber-700 border-amber-200';
-            case 'Half-Day': return 'bg-blue-50 text-blue-700 border-blue-200';
-            case 'On Leave': return 'bg-purple-50 text-purple-700 border-purple-200';
-            case 'Off Day': return 'bg-slate-100 text-slate-400 border-slate-200';
-            default: return 'bg-white text-slate-300 border-slate-100';
+    const cellClass = (status: string | undefined, holInfo: { isHoliday: boolean; label?: string; isOffDay?: boolean }, leaveInfo: LeaveRequest | null) => {
+        if (leaveInfo) {
+            return leaveInfo.isPaid === 1
+                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                : 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200';
         }
+        if (status) {
+            switch (status) {
+                case 'Present': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                case 'Absent': return 'bg-rose-50 text-rose-700 border-rose-200';
+                case 'Late': return 'bg-amber-50 text-amber-700 border-amber-200';
+                case 'Half-Day': return 'bg-blue-50 text-blue-700 border-blue-200';
+                case 'On Leave': return 'bg-purple-50 text-purple-700 border-purple-200';
+                case 'Off Day': return 'bg-slate-100 text-slate-400 border-slate-200';
+            }
+        }
+        if (holInfo.isHoliday) {
+            if (holInfo.isOffDay) return 'bg-slate-100 text-slate-400 border-slate-200';
+            return 'bg-orange-50 text-orange-600 border-orange-200';
+        }
+        return 'bg-white text-slate-300 border-slate-100';
     };
 
-    const cellLabel = (status: string | undefined) => {
-        if (!status) return '·';
-        const map: Record<string, string> = { 'Present': 'P', 'Absent': 'A', 'Late': 'L', 'Half-Day': 'H', 'On Leave': 'V', 'Off Day': 'O' };
-        return map[status] || '·';
+    const cellLabel = (status: string | undefined, holInfo: { isHoliday: boolean; label?: string; isOffDay?: boolean }, leaveInfo: LeaveRequest | null) => {
+        if (leaveInfo) return leaveInfo.isPaid === 1 ? 'Vp' : 'Vu';
+        if (status) {
+            const map: Record<string, string> = { 'Present': 'P', 'Absent': 'A', 'Late': 'L', 'Half-Day': 'H', 'On Leave': 'V', 'Off Day': 'O' };
+            return map[status] || '·';
+        }
+        if (holInfo.isHoliday) {
+            return holInfo.isOffDay ? 'O' : 'H';
+        }
+        return '·';
     };
 
     return (
@@ -378,11 +736,51 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => { setModalEmployee(null); setModalOpen(true); }}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#ff0613] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#d80000] transition"
+                    >
+                        <Plus className="h-3.5 w-3.5" /> Add Employee
+                    </button>
+                    <button
+                        onClick={bulkMarkScheduledDays}
+                        disabled={loading || employees.length === 0}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
+                    >
+                        <CalendarDays className="h-3.5 w-3.5" /> Mark All Scheduled Days
+                    </button>
+                    <div className="flex items-center rounded-lg border border-slate-200 bg-white overflow-hidden">
+                        <button
+                            onClick={() => { setPayStructure('fixed'); }}
+                            className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
+                                payStructure === 'fixed'
+                                    ? 'bg-slate-900 text-white'
+                                    : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            Fixed Monthly
+                        </button>
+                        <button
+                            onClick={() => { setPayStructure('prorated'); }}
+                            className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
+                                payStructure === 'prorated'
+                                    ? 'bg-slate-900 text-white'
+                                    : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            Pro-rated
+                        </button>
+                    </div>
                     <label className="text-xs font-semibold text-slate-500">Period:</label>
                     <input
                         type="month"
                         value={period}
-                        onChange={(e) => { setPeriod(e.target.value); setApproved(false); }}
+                        onChange={(e) => {
+                            const newPeriod = e.target.value;
+                            setPeriod(newPeriod);
+                            setApproved(false);
+                            onPeriodChange?.(newPeriod);
+                        }}
                         className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
                     />
                     <button
@@ -397,13 +795,17 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
             </div>
 
             {/* Legend */}
-            <div className="flex flex-wrap items-center gap-3 text-[10px]">
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-[8px]">P</span> Present</span>
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-center font-bold text-[8px]">A</span> Absent</span>
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold text-[8px]">L</span> Late</span>
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-[8px]">H</span> Half-Day</span>
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-50 border border-purple-200 text-purple-700 flex items-center justify-center font-bold text-[8px]">V</span> On Leave</span>
-                <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center font-bold text-[8px]">O</span> Off Day</span>
+            <div className="flex flex-wrap items-center gap-4 text-xs font-semibold">
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-[10px]">P</span> <span className="text-emerald-700">Present</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-center font-bold text-[10px]">A</span> <span className="text-rose-700">Absent</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold text-[10px]">L</span> <span className="text-amber-700">Late</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center font-bold text-[10px]">H</span> <span className="text-blue-700">Half-Day</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-purple-50 border border-purple-200 text-purple-700 flex items-center justify-center font-bold text-[10px]">Vp</span> <span className="text-purple-700">Paid Leave</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-fuchsia-50 border border-fuchsia-200 text-fuchsia-700 flex items-center justify-center font-bold text-[10px]">Vu</span> <span className="text-fuchsia-700">Unpaid Leave</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center font-bold text-[10px]">O</span> <span className="text-slate-500">Off Day</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-orange-50 border border-orange-200 text-orange-600 flex items-center justify-center font-bold text-[10px]">H</span> <span className="text-orange-600">Holiday</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="w-5 h-5 rounded bg-white border border-slate-200 text-slate-300 flex items-center justify-center font-bold text-[10px]">·</span> <span className="text-slate-400">Not Recorded</span></span>
+                <span className="inline-flex items-center gap-1.5"><span className="relative w-5 h-5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-[10px]">P<span className="absolute bottom-0 right-0 block h-1.5 w-1.5 rounded-full bg-amber-500 ring-1 ring-white" /></span> <span className="text-slate-500">Present + Late</span></span>
             </div>
 
             {message && (
@@ -434,10 +836,15 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                                         <th key={d} className={`px-1 py-1.5 font-semibold text-center w-7 ${isWeekend ? 'text-slate-300' : 'text-slate-400'}`}>{d}</th>
                                     );
                                 })}
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Std Hourly</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Absent</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Late</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Total Std Hrs</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Std Pay</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Paid Lve Hrs</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Paid Lve Amt</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Unpd Lve Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Hrs</th>
-                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Rate</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Mult</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Amt</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Computed Pay</th>
@@ -448,60 +855,119 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                             {employees.map((emp) => {
                                 const s = summaries.get(emp.id);
                                 const cbp = computedBasicPay(emp);
+                                const ws = emp.workScheduleId ? schedules.get(emp.workScheduleId) : null;
+                                const config = ws ? parseConfig(ws.config) : null;
                                 return (
                                     <tr key={emp.id} className="hover:bg-slate-50/50 transition">
                                         <td className="px-2 py-1 sticky left-0 bg-white z-10 border-r border-slate-100">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <button
-                                                    onClick={() => { setModalEmployee(emp); setModalOpen(true); }}
-                                                    className="font-medium text-slate-900 hover:text-[#ff0613] transition text-left whitespace-nowrap truncate"
-                                                >
-                                                    {emp.employeeName}
-                                                </button>
-                                            </div>
+                                            <button
+                                                onClick={() => { setModalEmployee(emp); setModalOpen(true); }}
+                                                className="font-medium text-slate-900 hover:text-[#ff0613] transition text-left whitespace-nowrap truncate"
+                                            >
+                                                {emp.employeeName}
+                                            </button>
                                         </td>
                                         {Array.from({ length: totalDays }, (_, i) => i + 1).map((d) => {
                                             const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                                             const rec = attendanceMap.get(`${emp.id}-${dateStr}`);
                                             const date = new Date(year, month - 1, d);
+                                            const holInfo = isHoliday(config, year, month, d, emp.offDay, holidays);
+                                            const leaveInfo = isOnLeave(emp.id, dateStr, leaveRequests);
                                             const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+                                            const isLate = isLateRecord(rec, emp.standardCheckIn || '08:00');
+                                            const lateMins = rec && isLate
+                                                ? ((rec.checkIn.split(':').map(Number)[0] * 60 + (rec.checkIn.split(':').map(Number)[1] || 0)) - ((emp.standardCheckIn || '08:00').split(':').map(Number)[0] * 60 + ((emp.standardCheckIn || '08:00').split(':').map(Number)[1] || 0)))
+                                                : 0;
+                                            const tooltip = rec
+                                                ? `${rec.status} (${rec.checkIn || '--:--'} - ${rec.checkOut || '--:--'})${isLate ? ` — Late by ${Math.round(lateMins)} min` : ''}`
+                                                : leaveInfo
+                                                    ? `${leaveInfo.isPaid === 1 ? 'Paid' : 'Unpaid'} Leave: ${leaveInfo.leaveType}${leaveInfo.hours ? ` (${leaveInfo.hours}h)` : ''}`
+                                                    : holInfo.label || 'Not recorded';
                                             return (
                                                 <td key={d} className="px-0.5 py-1 text-center">
                                                     <button
                                                         onClick={() => openCellModal(emp.id, d)}
-                                                        className={`w-6 h-6 rounded border text-[9px] font-bold transition ${cellClass(rec?.status)} ${isWeekend ? 'opacity-60' : ''}`}
-                                                        title={rec ? `${rec.status} (${rec.checkIn || '--:--'} - ${rec.checkOut || '--:--'})` : 'Present (default)'}
+                                                        className={`relative w-6 h-6 rounded border text-[9px] font-bold transition ${cellClass(rec?.status, holInfo, leaveInfo)} ${isWeekend && !rec && !leaveInfo ? 'opacity-50' : ''}`}
+                                                        title={tooltip}
                                                     >
-                                                        {cellLabel(rec?.status)}
+                                                        {cellLabel(rec?.status, holInfo, leaveInfo)}
+                                                        {isLate && (
+                                                            <span className="absolute bottom-0 right-0 block h-1.5 w-1.5 rounded-full bg-amber-500 ring-1 ring-white" />
+                                                        )}
                                                     </button>
                                                 </td>
                                             );
                                         })}
-                                        <td className="px-2 py-1 text-right font-mono text-rose-600">{s?.absentDays ?? 0}</td>
-                                        <td className="px-2 py-1 text-right font-mono text-amber-600">{s?.lateHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right">
                                             <input
                                                 type="number"
-                                                step="0.5"
-                                                value={s?.overtimeHours ?? 0}
-                                                onChange={(e) => updateSummaryField(emp.id, 'overtimeHours', parseFloat(e.target.value) || 0)}
-                                                className="w-12 rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
-                                            />
-                                        </td>
-                                        <td className="px-2 py-1 text-right">
-                                            <input
-                                                type="number"
-                                                value={s?.overtimeRate ?? 0}
-                                                onChange={(e) => updateSummaryField(emp.id, 'overtimeRate', parseFloat(e.target.value) || 0)}
+                                                step="0.01"
+                                                value={s?.hourlyRate ?? 0}
+                                                onChange={async (e) => {
+                                                    const rate = parseFloat(e.target.value) || 0;
+                                                    setSummaries(prev => {
+                                                        const next = new Map(prev);
+                                                        const existing = next.get(emp.id);
+                                                        if (existing) {
+                                                            const newOtRate = Math.round(rate * existing.overtimeMultiplier * 100) / 100;
+                                                            const newStdPay = payStructure === 'fixed'
+                                                                ? existing.stdPay
+                                                                : Math.round(existing.totalStdHours * rate * 100) / 100;
+                                                            const newPaidLeaveAmount = payStructure === 'fixed'
+                                                                ? 0
+                                                                : Math.round(existing.paidLeaveHours * rate * 100) / 100;
+                                                            next.set(emp.id, {
+                                                                ...existing,
+                                                                hourlyRate: rate,
+                                                                stdPay: newStdPay,
+                                                                paidLeaveAmount: newPaidLeaveAmount,
+                                                                overtimeRate: newOtRate,
+                                                                overtimeAmount: Math.round(existing.overtimeHours * newOtRate * 100) / 100,
+                                                            });
+                                                        }
+                                                        return next;
+                                                    });
+                                                    try {
+                                                        await apiFetch(`/clients/${clientId}/employees/${emp.id}`, {
+                                                            method: 'PUT',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ hourlyRate: rate }),
+                                                        });
+                                                    } catch { /* ignore */ }
+                                                }}
                                                 className="w-14 rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
                                             />
                                         </td>
+                                        <td className="px-2 py-1 text-right font-mono text-rose-600">{s?.absentDays ?? 0}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-amber-600">{s?.lateHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-blue-600">{s?.totalStdHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-slate-900">{s?.stdPay?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-purple-600">{s?.paidLeaveHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-purple-700">{s?.paidLeaveAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-fuchsia-600">{s?.unpaidLeaveHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-slate-900">{s?.overtimeHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right">
                                             <input
                                                 type="number"
                                                 step="0.5"
                                                 value={s?.overtimeMultiplier ?? 1.5}
-                                                onChange={(e) => updateSummaryField(emp.id, 'overtimeMultiplier', parseFloat(e.target.value) || 1)}
+                                                onChange={(e) => {
+                                                    const mult = parseFloat(e.target.value) || 1;
+                                                    setSummaries(prev => {
+                                                        const next = new Map(prev);
+                                                        const existing = next.get(emp.id);
+                                                        if (existing) {
+                                                            const newOtRate = Math.round(existing.hourlyRate * mult * 100) / 100;
+                                                            next.set(emp.id, {
+                                                                ...existing,
+                                                                overtimeMultiplier: mult,
+                                                                overtimeRate: newOtRate,
+                                                                overtimeAmount: Math.round(existing.overtimeHours * newOtRate * 100) / 100,
+                                                            });
+                                                        }
+                                                        return next;
+                                                    });
+                                                }}
                                                 className="w-10 rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
                                             />
                                         </td>
@@ -611,6 +1077,14 @@ export function AttendanceCalendarGrid({ clientId, onApproved }: AttendanceCalen
                             </div>
                         </div>
                         <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+                            {cellModal.record?.id && cellModal.record.id > 0 && (
+                                <button
+                                    onClick={deleteCell}
+                                    className="mr-auto rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 transition"
+                                >
+                                    Delete
+                                </button>
+                            )}
                             <button onClick={() => setCellModal(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">Cancel</button>
                             <button onClick={saveCell} className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition">Save</button>
                         </div>

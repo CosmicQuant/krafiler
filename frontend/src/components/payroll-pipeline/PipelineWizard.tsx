@@ -6,6 +6,7 @@ import type { ClientObligation } from '../../types';
 import { StepIndicator } from './StepIndicator';
 import { cn } from '../../utils/cn';
 import { apiFetch } from '../../services/api';
+import { getCurrentFilingPeriod } from '../../utils/taxPeriods';
 
 import { Step1Setup } from './steps/Step1Setup';
 import { Step5ReviewPreview } from './steps/Step5ReviewPreview';
@@ -24,6 +25,7 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
     const [completedSteps, setCompletedSteps] = useState<number[]>([]);
     const [currentRunId, setCurrentRunId] = useState<number | null>(null);
     const [step1Valid, setStep1Valid] = useState(false);
+    const [period, setPeriod] = useState(getCurrentFilingPeriod().period);
 
     // Resume existing run when runId is present in URL
     useEffect(() => {
@@ -67,6 +69,11 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
     const handleNext = () => {
         if (currentStep < 4) {
             setCompletedSteps((prev) => [...new Set([...prev, currentStep])]);
+            // When leaving Step 1, clear the run so Step 2 always regenerates
+            // with the latest attendance data and hourly rates
+            if (currentStep === 1) {
+                setCurrentRunId(null);
+            }
             setCurrentStep((prev) => prev + 1);
         }
     };
@@ -86,12 +93,14 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
     const renderStepContent = () => {
         switch (currentStep) {
             case 1:
-                return <Step1Setup client={client} onValidationChange={setStep1Valid} />;
+                return <Step1Setup client={client} onValidationChange={setStep1Valid} onPeriodChange={setPeriod} />;
             case 2:
                 return (
                     <Step5ReviewPreview
                         clientId={client.id}
                         runId={currentRunId ?? undefined}
+                        period={period}
+                        autoGenerate={true}
                         onRunCreated={(id) => {
                             setCurrentRunId(id);
                         }}

@@ -152,7 +152,7 @@ router.post('/:clientId/leave', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, reason, status, isPaid } = req.body;
+        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, hours, reason, status, isPaid } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
@@ -166,6 +166,7 @@ router.post('/:clientId/leave', async (req, res) => {
                 startDate: startDate || '',
                 endDate: endDate || '',
                 daysCount: daysCount || 1,
+                hours: hours || 0,
                 reason: reason || '',
                 status: status || 'Pending',
                 isPaid: isPaid === false || isPaid === 0 ? 0 : 1,
@@ -214,7 +215,7 @@ router.put('/:clientId/leave/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Leave request not found' });
 
-        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, reason, status, isPaid } = req.body;
+        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, hours, reason, status, isPaid } = req.body;
 
         await db
             .updateTable('leave_requests')
@@ -226,6 +227,7 @@ router.put('/:clientId/leave/:id', async (req, res) => {
                 startDate: startDate !== undefined ? startDate : existing.startDate,
                 endDate: endDate !== undefined ? endDate : existing.endDate,
                 daysCount: daysCount !== undefined ? daysCount : existing.daysCount,
+                hours: hours !== undefined ? hours : existing.hours,
                 reason: reason !== undefined ? reason : existing.reason,
                 status: status !== undefined ? status : existing.status,
                 isPaid: isPaid !== undefined ? (isPaid === false || isPaid === 0 ? 0 : 1) : existing.isPaid,

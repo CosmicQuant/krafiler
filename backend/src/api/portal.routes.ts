@@ -143,7 +143,7 @@ router.post('/leave', async (req: AuthRequest, res) => {
     try {
         const employeeId = req.employee!.id;
         const clientId = req.employee!.clientId;
-        const { leaveType, startDate, endDate, daysCount, reason, isPaid } = req.body;
+        const { leaveType, startDate, endDate, daysCount, hours, reason, isPaid } = req.body;
 
         if (!leaveType || !startDate || !endDate) {
             res.status(400).json({ message: 'Leave type, start date, and end date are required' });
@@ -162,6 +162,7 @@ router.post('/leave', async (req: AuthRequest, res) => {
                 startDate: startDate || '',
                 endDate: endDate || '',
                 daysCount: daysCount || 1,
+                hours: hours || 0,
                 reason: reason || '',
                 status: 'Pending',
                 isPaid: isPaid === false || isPaid === 0 ? 0 : 1,
@@ -202,7 +203,7 @@ router.put('/leave/:id', async (req: AuthRequest, res) => {
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
 
-        const { leaveType, startDate, endDate, daysCount, reason, isPaid } = req.body;
+        const { leaveType, startDate, endDate, daysCount, hours, reason, isPaid } = req.body;
 
         const existing = await db
             .selectFrom('leave_requests')
@@ -221,6 +222,7 @@ router.put('/leave/:id', async (req: AuthRequest, res) => {
                 startDate: startDate !== undefined ? startDate : existing.startDate,
                 endDate: endDate !== undefined ? endDate : existing.endDate,
                 daysCount: daysCount !== undefined ? daysCount : existing.daysCount,
+                hours: hours !== undefined ? hours : existing.hours,
                 reason: reason !== undefined ? reason : existing.reason,
                 isPaid: isPaid !== undefined ? (isPaid === false || isPaid === 0 ? 0 : 1) : existing.isPaid,
                 updatedAt: new Date().toISOString(),

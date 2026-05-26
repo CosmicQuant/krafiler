@@ -31,12 +31,14 @@ export interface Employee {
     dateLeft: string | null;
     basicPay: number;
     bonusPay: number;
+    hourlyRate: number;
     role: string;
     departmentId: number | null;
     standardCheckIn: string;
     standardCheckOut: string;
     workScheduleId: number | null;
     offDay: string | null;
+    payStructure?: string;
 }
 
 const emptyForm = {
@@ -45,6 +47,7 @@ const emptyForm = {
     bankAccount: '', bankCode: '', department: '', jobTitle: '',
     employmentType: 'Permanent', employmentStatus: 'Active',
     dateJoined: '', dateLeft: '', basicPay: 0, bonusPay: 0,
+    hourlyRate: 0,
     role: 'employee', departmentId: null, standardCheckOut: '17:00',
     standardCheckIn: '08:00', portalPassword: '', workScheduleId: '',
     offDay: '',
@@ -52,12 +55,35 @@ const emptyForm = {
 
 export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }: EmployeeEditModalProps) {
     const [form, setForm] = useState<any>({ ...emptyForm });
+    const [workSchedules, setWorkSchedules] = useState<any[]>([]);
+    const [departments, setDepartments] = useState<any[]>([]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!open) return;
+        apiFetch(`/clients/${clientId}/work-schedules`)
+            .then(r => r.ok ? r.json() : [])
+            .then(setWorkSchedules)
+            .catch(() => setWorkSchedules([]));
+        apiFetch(`/clients/${clientId}/departments`)
+            .then(r => r.ok ? r.json() : [])
+            .then(setDepartments)
+            .catch(() => setDepartments([]));
+    }, [open, clientId]);
+
+    const computeHourly = (basicPay: number, checkIn: string, checkOut: string) => {
+        const [siH, siM] = (checkIn || '08:00').split(':').map(Number);
+        const [soH, soM] = (checkOut || '17:00').split(':').map(Number);
+        const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+        const monthlyHours = dailyHours * 22;
+        return monthlyHours > 0 ? Math.round((basicPay / monthlyHours) * 100) / 100 : 0;
+    };
+
+    useEffect(() => {
+        if (!open) return;
         if (employee) {
+            const computedHourly = computeHourly(employee.basicPay || 0, employee.standardCheckIn || '08:00', employee.standardCheckOut || '17:00');
             setForm({
                 payrollNumber: employee.payrollNumber || '', employeeName: employee.employeeName || '',
                 idNumber: employee.idNumber || '', kraPin: employee.kraPin || '',
@@ -69,6 +95,7 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                 employmentStatus: employee.employmentStatus || 'Active',
                 dateJoined: employee.dateJoined || '', dateLeft: employee.dateLeft || '',
                 basicPay: employee.basicPay || 0, bonusPay: employee.bonusPay || 0,
+                hourlyRate: (employee.hourlyRate || computedHourly) || 0,
                 role: employee.role || 'employee', departmentId: employee.departmentId || null,
                 standardCheckIn: employee.standardCheckIn || '08:00',
                 standardCheckOut: employee.standardCheckOut || '17:00',
@@ -146,7 +173,6 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                             { key: 'bankName', label: 'Bank Name' },
                             { key: 'bankAccount', label: 'Bank Account' },
                             { key: 'bankCode', label: 'Bank Code' },
-                            { key: 'department', label: 'Department' },
                             { key: 'jobTitle', label: 'Job Title' },
                             { key: 'dateJoined', label: 'Date Joined' },
                         ].map(({ key, label }) => (
@@ -160,6 +186,37 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                                 />
                             </div>
                         ))}
+                        <div>
+                            <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Department</label>
+                            {departments.length > 0 ? (
+                                <select
+                                    value={form.departmentId || ''}
+                                    onChange={e => {
+                                        const deptId = e.target.value ? parseInt(e.target.value, 10) : null;
+                                        const dept = departments.find((d: any) => d.id === deptId);
+                                        setForm((f: any) => ({
+                                            ...f,
+                                            departmentId: deptId,
+                                            department: dept?.name || '',
+                                        }));
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                >
+                                    <option value="">None</option>
+                                    {departments.map((d: any) => (
+                                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input
+                                    type="text"
+                                    value={form.department || ''}
+                                    onChange={e => setForm((f: any) => ({ ...f, department: e.target.value }))}
+                                    placeholder="No departments configured — type manually"
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                                />
+                            )}
+                        </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date Left</label>
                             <input type="text" value={form.dateLeft || ''} onChange={e => setForm((f: any) => ({ ...f, dateLeft: e.target.value }))} placeholder="Leave blank if active" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
@@ -181,8 +238,38 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                             <input type="number" value={form.basicPay} onChange={e => setForm((f: any) => ({ ...f, basicPay: parseFloat(e.target.value) || 0 }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
                         </div>
                         <div>
+                            <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Hourly Rate (KES)</label>
+                            <input type="number" step="0.01" value={form.hourlyRate} onChange={e => setForm((f: any) => ({ ...f, hourlyRate: parseFloat(e.target.value) || 0 }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                        </div>
+                        <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Bonus Pay (KES)</label>
                             <input type="number" value={form.bonusPay} onChange={e => setForm((f: any) => ({ ...f, bonusPay: parseFloat(e.target.value) || 0 }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                        </div>
+                        <div>
+                            <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Work Schedule</label>
+                            <select
+                                value={form.workScheduleId || ''}
+                                onChange={e => {
+                                    const wsId = e.target.value ? parseInt(e.target.value, 10) : '';
+                                    const ws = workSchedules.find((w: any) => String(w.id) === String(wsId));
+                                    const newCheckIn = ws?.standardCheckIn || form.standardCheckIn || '08:00';
+                                    const newCheckOut = ws?.standardCheckOut || form.standardCheckOut || '17:00';
+                                    const newHourly = computeHourly(form.basicPay || 0, newCheckIn, newCheckOut);
+                                    setForm((f: any) => ({
+                                        ...f,
+                                        workScheduleId: wsId,
+                                        standardCheckIn: newCheckIn,
+                                        standardCheckOut: newCheckOut,
+                                        hourlyRate: (f.hourlyRate || newHourly) || 0,
+                                    }));
+                                }}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                            >
+                                <option value="">None / Custom</option>
+                                {workSchedules.map((ws: any) => (
+                                    <option key={ws.id} value={String(ws.id)}>{ws.name}</option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Std Check-In</label>

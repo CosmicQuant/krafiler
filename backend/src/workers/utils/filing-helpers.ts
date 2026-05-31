@@ -1,7 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { appendJobLog } from './job-helpers';
 import { waitForPortalReadyWithReload, findMatchingPortalMessage, waitForMatchingPortalMessage, waitForDialogMessage, snapshotPageControls } from './portal-helpers';
 import { selectOptionByTextPatterns, setPortalDateField } from './form-helpers';
@@ -238,7 +237,7 @@ export async function ensureDeclarationAccepted(page: any): Promise<void> {
     }
 }
 
-export async function downloadVatAutoPopulatedReturn(page: any, job: Job<FilingJob>, kraPin: string): Promise<string> {
+export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext, kraPin: string): Promise<string> {
     // KRA VAT download flow:
     // 1. Button with id="dwnlod_btn_tims" value="Download Autopopulated VAT Return"
     // 2. Click triggers confirm dialog: "Do you want to download pre filled form?"
@@ -384,7 +383,7 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: Job<FilingJ
 
 export async function fillMonthlyRentalIncomeAmount(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     rentalIncomeAmount: number
 ): Promise<void> {
     if (!Number.isFinite(rentalIncomeAmount) || rentalIncomeAmount <= 0) {
@@ -475,7 +474,7 @@ export async function fillMonthlyRentalIncomeAmount(
 
 export async function prepareVatPackageFromPortal(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     options: {
         kraPin: string;
         clientName: string;
@@ -500,7 +499,7 @@ export async function prepareVatPackageFromPortal(
     return artifacts;
 }
 
-export async function uploadVatTaxZip(page: any, job: Job<FilingJob>, vatZipUrl: string): Promise<void> {
+export async function uploadVatTaxZip(page: any, job: JobContext, vatZipUrl: string): Promise<void> {
     const zipPath = await resolveUploadArtifactPath(vatZipUrl, job.data.jobId, 'vat');
     const fileName = path.basename(zipPath);
     await appendJobLog(job, `Resolved VAT ZIP on disk: ${zipPath}`, { progress: 68 });
@@ -525,7 +524,7 @@ export async function uploadVatTaxZip(page: any, job: Job<FilingJob>, vatZipUrl:
     });
 }
 
-export async function uploadPayeTaxZip(page: any, job: Job<FilingJob>, payeZipUrl: string): Promise<void> {
+export async function uploadPayeTaxZip(page: any, job: JobContext, payeZipUrl: string): Promise<void> {
     const zipPath = await resolveUploadArtifactPath(payeZipUrl, job.data.jobId, 'paye');
     const fileName = path.basename(zipPath);
     await appendJobLog(job, `Resolved PAYE ZIP on disk: ${zipPath}`, { progress: 68 });
@@ -549,7 +548,7 @@ export async function uploadPayeTaxZip(page: any, job: Job<FilingJob>, payeZipUr
 
 export async function uploadTurnoverTaxZip(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     totYear: number,
     totMonth: number,
     totTurnover: number
@@ -585,7 +584,7 @@ export async function uploadTurnoverTaxZip(
 
 export async function prepareForMriPage(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     periodFrom: string,
     periodTo: string,
     rentalIncomeAmount: number
@@ -610,7 +609,7 @@ export async function prepareForMriPage(
 
 export async function prepareNilReturnPage(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     periodFrom: string,
     periodTo: string,
     ownsRentalProperty: boolean

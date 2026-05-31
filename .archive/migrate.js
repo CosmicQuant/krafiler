@@ -1,1 +1,0 @@
-const sqlite3 = require('sqlite3'); const db = new sqlite3.Database('c:/Users/ADMIN/Desktop/KRAFILER/backend/dist/db/krafiler.sqlite'); ['paye', 'nssf', 'sha', 'eLevy', 'vat', 'tot', 'mri', 'dst'].forEach(col => { db.run('ALTER TABLE clients ADD COLUMN ' + col + ' TEXT DEFAULT ''na''', err => { if(err) console.log(col, err.message); else console.log(col, 'added'); }); });

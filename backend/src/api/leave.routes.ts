@@ -152,7 +152,7 @@ router.post('/:clientId/leave', async (req, res) => {
         const clientId = parseInt(req.params.clientId, 10);
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, hours, reason, status, isPaid } = req.body;
+        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, startTime, endTime, daysCount, hours, reason, status, isPaid } = req.body;
 
         const now = new Date().toISOString();
         const result = await db
@@ -165,6 +165,8 @@ router.post('/:clientId/leave', async (req, res) => {
                 leaveType: leaveType || 'Annual',
                 startDate: startDate || '',
                 endDate: endDate || '',
+                startTime: startTime || null,
+                endTime: endTime || null,
                 daysCount: daysCount || 1,
                 hours: hours || 0,
                 reason: reason || '',
@@ -215,7 +217,7 @@ router.put('/:clientId/leave/:id', async (req, res) => {
 
         if (!existing) return res.status(404).json({ message: 'Leave request not found' });
 
-        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, daysCount, hours, reason, status, isPaid } = req.body;
+        const { employeeId, employeeName, kraPin, leaveType, startDate, endDate, startTime, endTime, daysCount, hours, reason, status, isPaid } = req.body;
 
         await db
             .updateTable('leave_requests')
@@ -226,6 +228,8 @@ router.put('/:clientId/leave/:id', async (req, res) => {
                 leaveType: leaveType !== undefined ? leaveType : existing.leaveType,
                 startDate: startDate !== undefined ? startDate : existing.startDate,
                 endDate: endDate !== undefined ? endDate : existing.endDate,
+                startTime: startTime !== undefined ? startTime : existing.startTime,
+                endTime: endTime !== undefined ? endTime : existing.endTime,
                 daysCount: daysCount !== undefined ? daysCount : existing.daysCount,
                 hours: hours !== undefined ? hours : existing.hours,
                 reason: reason !== undefined ? reason : existing.reason,

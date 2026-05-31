@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db/kysely';
-import { computePayrollEntry, getScheduledWorkDays } from '../services/payrollEngine';
+import { computePayrollEntry, getScheduledWorkDays, getScheduledDaysIncludingHolidays, getTotalScheduledHours } from '../services/payrollEngine';
 import { generateComplianceFromPayrollRun } from '../services/complianceFileGenerator';
 import PDFDocument from 'pdfkit';
 import path from 'path';
@@ -70,8 +70,14 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         .where('remainingInstallments', '>', 0)
         .execute();
     const loanMap = new Map<number, number>();
+    const loanTypeMap = new Map<number, string>();
     for (const ln of allLoans) {
-        loanMap.set(ln.employeeId, (loanMap.get(ln.employeeId) || 0) + ln.monthlyDeduction);
+        const empId = typeof ln.employeeId === 'string' ? parseInt(ln.employeeId, 10) : ln.employeeId;
+        if (isNaN(empId)) continue;
+        loanMap.set(empId, (loanMap.get(empId) || 0) + ln.monthlyDeduction);
+        if (!loanTypeMap.has(empId)) {
+            loanTypeMap.set(empId, ln.loanType || 'Loan');
+        }
     }
 
     // Fetch approved unpaid leave
@@ -233,6 +239,7 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         const schedule = scheduleId ? scheduleMap.get(scheduleId) : null;
         const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
         const scheduledDays = getScheduledWorkDays(scheduleConfig, run.period, holidays);
+        const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, run.period);
 
         // Compute attendance-adjusted basic pay from actual hours worked (matches frontend)
         const totalStdHours = totalStdHoursMap.get(emp.id) || 0;
@@ -243,16 +250,35 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
         const [siH, siM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
         const [soH, soM] = (emp.standardCheckOut || '17:00').split(':').map(Number);
         const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
-        const monthlyHours = dailyHours * scheduledDays;
-        const hourlyRate = (emp.hourlyRate || (emp.basicPay / Math.max(1, monthlyHours))) || 0;
+        const totalScheduledHours = getTotalScheduledHours(scheduleConfig, run.period);
+        const hourlyRate = (emp.hourlyRate || (Math.round((emp.basicPay / Math.max(1, totalScheduledHours)) * 100000000) / 100000000)) || 0;
         const otRate = Math.round(hourlyRate * 1.5 * 100) / 100;
         const paidLeaveAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
         const overtimePay = Math.round(otHours * otRate * 100) / 100;
 
-        // For prorated: override basicPay with hours-based amount (OT included in override)
-        // For fixed: let computePayrollEntry use rawBasicPay with natural proration, pass OT separately
+        // Compute holiday hours (paid days off from the holidays table)
+        const [runYear, runMonth] = run.period.split('-').map(Number);
+        const daysInPeriod = new Date(runYear, runMonth, 0).getDate();
+        let holidayHours = 0;
+        for (let d = 1; d <= daysInPeriod; d++) {
+            const date = new Date(runYear, runMonth - 1, d);
+            const dateStr = `${runYear}-${String(runMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const monthDay = `${String(runMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            let isRealHoliday = false;
+            for (const h of holidays) {
+                if (h.date === dateStr) { isRealHoliday = true; break; }
+                if (h.isRecurring === 1 && h.date.substring(5) === monthDay) { isRealHoliday = true; break; }
+            }
+            if (isRealHoliday) {
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                holidayHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+            }
+        }
+
+        // For prorated: override basicPay with total paid standard hours × rate
+        // Overtime is kept separate so it is NOT double-counted in grossPay
         const adjustedBasicPay = payStructure === 'prorated'
-            ? Math.round((totalStdHours * hourlyRate + paidLeaveAmount + overtimePay) * 100) / 100
+            ? Math.round((totalStdHours + holidayHours + paidLeaveHours) * hourlyRate * 100) / 100
             : undefined;
 
         const entry: any = computePayrollEntry(
@@ -272,11 +298,14 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 dateLeft: emp.dateLeft,
                 employmentStatus: emp.employmentStatus,
                 loanDeduction: loanMap.get(emp.id) || 0,
-                unpaidLeaveDays: leaveMap.get(emp.id) || 0,
+                // For prorated: unpaid leave is already excluded from basicPayOverride
+                // (unpaid leave hours are NOT counted in totalStdHours). Passing unpaidLeaveDays
+                // here would double-deduct them from grossPay.
+                unpaidLeaveDays: payStructure === 'fixed' ? (leaveMap.get(emp.id) || 0) : 0,
                 payStructure,
                 overtimePay: payStructure === 'fixed' ? overtimePay : 0,
-                attendanceAbsentDays: 0,
-                attendanceLateDays: 0,
+                attendanceAbsentDays: payStructure === 'fixed' ? absentCount : 0,
+                attendanceLateDays: payStructure === 'fixed' ? lateHrs : 0,
                 pwd: emp.pwd || 'No',
                 otherPension: emp.otherPension || 0,
                 postRetMedical: emp.postRetMedical || 0,
@@ -293,8 +322,72 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
             adjustmentsByEmployee.get(emp.id) || [],
         );
         entry.totalStdHours = Math.round(totalStdHours * 100) / 100;
+        entry.holidayHours = Math.round(holidayHours * 100) / 100;
+        entry.paidLeaveHours = Math.round(paidLeaveHours * 100) / 100;
+        entry.totalPaidStdHours = Math.round((totalStdHours + holidayHours + paidLeaveHours) * 100) / 100;
         entry.absentDays = absentCount;
         entry.lateDays = Math.round(lateHrs * 100) / 100;
+        entry.nssfNo = emp.nssfNo || '';
+        entry.shaNo = emp.shaNo || '';
+        entry.loanType = loanTypeMap.get(emp.id) || 'Loan';
+        entry.period = run.period;
+        entry.scheduledWorkDays = scheduledDaysIncludingHolidays;
+        entry.totalScheduledHours = totalScheduledHours;
+        entry.hourlyRate = hourlyRate;
+
+        // ═══════════════════════════════════════════════════════
+        // Attendance pay breakdown — MUST match the grid exactly
+        // ═══════════════════════════════════════════════════════
+        // Compute absentHours and unpaidLeaveHours from work schedule config
+        // (same logic as AttendanceCalendarGrid)
+        let absentHours = 0;
+        for (const ar of attendanceRecords) {
+            if (ar.employeeId !== emp.id) continue;
+            if (ar.status !== 'Absent') continue;
+            const d = parseInt(ar.date.split('-')[2], 10);
+            const date = new Date(runYear, runMonth - 1, d);
+            const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+            absentHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+        }
+
+        let unpaidLeaveHours = 0;
+        for (const lv of leaveRecords) {
+            if (lv.employeeId !== emp.id) continue;
+            if (lv.status !== 'Approved') continue;
+            const isUnpaid = lv.isPaid === 0 || lv.leaveType.toLowerCase().includes('unpaid');
+            if (!isUnpaid) continue;
+            const lvStart = new Date(lv.startDate);
+            const lvEnd = lv.endDate ? new Date(lv.endDate) : new Date(lv.startDate);
+            const periodStart = new Date(runYear, runMonth - 1, 1);
+            const periodEnd = new Date(runYear, runMonth, 0);
+            const overlapStart = lvStart > periodStart ? lvStart : periodStart;
+            const overlapEnd = lvEnd < periodEnd ? lvEnd : periodEnd;
+            if (overlapStart > overlapEnd) continue;
+            const current = new Date(overlapStart);
+            while (current <= overlapEnd) {
+                const d = current.getDate();
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][current.getDay()];
+                unpaidLeaveHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+                current.setDate(current.getDate() + 1);
+            }
+        }
+
+        // For fixed employees with no deductions, stdPayAmount equals basicPay exactly
+        const hasAttendanceDeductions = absentHours > 0 || lateHrs > 0 || unpaidLeaveHours > 0;
+        entry.stdPayAmount = (payStructure === 'fixed' && !hasAttendanceDeductions)
+            ? entry.basicPay
+            : Math.round(totalStdHours * hourlyRate * 100) / 100;
+        entry.holidayPayAmount = Math.round(holidayHours * hourlyRate * 100) / 100;
+        entry.paidLeavePayAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
+        // Store attendance breakdown for ALL employees (payslip display)
+        // For FIXED: these are actual deductions subtracted by computePayrollEntry
+        // For PRORATED: these are informational (already reflected in lower stdPayAmount)
+        entry.absentHours = Math.round(absentHours * 100) / 100;
+        entry.absentDedAmount = Math.round(absentHours * hourlyRate * 100) / 100;
+        entry.lateHours = Math.round(lateHrs * 100) / 100;
+        entry.lateDedAmount = Math.round(lateHrs * hourlyRate * 100) / 100;
+        entry.unpaidLeaveHours = Math.round(unpaidLeaveHours * 100) / 100;
+        entry.unpaidLeaveDedAmount = Math.round(unpaidLeaveHours * hourlyRate * 100) / 100;
         return entry;
     });
 
@@ -335,6 +428,22 @@ async function generateEntriesForRun(runId: number, clientId: number, prorate: b
                 bonusPay: entry.bonusPay || 0,
                 taxableBonus: entry.taxableBonus || 0,
                 nonTaxableBonus: entry.nonTaxableBonus || 0,
+                attendanceDeduction: entry.attendanceDeduction || 0,
+                originalBasicPay: entry.originalBasicPay || 0,
+                scheduledWorkDays: entry.scheduledWorkDays || 0,
+                totalScheduledHours: entry.totalScheduledHours || 0,
+                hourlyRate: entry.hourlyRate || 0,
+                stdPayAmount: entry.stdPayAmount || 0,
+                holidayHours: entry.holidayHours || 0,
+                holidayPayAmount: entry.holidayPayAmount || 0,
+                paidLeaveHours: entry.paidLeaveHours || 0,
+                paidLeavePayAmount: entry.paidLeavePayAmount || 0,
+                absentHours: entry.absentHours || 0,
+                absentDedAmount: entry.absentDedAmount || 0,
+                lateHours: entry.lateHours || 0,
+                lateDedAmount: entry.lateDedAmount || 0,
+                unpaidLeaveHours: entry.unpaidLeaveHours || 0,
+                unpaidLeaveDedAmount: entry.unpaidLeaveDedAmount || 0,
                 status: 'active',
                 lockedAt: null,
                 createdAt: now,
@@ -585,7 +694,7 @@ router.get('/:clientId/payroll-runs/:id/entries', async (req, res) => {
     }
 });
 
-// POST /api/clients/:clientId/payroll-runs/:id/update-entry — persist per-run input overrides
+// POST /api/clients/:clientId/payroll-runs/:id/update-entry — persist per-run input overrides and recompute
 router.post('/:clientId/payroll-runs/:id/update-entry', async (req, res) => {
     try {
         const runId = parseInt(req.params.id, 10);
@@ -599,7 +708,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req, res) => {
         const allowedOverrides = [
             'basicPay', 'carBenefit', 'mealsBenefit', 'nonCashBenefits',
             'housingBenefit', 'otherBenefits', 'bonusPay', 'insuranceRelief',
-            'absentDays', 'lateHours', 'overtimePay',
+            'absentDays', 'lateHours', 'overtimePay', 'otherDeductions', 'hourlyRate',
         ];
 
         const overridePayload: Record<string, number> = {};
@@ -631,16 +740,159 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req, res) => {
 
         const mergedOverrides = { ...existingOverrides, ...overridePayload };
 
+        // ── Recompute payroll with merged overrides ──
+        const run = await db.selectFrom('payroll_runs').selectAll().where('id', '=', runId).executeTakeFirst();
+        const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
+        const emp = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).where('clientId', '=', clientId).executeTakeFirst();
+
+        let computed: any = null;
+        let totalScheduledHours = 0;
+        if (run && client && emp) {
+            const schedule = emp.workScheduleId
+                ? await db.selectFrom('work_schedules').selectAll().where('id', '=', emp.workScheduleId).executeTakeFirst()
+                : null;
+            const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
+
+            const [yearStr] = run.period.split('-');
+            const holidays = await db
+                .selectFrom('holidays')
+                .selectAll()
+                .where('clientId', '=', clientId)
+                .where((eb) => eb.or([
+                    eb('date', 'like', `${yearStr}-%`),
+                    eb('isRecurring', '=', 1),
+                ]))
+                .execute();
+
+            const adjustments = await db
+                .selectFrom('payroll_adjustments')
+                .selectAll()
+                .where('payrollRunId', '=', runId)
+                .where('employeeId', '=', employeeId)
+                .execute();
+            const adjList = adjustments.map(a => ({
+                type: a.type as 'allowance' | 'deduction',
+                amount: a.amount,
+                isStatutory: !!a.isStatutory,
+            }));
+            // Merge otherDeductions override into adjustments as a non-statutory deduction
+            // Only use explicit user overrides; do not fallback to entry.otherDeductions
+            // because that field may include computed loan amounts from old engine versions.
+            if (mergedOverrides.otherDeductions !== undefined && mergedOverrides.otherDeductions > 0) {
+                adjList.push({ type: 'deduction', amount: mergedOverrides.otherDeductions, isStatutory: false });
+            }
+
+            const payStructure = (emp.payStructure || (client?.payStructure as string) || 'fixed') as 'fixed' | 'prorated';
+
+            // Compute totalScheduledHours early so we can bridge hourlyRate -> basicPay if needed
+            totalScheduledHours = getTotalScheduledHours(scheduleConfig, run.period);
+
+            // If hourlyRate override is provided but basicPay is not, bridge via workSchedule
+            if (mergedOverrides.hourlyRate !== undefined && mergedOverrides.basicPay === undefined) {
+                mergedOverrides.basicPay = Math.round(mergedOverrides.hourlyRate * totalScheduledHours * 100) / 100;
+            }
+
+            // Apply merged overrides on top of the original entry values
+            const baseInput = {
+                employeeId: emp.id,
+                employeeName: emp.employeeName,
+                kraPin: emp.kraPin,
+                payrollNumber: emp.payrollNumber,
+                basicPay: mergedOverrides.basicPay !== undefined ? mergedOverrides.basicPay : entry.basicPay,
+                carBenefit: mergedOverrides.carBenefit !== undefined ? mergedOverrides.carBenefit : entry.carBenefit,
+                mealsBenefit: mergedOverrides.mealsBenefit !== undefined ? mergedOverrides.mealsBenefit : entry.mealsBenefit,
+                nonCashBenefits: mergedOverrides.nonCashBenefits !== undefined ? mergedOverrides.nonCashBenefits : entry.nonCashBenefits,
+                housingBenefit: mergedOverrides.housingBenefit !== undefined ? mergedOverrides.housingBenefit : entry.housingBenefit,
+                otherBenefits: mergedOverrides.otherBenefits !== undefined ? mergedOverrides.otherBenefits : entry.otherBenefits,
+                dateJoined: emp.dateJoined,
+                dateLeft: emp.dateLeft,
+                employmentStatus: emp.employmentStatus,
+                loanDeduction: entry.loanDeduction || 0,
+                // For prorated: unpaid leave and attendance are already factored into basicPay
+                unpaidLeaveDays: payStructure === 'fixed' ? (entry.unpaidLeaveDays || 0) : 0,
+                payStructure,
+                overtimePay: mergedOverrides.overtimePay !== undefined ? mergedOverrides.overtimePay : entry.overtimePay,
+                attendanceAbsentDays: payStructure === 'fixed'
+                    ? (mergedOverrides.absentDays !== undefined ? mergedOverrides.absentDays : entry.absentDays)
+                    : 0,
+                attendanceLateDays: payStructure === 'fixed'
+                    ? (mergedOverrides.lateHours !== undefined ? mergedOverrides.lateHours : entry.lateDays)
+                    : 0,
+                pwd: emp.pwd || 'No',
+                otherPension: emp.otherPension || 0,
+                postRetMedical: emp.postRetMedical || 0,
+                mortgageInterest: emp.mortgageInterest || 0,
+                insuranceRelief: mergedOverrides.insuranceRelief !== undefined ? mergedOverrides.insuranceRelief : ((entry as any).insuranceRelief || 0),
+                bonusPay: mergedOverrides.bonusPay !== undefined ? mergedOverrides.bonusPay : entry.bonusPay,
+                standardCheckIn: emp.standardCheckIn || '08:00',
+                standardCheckOut: emp.standardCheckOut || '17:00',
+            };
+
+            computed = computePayrollEntry(baseInput, run.period, true, scheduleConfig, holidays, adjList);
+            const computedScheduledDays = getScheduledDaysIncludingHolidays(scheduleConfig, run.period);
+            computed.scheduledWorkDays = computedScheduledDays;
+            computed.totalScheduledHours = totalScheduledHours;
+        }
+
+        const updateSet: any = { overrides: JSON.stringify(mergedOverrides), updatedAt: new Date().toISOString() };
+        if (computed) {
+            updateSet.basicPay = computed.basicPay;
+            updateSet.carBenefit = computed.carBenefit;
+            updateSet.mealsBenefit = computed.mealsBenefit;
+            updateSet.nonCashBenefits = computed.nonCashBenefits;
+            updateSet.housingBenefit = computed.housingBenefit;
+            updateSet.otherBenefits = computed.otherBenefits;
+            updateSet.grossPay = computed.grossPay;
+            updateSet.shaDeduction = computed.shaDeduction;
+            updateSet.nssfDeduction = computed.nssfDeduction;
+            updateSet.ahlDeduction = computed.ahlDeduction;
+            updateSet.otherDeductions = computed.otherDeductions;
+            updateSet.totalDeductions = computed.totalDeductions;
+            updateSet.taxablePay = computed.taxablePay;
+            updateSet.payeTax = computed.payeTax;
+            updateSet.netPay = computed.netPay;
+            updateSet.bonusPay = computed.bonusPay;
+            updateSet.taxableBonus = computed.taxableBonus;
+            updateSet.nonTaxableBonus = computed.nonTaxableBonus;
+            updateSet.overtimePay = computed.overtimePay;
+            updateSet.daysWorked = computed.daysWorked;
+            updateSet.absentDays = computed.absentDays;
+            updateSet.lateDays = computed.lateDays;
+            updateSet.attendanceDeduction = computed.attendanceDeduction;
+            updateSet.originalBasicPay = computed.originalBasicPay;
+            updateSet.scheduledWorkDays = computed.scheduledWorkDays || computed.daysWorked;
+            updateSet.totalScheduledHours = computed.totalScheduledHours;
+            updateSet.hourlyRate = mergedOverrides.hourlyRate !== undefined
+                ? mergedOverrides.hourlyRate
+                : (totalScheduledHours > 0 ? Math.round((computed.basicPay / totalScheduledHours) * 100000000) / 100000000 : 0);
+        }
+
+        await db.updateTable('payroll_entries').set(updateSet).where('id', '=', entry.id).execute();
+
+        // Recalculate run totals from all entries so dashboard stays in sync
+        const allEntries = await db
+            .selectFrom('payroll_entries')
+            .selectAll()
+            .where('payrollRunId', '=', runId)
+            .execute();
+        const newTotalGross = allEntries.reduce((s, e) => s + (e.grossPay || 0), 0);
+        const newTotalDeductions = allEntries.reduce((s, e) => s + (e.totalDeductions || 0), 0);
+        const newTotalNet = allEntries.reduce((s, e) => s + (e.netPay || 0), 0);
         await db
-            .updateTable('payroll_entries')
-            .set({ overrides: JSON.stringify(mergedOverrides) })
-            .where('id', '=', entry.id)
+            .updateTable('payroll_runs')
+            .set({
+                totalGross: Math.round(newTotalGross * 100) / 100,
+                totalDeductions: Math.round(newTotalDeductions * 100) / 100,
+                totalNet: Math.round(newTotalNet * 100) / 100,
+                updatedAt: new Date().toISOString(),
+            })
+            .where('id', '=', runId)
             .execute();
 
-        res.json({ success: true, overrides: mergedOverrides });
-    } catch (err) {
+        res.json({ success: true, overrides: mergedOverrides, computed: computed || undefined });
+    } catch (err: any) {
         console.error('Error updating payroll entry override:', err);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: 'Internal server error', detail: err?.message });
     }
 });
 
@@ -682,6 +934,22 @@ router.get('/:clientId/payroll-runs/:id/payslips', async (req, res) => {
 
         const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
 
+        // Enrich entries with employee + loan data for payslip
+        const empIds = entries.map(e => e.employeeId);
+        const employees = await db.selectFrom('employees').selectAll().where('id', 'in', empIds).execute();
+        const empMap = new Map(employees.map(e => [e.id, e]));
+        const loans = await db.selectFrom('loans').selectAll().where('clientId', '=', clientId).where('remainingInstallments', '>', 0).execute();
+        const loanTypeMap = new Map<number, string>();
+        for (const ln of loans) {
+            if (!loanTypeMap.has(ln.employeeId)) loanTypeMap.set(ln.employeeId, ln.loanType || 'Loan');
+        }
+
+        // Fetch work schedules for scheduled-day computation
+        const workSchedules = await db.selectFrom('work_schedules').selectAll().where('clientId', '=', clientId).execute();
+        const scheduleMap = new Map(workSchedules.map(s => [s.id, s]));
+        const [runYear] = (run?.period || '').split('-');
+        const holidays = await db.selectFrom('holidays').selectAll().where('clientId', '=', clientId).where((eb) => eb.or([eb('date', 'like', `${runYear}-%`), eb('isRecurring', '=', 1)])).execute();
+
         // Use archiver to create ZIP of all PDFs
         const archiver = require('archiver');
         res.setHeader('Content-Type', 'application/zip');
@@ -691,6 +959,28 @@ router.get('/:clientId/payroll-runs/:id/payslips', async (req, res) => {
         archive.pipe(res);
 
         for (const entry of entries) {
+            const emp = empMap.get(entry.employeeId);
+            (entry as any).nssfNo = emp?.nssfNo || '';
+            (entry as any).shaNo = emp?.shaNo || '';
+            (entry as any).loanType = loanTypeMap.get(entry.employeeId) || 'Loan';
+            (entry as any).period = run?.period || '';
+            (entry as any).payStructure = emp?.payStructure || 'fixed';
+            // Always use the employee record's contractual basicPay as the source of truth
+            (entry as any).originalBasicPay = emp?.basicPay ?? entry.originalBasicPay ?? entry.basicPay ?? 0;
+            // Compute totalScheduledHours from employee's actual work schedule + checkIn/checkOut
+            if (emp) {
+                const schedule = emp.workScheduleId ? scheduleMap.get(emp.workScheduleId) : null;
+                const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
+                const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, run?.period || '');
+                const totalScheduledHours = getTotalScheduledHours(scheduleConfig, run?.period || '');
+                (entry as any).scheduledWorkDays = scheduledDaysIncludingHolidays;
+                (entry as any).totalScheduledHours = totalScheduledHours;
+                // If hourlyRate wasn't stored in DB, compute it from originalBasicPay / totalScheduledHours
+                if (!(entry.hourlyRate > 0)) {
+                    const computedRate = Math.round(((entry.originalBasicPay || entry.basicPay || 0) / Math.max(1, totalScheduledHours)) * 100000000) / 100000000;
+                    (entry as any).hourlyRate = computedRate;
+                }
+            }
             const doc = new PDFDocument({ size: 'A4', margin: 40 });
             const chunks: Buffer[] = [];
             doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -730,6 +1020,35 @@ router.get('/:clientId/payroll-runs/:id/payslip/:employeeId', async (req, res) =
         const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
         const run = await db.selectFrom('payroll_runs').selectAll().where('id', '=', id).executeTakeFirst();
 
+        // Enrich entry with employee + loan data
+        const emp = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).executeTakeFirst();
+        const loans = await db.selectFrom('loans').selectAll().where('clientId', '=', clientId).where('employeeId', '=', employeeId).where('remainingInstallments', '>', 0).execute();
+        (entry as any).nssfNo = emp?.nssfNo || '';
+        (entry as any).shaNo = emp?.shaNo || '';
+        (entry as any).loanType = loans[0]?.loanType || 'Loan';
+        (entry as any).period = run?.period || '';
+        (entry as any).payStructure = emp?.payStructure || 'fixed';
+        // Always use the employee record's contractual basicPay as the source of truth
+        (entry as any).originalBasicPay = emp?.basicPay ?? entry.originalBasicPay ?? entry.basicPay ?? 0;
+        // Compute totalScheduledHours from employee's actual work schedule + checkIn/checkOut
+        if (emp) {
+            const schedule = emp.workScheduleId
+                ? await db.selectFrom('work_schedules').selectAll().where('id', '=', emp.workScheduleId).executeTakeFirst()
+                : null;
+            const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
+            const [runYear] = (run?.period || '').split('-');
+            const holidays = await db.selectFrom('holidays').selectAll().where('clientId', '=', clientId).where((eb) => eb.or([eb('date', 'like', `${runYear}-%`), eb('isRecurring', '=', 1)])).execute();
+            const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, run?.period || '');
+            const totalScheduledHours = getTotalScheduledHours(scheduleConfig, run?.period || '');
+            (entry as any).scheduledWorkDays = scheduledDaysIncludingHolidays;
+            (entry as any).totalScheduledHours = totalScheduledHours;
+            // If hourlyRate wasn't stored in DB, compute it from originalBasicPay / totalScheduledHours
+            if (!(entry.hourlyRate > 0)) {
+                const computedRate = Math.round(((entry.originalBasicPay || entry.basicPay || 0) / Math.max(1, totalScheduledHours)) * 100000000) / 100000000;
+                (entry as any).hourlyRate = computedRate;
+            }
+        }
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=Payslip_${entry.kraPin}_${run?.period || ''}.pdf`);
 
@@ -744,155 +1063,207 @@ router.get('/:clientId/payroll-runs/:id/payslip/:employeeId', async (req, res) =
 });
 
 function generatePayslipPDF(doc: any, entry: any, client: any): void {
-    const leftX = 40;
-    const rightX = 310;
-    const earningsAmountX = 240;
-    const deductionsAmountX = 550;
-    let y = 40;
+    const pageW = 595.28;
+    const margin = 40;
+    const leftX = margin;
+    const contentW = pageW - margin * 2;
+    const amtW = 100;
+    const amtX = leftX + contentW - amtW;
+    let y = margin;
+    const rowH = 14;
+    const isFixed = (entry.payStructure || 'fixed') === 'fixed';
 
     // ── Company Logo ──
     if (client?.logoUrl) {
         try {
             const logoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
             if (fs.existsSync(logoPath)) {
-                doc.image(logoPath, leftX, y, { width: 60 });
-                y = 110;
+                const logoW = 120;
+                const logoH = 80;
+                const logoX = (pageW - logoW) / 2;
+                doc.image(logoPath, logoX, y, { fit: [logoW, logoH], align: 'center', valign: 'center' });
+                y += 100;
             }
         } catch { /* ignore */ }
     }
 
     // ── Header ──
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#000');
-    doc.text(client?.name || 'Company', leftX, y, { align: 'center', width: 510 });
-    y += 18;
-    doc.fontSize(8).font('Helvetica').fillColor('#666');
-    doc.text(`KRA PIN: ${client?.pin || ''}`, leftX, y, { align: 'center', width: 510 });
+    doc.fontSize(18).font('Helvetica-Bold').fillColor('#1e293b');
+    doc.text(client?.name || 'Company', leftX, y, { align: 'center', width: contentW });
+    y += 24;
+    doc.fontSize(9).font('Helvetica').fillColor('#64748b');
+    doc.text(`KRA PIN: ${client?.pin || ''}`, leftX, y, { align: 'center', width: contentW });
     y += 14;
-    doc.fontSize(10).font('Helvetica-Bold').fillColor('#000');
-    doc.text('PAYSLIP', leftX, y, { align: 'center', width: 510 });
+    doc.fontSize(11).font('Helvetica-Bold').fillColor('#0f172a');
+    doc.text('PAYSLIP', leftX, y, { align: 'center', width: contentW });
     y += 20;
-    doc.fontSize(8).font('Helvetica');
-    doc.text(`Employee: ${entry.employeeName || ''}`, leftX, y);
-    doc.text(`KRA PIN: ${entry.kraPin || ''}`, rightX, y);
-    y += 14;
-    doc.text(`Payroll No: ${entry.payrollNumber || ''}`, leftX, y);
-    doc.text(`Days Worked: ${entry.daysWorked || 0}`, rightX, y);
-    y += 14;
 
-    const rowH = 13;
+    // ── Employee Info ──
+    const infoBoxH = 52;
+    doc.rect(leftX, y, contentW, infoBoxH).stroke('#e2e8f0');
+    doc.fontSize(9).font('Helvetica').fillColor('#334155');
+    const midX = leftX + contentW / 2;
+    doc.text(`Employee: ${entry.employeeName || ''}`, leftX + 10, y + 8);
+    doc.text(`KRA PIN: ${entry.kraPin || 'N/A'}`, midX, y + 8);
+    doc.text(`Payroll No: ${entry.payrollNumber || ''}`, leftX + 10, y + 22);
+    doc.text(`NSSF No: ${entry.nssfNo || 'N/A'}`, midX, y + 22);
+    doc.text(`SHA No: ${entry.shaNo || 'N/A'}`, leftX + 10, y + 36);
+    doc.text(`Period: ${entry.period || ''}`, midX, y + 36);
+    y += infoBoxH + 10;
 
-    // ── Column Headers ──
-    doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
-    doc.text('EARNINGS', leftX, y);
-    doc.text('Amount (KES)', earningsAmountX, y);
-    doc.text('DEDUCTIONS', rightX, y);
-    doc.text('Amount (KES)', deductionsAmountX, y);
-    y += rowH;
+    // ── Helpers ──
+    const sectionHeader = (title: string) => {
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#0f172a');
+        doc.text(title.toUpperCase(), leftX, y);
+        y += rowH;
+        doc.moveTo(leftX, y - 4).lineTo(leftX + contentW, y - 4).stroke('#cbd5e1');
+    };
 
-    // Track separately
-    let earnY = y;
-    let dedY = y;
+    const lineItem = (label: string, amount: number, opts?: { red?: boolean; bold?: boolean; note?: string }) => {
+        const isRed = opts?.red;
+        const isBold = opts?.bold;
+        const note = opts?.note;
+        doc.fontSize(8.5).font(isBold ? 'Helvetica-Bold' : 'Helvetica').fillColor(isRed ? '#dc2626' : '#334155');
+        const labelText = note ? `${label}  (${note})` : label;
+        doc.text(labelText, leftX + 4, y);
+        const amtText = amount < 0 ? `-${Math.abs(amount).toFixed(2)}` : amount.toFixed(2);
+        doc.text(amtText, amtX, y, { width: amtW, align: 'right' });
+        y += rowH;
+    };
 
-    // ── EARNINGS ──
-    doc.fontSize(8).font('Helvetica').fillColor('#333');
-    doc.text('Basic Pay', leftX, earnY); doc.text(entry.basicPay.toFixed(2), earningsAmountX, earnY);
-    earnY += rowH;
+    const subTotal = (label: string, amount: number, opts?: { bold?: boolean; bg?: boolean }) => {
+        const isBold = opts?.bold ?? true;
+        y += 2;
+        if (opts?.bg) {
+            doc.rect(leftX, y, contentW, rowH + 4).fill('#f1f5f9');
+            doc.fillColor('#000');
+        }
+        doc.moveTo(leftX, y).lineTo(leftX + contentW, y).stroke('#94a3b8');
+        y += 5;
+        doc.fontSize(9).font(isBold ? 'Helvetica-Bold' : 'Helvetica').fillColor('#0f172a');
+        doc.text(label, leftX + 4, y);
+        doc.text(amount.toFixed(2), amtX, y, { width: amtW, align: 'right' });
+        y += rowH + 2;
+    };
 
-    if (entry.benefits > 0) {
-        doc.text('Benefits', leftX, earnY); doc.text(entry.benefits.toFixed(2), earningsAmountX, earnY);
-        earnY += rowH;
+    // ═══════════════════════════════════════════════
+    // 1. CONTRACTUAL BASIC PAY
+    // ═══════════════════════════════════════════════
+    sectionHeader('Contractual Basic Pay');
+    lineItem('Basic Salary', entry.originalBasicPay || entry.basicPay || 0, { bold: true });
+
+    // ═══════════════════════════════════════════════
+    // 2. EARNINGS FROM HOURS WORKED (prorated) / OVERTIME (fixed)
+    // ═══════════════════════════════════════════════
+    if (!isFixed) {
+        const hasStdPay = (entry.stdPayAmount || 0) > 0;
+        const hasHolidayPay = (entry.holidayPayAmount || 0) > 0;
+        const hasPaidLeavePay = (entry.paidLeavePayAmount || 0) > 0;
+        const hasOtPay = (entry.overtimePay || 0) > 0;
+        if (hasStdPay || hasHolidayPay || hasPaidLeavePay || hasOtPay) {
+            sectionHeader('Earnings from Hours Worked');
+            if (hasStdPay) lineItem('Standard Hours Pay', entry.stdPayAmount);
+            if (hasHolidayPay) lineItem('Holiday Pay', entry.holidayPayAmount);
+            if (hasPaidLeavePay) lineItem('Paid Leave Pay', entry.paidLeavePayAmount);
+            if (hasOtPay) lineItem('Overtime Pay', entry.overtimePay || 0);
+        }
+    } else if ((entry.overtimePay || 0) > 0) {
+        sectionHeader('Earnings');
+        lineItem('Overtime Pay', entry.overtimePay || 0);
     }
 
-    if ((entry.overtimePay || 0) > 0) {
-        doc.text('Overtime Pay', leftX, earnY); doc.text(entry.overtimePay.toFixed(2), earningsAmountX, earnY);
-        earnY += rowH;
+    // ═══════════════════════════════════════════════
+    // 3. ATTENDANCE DEDUCTIONS / SUMMARY
+    // ═══════════════════════════════════════════════
+    const hasAbsent = (entry.absentHours || 0) > 0;
+    const hasLate = (entry.lateHours || 0) > 0;
+    const hasUnpaidLeave = (entry.unpaidLeaveHours || 0) > 0;
+    if (hasAbsent || hasLate || hasUnpaidLeave) {
+        sectionHeader(isFixed ? 'Attendance Deductions' : 'Attendance Summary');
+        if (hasAbsent) {
+            if (isFixed) {
+                lineItem('Absent Deduction', -entry.absentDedAmount, { red: true });
+            } else {
+                lineItem('Absent Hours', entry.absentDedAmount);
+            }
+        }
+        if (hasLate) {
+            if (isFixed) {
+                lineItem('Late Deduction', -entry.lateDedAmount, { red: true });
+            } else {
+                lineItem('Late Hours', entry.lateDedAmount);
+            }
+        }
+        if (hasUnpaidLeave) {
+            if (isFixed) {
+                lineItem('Unpaid Leave Deduction', -entry.unpaidLeaveDedAmount, { red: true });
+            } else {
+                lineItem('Unpaid Leave Hours', entry.unpaidLeaveDedAmount);
+            }
+        }
     }
 
-    const totalBonus = (entry.bonusPay || 0) + (entry.nonTaxableBonus || 0);
-    if (totalBonus > 0) {
-        doc.text('Bonus Pay', leftX, earnY); doc.text(totalBonus.toFixed(2), earningsAmountX, earnY);
-        earnY += rowH;
+    // ═══════════════════════════════════════════════
+    // BENEFITS & ALLOWANCES
+    // ═══════════════════════════════════════════════
+    const hasCar = (entry.carBenefit || 0) > 0;
+    const hasMeals = (entry.mealsBenefit || 0) > 0;
+    const hasHousing = (entry.housingBenefit || 0) > 0;
+    const hasNonCash = (entry.nonCashBenefits || 0) > 0;
+    const hasOtherBenefits = (entry.otherBenefits || 0) > 0;
+    const hasBonus = (entry.bonusPay || 0) > 0 || (entry.nonTaxableBonus || 0) > 0;
+    if (hasCar || hasMeals || hasHousing || hasNonCash || hasOtherBenefits || hasBonus) {
+        sectionHeader('Benefits & Allowances');
+        if (hasCar) lineItem('Car / Transport Benefit', entry.carBenefit || 0);
+        if (hasMeals) lineItem('Meals Benefit', entry.mealsBenefit || 0);
+        if (hasHousing) lineItem('Housing Benefit', entry.housingBenefit || 0);
+        if (hasNonCash) lineItem('Non-Cash Benefit', entry.nonCashBenefits || 0);
+        if (hasOtherBenefits) lineItem('Other Benefits', entry.otherBenefits || 0);
+        if ((entry.bonusPay || 0) > 0) lineItem('Bonus Pay', entry.bonusPay || 0);
+        if ((entry.nonTaxableBonus || 0) > 0) lineItem('Non-Taxable Bonus', entry.nonTaxableBonus || 0);
     }
 
-    // Gross separator + total
-    earnY += 4;
-    doc.rect(leftX, earnY, 200, 1).fill('#ddd');
-    earnY += 8;
-    doc.font('Helvetica-Bold').fillColor('#000');
-    doc.text('Gross Pay', leftX, earnY);
-    doc.text(entry.grossPay.toFixed(2), earningsAmountX, earnY);
-    earnY += rowH;
+    subTotal('GROSS PAY', entry.grossPay || 0, { bold: true, bg: true });
 
-    // ── DEDUCTIONS ──
-    dedY = y;  // reset to match earnings starting position
+    // ═══════════════════════════════════════════════
+    // STATUTORY DEDUCTIONS
+    // ═══════════════════════════════════════════════
+    sectionHeader('Statutory Deductions');
+    lineItem('PAYE Tax', entry.payeTax || 0);
+    lineItem('SHA (Social Health Authority)', entry.shaDeduction || 0);
+    lineItem('NSSF (National Social Security Fund)', entry.nssfDeduction || 0);
+    lineItem('AHL (Affordable Housing Levy)', entry.ahlDeduction || 0);
 
-    doc.font('Helvetica').fillColor('#333');
-    doc.text('PAYE Tax', rightX, dedY); doc.text(entry.payeTax.toFixed(2), deductionsAmountX, dedY);
-    dedY += rowH;
-
-    doc.text('SHA', rightX, dedY); doc.text(entry.shaDeduction.toFixed(2), deductionsAmountX, dedY);
-    dedY += rowH;
-
-    doc.text('NSSF', rightX, dedY); doc.text(entry.nssfDeduction.toFixed(2), deductionsAmountX, dedY);
-    dedY += rowH;
-
-    doc.text('AHL', rightX, dedY); doc.text(entry.ahlDeduction.toFixed(2), deductionsAmountX, dedY);
-    dedY += rowH;
-
-    if ((entry.unpaidLeaveDays || 0) > 0) {
-        const unpaidAmt = (entry.unpaidLeaveDeduction || 0) || (entry.basicPay / 30) * entry.unpaidLeaveDays;
-        doc.text(`Unpaid Leave (${entry.unpaidLeaveDays} days)`, rightX, dedY);
-        doc.text(unpaidAmt.toFixed(2), deductionsAmountX, dedY);
-        dedY += rowH;
+    // ═══════════════════════════════════════════════
+    // OTHER DEDUCTIONS
+    // ═══════════════════════════════════════════════
+    const hasLoan = (entry.loanDeduction || 0) > 0;
+    const hasOtherDed = (entry.otherDeductions || 0) > 0;
+    if (hasLoan || hasOtherDed) {
+        sectionHeader('Other Deductions');
+        if (hasLoan) {
+            const loanLabel = entry.loanType ? `Loan Deduction — ${entry.loanType}` : 'Loan Deduction';
+            lineItem(loanLabel, entry.loanDeduction || 0);
+        }
+        if (hasOtherDed) lineItem('Other Deductions', entry.otherDeductions || 0);
     }
 
-    if ((entry.absentDays || 0) > 0) {
-        const dailyRate = entry.basicPay / 30;
-        const absentDeduction = entry.absentDays * dailyRate;
-        doc.text(`Absenteeism (${entry.absentDays} days)`, rightX, dedY);
-        doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY);
-        dedY += rowH;
-    }
+    subTotal('TOTAL DEDUCTIONS', entry.totalDeductions || 0, { bg: false });
 
-    if ((entry.lateDays || 0) > 0) {
-        const dailyRate = entry.basicPay / 30;
-        const hourlyRate = dailyRate / 8;
-        const lateDeduction = entry.lateDays * hourlyRate;
-        doc.text(`Lateness (${entry.lateDays} hrs)`, rightX, dedY);
-        doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY);
-        dedY += rowH;
-    }
-
-    if ((entry.loanDeduction || 0) > 0) {
-        doc.text('Loan', rightX, dedY); doc.text(entry.loanDeduction.toFixed(2), deductionsAmountX, dedY);
-        dedY += rowH;
-    }
-
-    if (entry.otherDeductions > 0) {
-        doc.text('Other', rightX, dedY); doc.text(entry.otherDeductions.toFixed(2), deductionsAmountX, dedY);
-        dedY += rowH;
-    }
-
-    // Total Deductions separator
-    dedY += 4;
-    doc.rect(rightX, dedY, 200, 1).fill('#ddd');
-    dedY += 8;
-    doc.font('Helvetica-Bold').fillColor('#000');
-    doc.text('Total Deductions', rightX, dedY);
-    doc.text(entry.totalDeductions.toFixed(2), deductionsAmountX, dedY);
-    dedY += rowH;
-
-    // ── Net Pay ──
-    const finalY = Math.max(earnY, dedY) + 16;
-    doc.rect(leftX, finalY, 510, 24).fill('#1e293b');
-    doc.fontSize(11).font('Helvetica-Bold').fillColor('#ffffff');
-    doc.text('NET PAY', leftX + 8, finalY + 6);
-    doc.text(`KES ${entry.netPay.toFixed(2)}`, deductionsAmountX - 30, finalY + 6);
+    // ═══════════════════════════════════════════════
+    // NET PAY
+    // ═══════════════════════════════════════════════
+    y += 8;
+    doc.rect(leftX, y, contentW, 38).fill('#0f172a');
+    doc.fontSize(12).font('Helvetica-Bold').fillColor('#ffffff');
+    doc.text('NET PAY', leftX + 14, y + 11);
+    doc.text(`KES ${(entry.netPay || 0).toFixed(2)}`, amtX - 10, y + 11, { width: amtW + 10, align: 'right' });
     doc.fillColor('#000');
 
-    y = finalY + 28;
-    doc.fontSize(7).font('Helvetica').fillColor('#999');
-    doc.text(`Generated on ${new Date().toLocaleDateString()}`, leftX, y, { align: 'center', width: 510 });
+    // ── Footer ──
+    y += 50;
+    doc.fontSize(8).font('Helvetica').fillColor('#94a3b8');
+    doc.text(`Generated on ${new Date().toLocaleDateString()}  |  This is a computer-generated payslip and does not require a signature.`, leftX, y, { align: 'center', width: contentW });
 }
 
 // ─── Overtime Routes ──────────────────────────────────────────────────────────
@@ -1788,7 +2159,7 @@ router.post('/:clientId/payroll-runs/:id/finalize', async (req, res) => {
 
         // Process loan deductions (ledger-based)
         for (const entry of entries) {
-            if (entry.loanDeduction <= 0) continue;
+            if ((entry.loanDeduction || 0) <= 0) continue;
             // Find active loan for this employee
             const loans = await db
                 .selectFrom('loans')
@@ -1800,26 +2171,31 @@ router.post('/:clientId/payroll-runs/:id/finalize', async (req, res) => {
             const loan = loans[0];
             if (!loan) continue;
 
-            await db
-                .insertInto('loan_transactions')
-                .values({
-                    clientId: entry.clientId,
-                    employeeId: entry.employeeId,
-                    payrollRunId,
-                    loanId: loan.id,
-                    amount: entry.loanDeduction,
-                    type: 'deduction',
-                    createdAt: now,
-                })
-                .execute();
-            await db
-                .updateTable('loans')
-                .set({
-                    remainingInstallments: loan.remainingInstallments - 1,
-                    updatedAt: now,
-                })
-                .where('id', '=', loan.id)
-                .execute();
+            try {
+                await db
+                    .insertInto('loan_transactions')
+                    .values({
+                        clientId: entry.clientId,
+                        employeeId: entry.employeeId,
+                        payrollRunId,
+                        loanId: loan.id,
+                        amount: entry.loanDeduction,
+                        type: 'deduction',
+                        createdAt: now,
+                    })
+                    .execute();
+                await db
+                    .updateTable('loans')
+                    .set({
+                        remainingInstallments: loan.remainingInstallments - 1,
+                        updatedAt: now,
+                    })
+                    .where('id', '=', loan.id)
+                    .execute();
+            } catch (loanErr: any) {
+                console.error(`[FINALIZE] Loan transaction failed for employee ${entry.employeeId}:`, loanErr?.message || loanErr);
+                warnings.push(`Loan deduction failed for ${entry.employeeName}: ${loanErr?.message || 'Unknown error'}`);
+            }
         }
 
         // Lock the run
@@ -1831,7 +2207,8 @@ router.post('/:clientId/payroll-runs/:id/finalize', async (req, res) => {
 
         res.json({ success: true, finalizedAt: now, warnings, entryCount: entries.length });
     } catch (err: any) {
-        res.status(500).json({ message: 'Failed to finalize run', error: err.message });
+        console.error('[FINALIZE] Unhandled error:', err);
+        res.status(500).json({ message: 'Failed to finalize run', error: err?.message || String(err) });
     }
 });
 

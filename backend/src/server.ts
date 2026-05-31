@@ -5,6 +5,7 @@
  * Run with: npm run dev
  */
 
+import 'express-async-errors';
 import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
@@ -12,41 +13,60 @@ import helmet from 'helmet';
 import cors from 'cors';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+import { logger } from './logger';
+
+// ─── Crash Handlers ────────────────────────────────────────────────────────────
+process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason }, 'Unhandled Promise Rejection — exiting');
+    process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+    logger.error({ err }, 'Uncaught Exception — exiting');
+    process.exit(1);
+});
+
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM received — shutting down');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT received — shutting down');
+    process.exit(0);
+});
+
 import rateLimit from 'express-rate-limit';
 import taxRoutes from './api/tax.routes';
-import payrollRoutes from './api/payroll.routes';
-import clientRoutes from './api/clients.routes';
-import employeeRoutes from './api/employees.routes';
-import leaveRoutes from './api/leave.routes';
-import loansRoutes from './api/loans.routes';
-import attendanceRoutes from './api/attendance.routes';
-import reportsRoutes from './api/reports.routes';
-import emailRoutes from './api/email.routes';
-import authRoutes from './api/auth.routes';
-import portalRoutes from './api/portal.routes';
-import payrollRunsRoutes from './api/payroll-runs.routes';
-import departmentsRoutes from './api/departments.routes';
-import documentsRoutes from './api/documents.routes';
-import auditRoutes from './api/audit.routes';
-import kpiRoutes from './api/kpi.routes';
-import workScheduleRoutes from './api/work-schedules.routes';
-import holidaysRoutes from './api/holidays.routes';
-import { initDb } from './db/database';
-import { logger } from './logger';
+import payrollFirestoreRoutes from './api/payroll.firestore';
+import clientFirestoreRoutes from './api/clients.firestore';
+import employeeFirestoreRoutes from './api/employees.firestore';
+import leaveFirestoreRoutes from './api/leave.firestore';
+import loansFirestoreRoutes from './api/loans.firestore';
+import attendanceFirestoreRoutes from './api/attendance.firestore';
+import reportsFirestoreRoutes from './api/reports.firestore';
+import emailFirestoreRoutes from './api/email.firestore';
+import authFirestoreRoutes from './api/auth.firestore';
+import portalFirestoreRoutes from './api/portal.firestore';
+import payrollRunsFirestoreRoutes from './api/payroll-runs.firestore';
+import departmentsFirestoreRoutes from './api/departments.firestore';
+import documentsFirestoreRoutes from './api/documents.firestore';
+import auditFirestoreRoutes from './api/audit.firestore';
+import kpiFirestoreRoutes from './api/kpi.firestore';
+import workScheduleFirestoreRoutes from './api/work-schedules.firestore';
+import holidaysFirestoreRoutes from './api/holidays.firestore';
 import pinoHttp from 'pino-http';
+import { verifyAuth } from './middleware/verifyAuth';
+import { serveReceipt } from './middleware/receipts';
+import httpWorkerRoutes from './workers/httpWorker';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
 
-// HTTP Request logging
 app.use(pinoHttp({ logger }));
-
-// Sets secure HTTP response headers (CSP, HSTS, X-Frame-Options, etc.)
 app.use(helmet());
-
-// CORS — restrict to the configured frontend origin only
 app.use(
     cors({
         origin: process.env.ALLOWED_ORIGIN ?? 'http://localhost:3000',
@@ -58,13 +78,8 @@ app.use(
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 
-/**
- * Filing endpoint limiter: max 10 requests per IP per 15-minute window.
- * This is intentionally conservative — each request triggers a full KRA
- * automation run which is expensive and identifiable.
- */
 const filingLimiter = rateLimit({
-    windowMs: 15 * 60 * 1_000, // 15 minutes
+    windowMs: 15 * 60 * 1_000,
     max: 10,
     message: {
         success: false,
@@ -76,41 +91,45 @@ const filingLimiter = rateLimit({
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 
-// Limit body size to prevent large-payload DoS attacks
-// Bulk attendance inserts can exceed 10KB with many employees/days.
 app.use(express.json({ limit: '5mb' }));
-
-// Serve receipts statically
-app.use('/api/receipts', express.static(path.resolve(__dirname, '..', '..', 'receipts')));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-// Only submission requests should consume the expensive filing quota.
-// Status polling must stay available while the frontend tracks an active job.
 app.use('/api/tax/file-return', filingLimiter);
 app.use('/api/tax/file-nil-return', filingLimiter);
-app.use('/api/tax', taxRoutes);
-app.use('/api/payroll', payrollRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/clients', employeeRoutes);
-app.use('/api/clients', leaveRoutes);
-app.use('/api/clients', loansRoutes);
-app.use('/api/clients', attendanceRoutes);
-app.use('/api/clients', reportsRoutes);
-app.use('/api/clients', emailRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/portal', portalRoutes);
-app.use('/api/clients', payrollRunsRoutes);
-app.use('/api/clients', departmentsRoutes);
-app.use('/api/clients', documentsRoutes);
-app.use('/api/clients', auditRoutes);
-app.use('/api/clients', kpiRoutes);
-app.use('/api/clients', workScheduleRoutes);
-app.use('/api/clients', holidaysRoutes);
 
-app.get('/health', (_req, res) => {
+// Public routes
+app.use('/api/auth', authFirestoreRoutes);
+app.use('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Auth-protected receipt serving
+app.use('/api/receipts/*', verifyAuth, serveReceipt);
+
+// Protected API routes — Firestore only
+app.use('/api/tax', verifyAuth, taxRoutes);
+app.use('/api/payroll', verifyAuth, payrollFirestoreRoutes);
+app.use('/api/clients', verifyAuth, clientFirestoreRoutes);
+app.use('/api/clients', verifyAuth, employeeFirestoreRoutes);
+app.use('/api/clients', verifyAuth, leaveFirestoreRoutes);
+app.use('/api/clients', verifyAuth, loansFirestoreRoutes);
+app.use('/api/clients', verifyAuth, attendanceFirestoreRoutes);
+app.use('/api/clients', verifyAuth, reportsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, emailFirestoreRoutes);
+app.use('/api/portal', verifyAuth, portalFirestoreRoutes);
+app.use('/api/clients', verifyAuth, payrollRunsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, departmentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, documentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, auditFirestoreRoutes);
+app.use('/api/clients', verifyAuth, kpiFirestoreRoutes);
+app.use('/api/clients', verifyAuth, workScheduleFirestoreRoutes);
+app.use('/api/clients', verifyAuth, holidaysFirestoreRoutes);
+
+// Cloud Tasks worker endpoint
+if (process.env.USE_CLOUD_TASKS === 'true') {
+    app.use('/', httpWorkerRoutes);
+}
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 
@@ -134,13 +153,19 @@ app.use(
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-initDb().then(() => {
-    app.listen(PORT, () => {
-        logger.info(`KRA Filing API running on http://localhost:${PORT}`);
-        logger.info(`Environment: ${process.env.NODE_ENV ?? 'development'}`);
-    });
-}).catch(err => {
-    logger.error({ err }, 'Failed to init DB');
+const server = app.listen(PORT);
+
+server.on('listening', () => {
+    logger.info(`KRA Filing API running on http://localhost:${PORT}`);
+    logger.info(`Environment: ${process.env.NODE_ENV ?? 'development'}`);
+});
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+        logger.error({ port: PORT }, `Port ${PORT} is already in use — exiting`);
+    } else {
+        logger.error({ err }, 'Failed to start server');
+    }
     process.exit(1);
 });
 

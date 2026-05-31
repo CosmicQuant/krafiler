@@ -20,10 +20,12 @@ import 'dotenv/config';
 import { randomInt } from 'crypto';
 import path from 'path';
 import fs from 'fs/promises';
-import { Worker, Job } from 'bullmq';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { Worker, Job } from 'bullmq';
+import { JobContext } from '../types';
 import { redisConnection, KRA_QUEUE_NAME, kraFilingQueue } from '../queues/kraFilingQueue';
+import { BullMQJobAdapter } from './jobAdapter';
 import { openDb } from '../db/database';
 import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
@@ -308,7 +310,7 @@ async function getInputValue(locator: any): Promise<string> {
 }
 
 async function appendJobLog(
-    job: Job<FilingJob>,
+    job: JobContext,
     message: string,
     options: {
         progress?: number;
@@ -337,7 +339,7 @@ function hasCancellationRequest(jobData?: Partial<FilingJob> | null): boolean {
 }
 
 async function assertJobNotCancelled(
-    job: Job<FilingJob>,
+    job: JobContext,
     context: string,
     progress?: number
 ): Promise<void> {
@@ -360,7 +362,7 @@ async function assertJobNotCancelled(
     throw new JobCancelledError();
 }
 
-async function setJobStep(job: Job<FilingJob>, progress: number, message: string): Promise<void> {
+async function setJobStep(job: JobContext, progress: number, message: string): Promise<void> {
     await assertJobNotCancelled(job, message, progress);
     await job.updateProgress(progress);
     await appendJobLog(job, message, { progress });
@@ -383,7 +385,7 @@ async function resolveTimingContext(
 }
 
 async function measureJobPhase<T>(
-    job: Job<FilingJob>,
+    job: JobContext,
     label: string,
     progress: number | undefined,
     action: () => Promise<T>,
@@ -431,7 +433,7 @@ async function waitForAnySelector(
     selectors: string[],
     timeout = 20_000,
     cancellation?: {
-        job?: Job<FilingJob>;
+        job?: JobContext;
         context?: string;
         progress?: number;
     }
@@ -503,7 +505,7 @@ type PostLoginOutcome =
 
 async function waitForPostLoginOutcome(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     progress: number,
     timeout = 18_000
 ): Promise<PostLoginOutcome> {
@@ -562,7 +564,7 @@ async function waitForPostLoginOutcome(
 
 async function waitForPortalReadyWithReload(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     options: {
         description: string;
         selectors: string[];
@@ -890,7 +892,7 @@ async function snapshotPageControls(page: any): Promise<string> {
     }).catch(() => 'unavailable');
 }
 
-async function returnToPayeUploadPage(page: any, job: Job<FilingJob>): Promise<void> {
+async function returnToPayeUploadPage(page: any, job: JobContext): Promise<void> {
     const backControl = page.locator('#backBtn, input[value*="Back" i], button:has-text("Back"), a:has-text("Back")').first();
     const backControlCount = await backControl.count().catch(() => 0);
 
@@ -1179,7 +1181,7 @@ function escapeAttributeValue(value: string): string {
 
 async function performKraLogin(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     kraPin: string,
     kraPassword: string,
     options: {
@@ -1348,7 +1350,7 @@ async function performKraLogin(
 
 async function handleExpiredPasswordReset(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     currentPassword: string
 ): Promise<CredentialUpdate> {
     await setJobStep(job, 42, 'KRA requires a credential update before filing can continue');
@@ -1430,7 +1432,7 @@ async function handleExpiredPasswordReset(
 
 async function handleMobileVerification(
     page: any,
-    job: Job<FilingJob>,
+    job: JobContext,
     providedOtpCode?: string
 ): Promise<void> {
     await setJobStep(job, 41, 'Completing KRA mobile number verification');
@@ -1537,7 +1539,7 @@ async function extractReceiptNumber(page: any): Promise<string | null> {
 
 // ─── Core Job Processor ───────────────────────────────────────────────────────
 
-async function processFilingJob(job: Job<FilingJob>): Promise<{
+export async function processFilingJob(job: JobContext): Promise<{
     receiptPath: string;
     receiptNumber: string | null;
     credentialUpdate: CredentialUpdate | null;
@@ -2426,9 +2428,9 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
         const isCancelled = error instanceof JobCancelledError;
 
         if (isCancelled) {
-            const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId)).catch(() => null);
+            await job.refresh().catch(() => undefined);
             await job.updateData({
-                ...((latestJob?.data ?? job.data) as FilingJob),
+                ...job.data,
                 cancelledAt: new Date().toISOString(),
             }).catch(() => undefined);
             await appendJobLog(job, `Job cancelled: ${error.message}`, {
@@ -2473,38 +2475,46 @@ async function processFilingJob(job: Job<FilingJob>): Promise<{
 
 // ─── Worker Registration ──────────────────────────────────────────────────────
 
-export const kraFilingWorker = new Worker<FilingJob>(
-    KRA_QUEUE_NAME,
-    processFilingJob,
-    {
-        connection: redisConnection,
-        /**
-         * concurrency: 1 — jobs run sequentially.
-         * Running multiple Playwright sessions simultaneously risks IP bans and
-         * corrupted KRA portal session state.
-         */
-        concurrency: 1,
-    }
-);
+const USE_CLOUD_TASKS = process.env.USE_CLOUD_TASKS === 'true';
 
-kraFilingWorker.on('active', (job) => {
-    console.log(`[Worker] Job ${job.id} started`);
-});
+export let kraFilingWorker: Worker<FilingJob> | null = null;
 
-kraFilingWorker.on('completed', (job) => {
-    console.log(`[Worker] Job ${job.id} completed`);
-});
+if (!USE_CLOUD_TASKS) {
+    kraFilingWorker = new Worker<FilingJob>(
+        KRA_QUEUE_NAME,
+        (job: Job<FilingJob>) => processFilingJob(new BullMQJobAdapter(job)),
+        {
+            connection: redisConnection as any,
+            /**
+             * concurrency: 1 — jobs run sequentially.
+             * Running multiple Playwright sessions simultaneously risks IP bans and
+             * corrupted KRA portal session state.
+             */
+            concurrency: 1,
+        }
+    );
 
-kraFilingWorker.on('failed', (job, err: Error) => {
-    console.error(`[Worker] Job ${job?.id} failed (attempt ${job?.attemptsMade}):`, err.message);
-});
+    kraFilingWorker.on('active', (job) => {
+        console.log(`[Worker] Job ${job.id} started`);
+    });
 
-kraFilingWorker.on('progress', (job, progress) => {
-    console.log(`[Worker] Job ${job.id} progress: ${progress}%`);
-});
+    kraFilingWorker.on('completed', (job) => {
+        console.log(`[Worker] Job ${job.id} completed`);
+    });
 
-kraFilingWorker.on('error', (err: Error) => {
-    console.error('[Worker] Worker error:', err.message);
-});
+    kraFilingWorker.on('failed', (job, err: Error) => {
+        console.error(`[Worker] Job ${job?.id} failed (attempt ${job?.attemptsMade}):`, err.message);
+    });
 
-console.log(`[Worker] Listening on queue "${KRA_QUEUE_NAME}" (concurrency: 1)`);
+    kraFilingWorker.on('progress', (job, progress) => {
+        console.log(`[Worker] Job ${job.id} progress: ${progress}%`);
+    });
+
+    kraFilingWorker.on('error', (err: Error) => {
+        console.error('[Worker] Worker error:', err.message);
+    });
+
+    console.log(`[Worker] Listening on queue "${KRA_QUEUE_NAME}" (concurrency: 1)`);
+} else {
+    console.log(`[Worker] Cloud Tasks mode enabled. BullMQ worker NOT started.`);
+}

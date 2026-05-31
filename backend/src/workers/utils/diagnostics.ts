@@ -1,8 +1,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { Page } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { logger } from '../../logger';
 
 const FAILED_JOBS_DIR = path.resolve(__dirname, '..', '..', '..', 'failed_jobs');
@@ -12,7 +11,7 @@ const FAILED_JOBS_DIR = path.resolve(__dirname, '..', '..', '..', 'failed_jobs')
  */
 export async function captureFailureDiagnostics(
     page: Page | undefined,
-    job: Job<FilingJob>,
+    job: JobContext,
     error: unknown
 ): Promise<void> {
     const jobId = String(job.id ?? job.data.jobId);

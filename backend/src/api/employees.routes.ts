@@ -266,6 +266,17 @@ router.post('/:clientId/employees/import', async (req, res) => {
         const now = new Date().toISOString();
         let imported = 0;
 
+        // Fetch default work schedule for this client, if set
+        let defaultSchedule: { id: number; standardCheckIn: string; standardCheckOut: string } | null = null;
+        if (client.defaultWorkScheduleId) {
+            defaultSchedule = await db
+                .selectFrom('work_schedules')
+                .select(['id', 'standardCheckIn', 'standardCheckOut'])
+                .where('id', '=', client.defaultWorkScheduleId)
+                .where('clientId', '=', clientId)
+                .executeTakeFirst() || null;
+        }
+
         for (const emp of payrollData.employees) {
             const kraPin = String(emp['PIN of Employee'] ?? '');
             if (!kraPin) continue;
@@ -310,8 +321,8 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     dateLeft: null,
                     basicPay: parseFloat(String(emp['Total Cash Pay (A)'] ?? '0')) || 0,
                     role: 'employee',
-                    standardCheckOut: '17:00',
-                    standardCheckIn: '08:00',
+                    standardCheckOut: defaultSchedule?.standardCheckOut || '17:00',
+                    standardCheckIn: defaultSchedule?.standardCheckIn || '08:00',
                     identityType: 'National ID',
                     residentialStatus: 'Resident',
                     typeOfEmployee: 'Primary Employee',
@@ -329,6 +340,7 @@ router.post('/:clientId/employees/import', async (req, res) => {
                     insuranceRelief: 0,
                     payStructure: 'fixed',
                     bonusPay: 0,
+                    workScheduleId: defaultSchedule?.id || null,
                     hourlyRate: 0,
                     createdAt: now,
                     updatedAt: now,
@@ -561,12 +573,68 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req, res) => {
 
 // ─── P9 Generation (Annual Tax Deduction Card) ────────────────────────────────
 
+interface P9MonthData {
+    monthIndex: number; // 0-11
+    // These map directly from payroll_entries (source of truth)
+    basicPay: number; // A
+    carBenefit: number;
+    mealsBenefit: number;
+    nonCashBenefits: number;
+    housingBenefit: number; // C
+    grossPay: number; // D
+    ahlDeduction: number; // F
+    shaDeduction: number; // G
+    nssfDeduction: number;
+    totalDeductions: number; // J
+    taxablePay: number; // K
+    payeTax: number; // O
+    // These come from employee record (static per employee)
+    otherPension: number; // used in E2
+    postRetMedical: number; // H
+    mortgageInterest: number; // I
+    insuranceRelief: number; // N
+}
+
+function computeMonthP9Values(m: P9MonthData): number[] {
+    // A — Basic Salary (direct from payroll entry, already computed by engine)
+    const a = m.basicPay || 0;
+    // B — Benefits-NonCash (sum of stored individual benefits)
+    const b = (m.carBenefit || 0) + (m.mealsBenefit || 0) + (m.nonCashBenefits || 0);
+    // C — Value of Quarters (direct)
+    const c = m.housingBenefit || 0;
+    // D — Total Gross Pay (direct from entry)
+    const d = m.grossPay || 0;
+    // E1, E2, E3 — Pension contribution limits (only derived values)
+    const e1 = a * 0.30;
+    const e2 = (m.nssfDeduction || 0) + (m.otherPension || 0);
+    const e3 = Math.min(e1, e2);
+    // F — AHL (direct)
+    const f = m.ahlDeduction || 0;
+    // G — SHIF (direct)
+    const g = m.shaDeduction || 0;
+    // H — PRMF / Post-Retirement Medical (from employee record)
+    const h = m.postRetMedical || 0;
+    // I — Owner-Occupied / Mortgage Interest (from employee record)
+    const i = m.mortgageInterest || 0;
+    // J — Total Deductions (direct from entry, already computed by engine)
+    const j = m.totalDeductions || 0;
+    // K — Chargeable Pay (direct from entry)
+    const k = m.taxablePay || 0;
+    // M — Personal Relief (fixed statutory)
+    const mRelief = 2400;
+    // N — Insurance Relief (from employee record)
+    const n = m.insuranceRelief || 0;
+    // L — Tax Charged (derived: PAYE + relief + insurance relief)
+    const l = (m.payeTax || 0) + mRelief + n;
+    // O — PAYE Tax (direct from entry)
+    const o = m.payeTax || 0;
+    return [a, b, c, d, e1, e2, e3, f, g, h, i, j, k, l, mRelief, n, o];
+}
+
 function generateP9WithPdfKit(res: any, data: any) {
     const {
         companyName, companyPin, client, employeeName, kraPin, idNo, nssfNo, shaNo, payrollNo,
-        department, jobTitle, employmentType, grossPay, totalCashPay, carBenefit, meals, nonCash,
-        housingBenefit, otherBenefits, shaDed, nssfDed, otherPension, postRetMedical, mortgage,
-        ahl, taxablePay, personalRelief, insuranceRelief, payeTax, taxYear, periodLabel, monthNum,
+        department, jobTitle, employmentType, taxYear, monthlyData,
     } = data;
 
     const doc = new PDFDocument({ margin: 25, size: 'A4' });
@@ -579,7 +647,6 @@ function generateP9WithPdfKit(res: any, data: any) {
     let y = leftMargin;
 
     // ── Logos Row (Company + KRA) ──
-    // Company logo on the left
     if (client?.logoUrl) {
         try {
             const companyLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', client.logoUrl.replace(/^\//, ''));
@@ -588,7 +655,6 @@ function generateP9WithPdfKit(res: any, data: any) {
             }
         } catch { /* ignore */ }
     }
-    // KRA logo on the right
     try {
         const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
         if (fs.existsSync(kraLogoPath)) {
@@ -621,7 +687,6 @@ function generateP9WithPdfKit(res: any, data: any) {
     y += 14;
 
     // ── Monthly Table (KRA P9) ──
-    // 18 columns: Month | A | B | C | D | E1 | E2 | E3 | F | G | H | I | J | K | L | M | N | O
     const colCount = 18;
     const colWidth = Math.floor(pageWidth / colCount);
     const colXs = Array.from({ length: colCount }, (_, i) => leftMargin + i * colWidth);
@@ -637,13 +702,11 @@ function generateP9WithPdfKit(res: any, data: any) {
     // Header background
     doc.rect(leftMargin, y, pageWidth, 44).fill('#1e293b');
 
-    // Column letters
     doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#fff');
     colLetters.forEach((letter, i) => {
         if (letter) doc.text(letter, colXs[i] + 1, y + 2, { width: colWidth - 2, align: 'center' });
     });
 
-    // Header labels
     doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#fff');
     headers.forEach((h, i) => {
         const lines = h.split('\n');
@@ -666,35 +729,30 @@ function generateP9WithPdfKit(res: any, data: any) {
     }
     y += 9;
 
-    const benefitsNonCash = (carBenefit || 0) + (meals || 0) + (nonCash || 0);
-    const valueOfQuarters = housingBenefit || 0;
-    const e1_30PerA = totalCashPay * 0.30;
-    const e2_actual = (nssfDed || 0) + (otherPension || 0);
-    const e3_lower = Math.min(e1_30PerA, e2_actual);
-    const totalDeductionsColJ = e3_lower + (shaDed || 0) + (ahl || 0) + (otherPension || 0) + (postRetMedical || 0) + (mortgage || 0);
-    const taxCharged = (payeTax || 0) + (personalRelief || 0) + (insuranceRelief || 0);
-
     const monthLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const currentMonthNum = monthNum || new Date().getMonth() + 1;
+
+    // Build month map from monthlyData
+    const monthMap = new Map<number, number[]>();
+    const annualTotals = new Array(17).fill(0);
+
+    for (const m of monthlyData) {
+        const vals = computeMonthP9Values(m);
+        monthMap.set(m.monthIndex, vals);
+        vals.forEach((v, i) => { annualTotals[i] += v; });
+    }
 
     let rowY = y;
     monthLabels.forEach((ml: string, mi: number) => {
-        const isCurrent = mi + 1 === currentMonthNum;
+        const vals = monthMap.get(mi);
         const bg = mi % 2 === 0 ? '#f8fafc' : '#ffffff';
         doc.rect(leftMargin, rowY, pageWidth, 12).fill(bg);
 
         doc.fontSize(4.5).font('Helvetica-Bold').fillColor('#000');
         doc.text(ml, colXs[0] + 2, rowY + 2, { width: colWidth - 2 });
 
-        if (isCurrent) {
-            const values = [
-                totalCashPay, benefitsNonCash, valueOfQuarters, grossPay,
-                e1_30PerA, e2_actual, e3_lower,
-                ahl, shaDed, postRetMedical, mortgage, totalDeductionsColJ,
-                taxablePay, taxCharged, personalRelief, insuranceRelief, payeTax
-            ];
+        if (vals) {
             doc.fontSize(4.5).font('Helvetica').fillColor('#000');
-            values.forEach((val, vi) => {
+            vals.forEach((val, vi) => {
                 doc.text(formatMoney(val), colXs[vi + 1] + 1, rowY + 2, { width: colWidth - 2, align: 'right' });
             });
         } else {
@@ -710,24 +768,21 @@ function generateP9WithPdfKit(res: any, data: any) {
     doc.rect(leftMargin, rowY, pageWidth, 13).fill('#1e293b');
     doc.fontSize(5).font('Helvetica-Bold').fillColor('#fff');
     doc.text('TOTAL', colXs[0] + 2, rowY + 2, { width: colWidth - 2 });
-    const totalValues = [
-        totalCashPay, benefitsNonCash, valueOfQuarters, grossPay,
-        e1_30PerA, e2_actual, e3_lower,
-        ahl, shaDed, postRetMedical, mortgage, totalDeductionsColJ,
-        taxablePay, taxCharged, personalRelief, insuranceRelief, payeTax
-    ];
-    totalValues.forEach((val, vi) => {
+    annualTotals.forEach((val, vi) => {
         doc.text(formatMoney(val), colXs[vi + 1] + 1, rowY + 2, { width: colWidth - 2, align: 'right' });
     });
     rowY += 16;
 
     // ── Bottom Section ──
+    const annualTaxablePay = annualTotals[12]; // K
+    const annualPayeTax = annualTotals[16]; // O
+
     doc.fontSize(7).font('Helvetica-Bold').fillColor('#000');
     doc.text('TOTAL CHARGEABLE PAY (COL. K) Kshs.', leftMargin, rowY);
-    doc.text(formatMoney(taxablePay), leftMargin + 180, rowY, { width: 100, align: 'right' });
+    doc.text(formatMoney(annualTaxablePay), leftMargin + 180, rowY, { width: 100, align: 'right' });
     rowY += 14;
     doc.text('TOTAL TAX (C ........................................................................)', leftMargin, rowY);
-    doc.text(formatMoney(payeTax), leftMargin + 180, rowY, { width: 100, align: 'right' });
+    doc.text(formatMoney(annualPayeTax), leftMargin + 180, rowY, { width: 100, align: 'right' });
     rowY += 16;
 
     doc.fontSize(6).font('Helvetica-Bold').fillColor('#000');
@@ -755,85 +810,109 @@ function generateP9WithPdfKit(res: any, data: any) {
     doc.end();
 }
 
-// GET /api/clients/:clientId/p9/:employeeKraPin?period=MMYYYY
+// GET /api/clients/:clientId/p9/:employeeKraPin?year=YYYY
 router.get('/:clientId/p9/:employeeKraPin', async (req, res) => {
     try {
         const clientId = parseInt(req.params.clientId, 10);
         const employeeKraPin = req.params.employeeKraPin;
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
-        const legacyDb = await openDb();
-        const client = await legacyDb.get('SELECT * FROM clients WHERE id = ?', [clientId]);
+        const taxYear = (req.query.year as string) || new Date().getFullYear().toString();
+        const yearPrefix = taxYear;
+
+        const client = await db.selectFrom('clients').selectAll().where('id', '=', clientId).executeTakeFirst();
         if (!client) return res.status(404).json({ message: 'Client not found' });
 
-        const period = (req.query.period as string) || '';
-        const periodLabel = period ? `${period.substring(0, 2)}/${period.substring(2)}` : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-        const taxYear = period ? `20${period.substring(2)}` : new Date().getFullYear().toString();
+        const employeeRecord = await db
+            .selectFrom('employees')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .where('kraPin', '=', employeeKraPin)
+            .executeTakeFirst();
 
-        const payrollRes = await fetch(`${req.protocol}://${req.get('host')}/api/clients/${clientId}/payroll-data`);
-        const payrollData = await payrollRes.json();
-
-        if (!payrollData.hasData || !payrollData.employees?.length) {
-            return res.status(400).json({ message: 'No payroll data found' });
+        if (!employeeRecord) {
+            return res.status(404).json({ message: 'Employee not found' });
         }
 
-        const emp = payrollData.employees.find(
-            (e: any) => String(e['PIN of Employee'] ?? '').toUpperCase() === employeeKraPin.toUpperCase()
-        );
+        // Fetch all payroll runs for this client in the tax year
+        const runs = await db
+            .selectFrom('payroll_runs')
+            .select(['id', 'period'])
+            .where('clientId', '=', clientId)
+            .where('period', 'like', `${yearPrefix}-%`)
+            .execute();
 
-        if (!emp) {
-            return res.status(404).json({ message: 'Employee not found in payroll data' });
-        }
+        // Build month-indexed data
+        const monthlyData: P9MonthData[] = [];
 
-        // Try to fetch employee record from employees table for extra details
-        let employeeRecord: any = null;
-        try {
-            employeeRecord = await db
-                .selectFrom('employees')
+        for (const run of runs) {
+            const [, monthStr] = run.period.split('-');
+            const monthIndex = parseInt(monthStr, 10) - 1; // 0-based
+            if (monthIndex < 0 || monthIndex > 11) continue;
+
+            const entry = await db
+                .selectFrom('payroll_entries')
                 .selectAll()
+                .where('payrollRunId', '=', run.id)
                 .where('clientId', '=', clientId)
-                .where('kraPin', '=', employeeKraPin)
+                .where('employeeId', '=', employeeRecord.id)
                 .executeTakeFirst();
-        } catch { /* ignore */ }
 
-        const companyName = payrollData.preamble?.companyName || client.name;
-        const companyPin = payrollData.preamble?.companyPin || client.pin;
-        const employeeName = String(emp['Name of Employee'] || '');
-        const kraPin = String(emp['PIN of Employee'] || '');
-        const idNo = String(emp['ID Number'] || '');
-        const nssfNo = String(emp['NSSF No'] || '');
-        const shaNo = String(emp['SHA No'] || '');
-        const payrollNo = String(emp['Payroll Number'] || '');
-        const department = employeeRecord?.department || '';
-        const jobTitle = employeeRecord?.jobTitle || '';
-        const employmentType = employeeRecord?.employmentType || '';
+            if (!entry) continue;
 
-        const grossPay = parseFloat(String(emp['Total Gross Pay (Ksh) (H)'] || '0')) || 0;
-        const totalCashPay = parseFloat(String(emp['Total Cash Pay (A)'] || '0')) || 0;
-        const carBenefit = parseFloat(String(emp['Value of Car Benefit (B)'] || '0')) || 0;
-        const meals = parseFloat(String(emp['Value of Meals (C)'] || '0')) || 0;
-        const nonCash = parseFloat(String(emp['Non Cash Benefits (D)'] || '0')) || 0;
-        const housingBenefit = parseFloat(String(emp['Housing Benefit (F)'] || '0')) || 0;
-        const otherBenefits = parseFloat(String(emp['Other Benefits (G)'] || '0')) || 0;
+            // Use existing month data if already set (shouldn't happen, but just in case)
+            const existing = monthlyData.find(m => m.monthIndex === monthIndex);
+            if (existing) {
+                existing.basicPay += entry.basicPay || 0;
+                existing.grossPay += entry.grossPay || 0;
+                existing.payeTax += entry.payeTax || 0;
+                existing.taxablePay += entry.taxablePay || 0;
+                existing.nssfDeduction += entry.nssfDeduction || 0;
+                existing.shaDeduction += entry.shaDeduction || 0;
+                existing.ahlDeduction += entry.ahlDeduction || 0;
+                existing.totalDeductions += entry.totalDeductions || 0;
+                existing.carBenefit += entry.carBenefit || 0;
+                existing.mealsBenefit += entry.mealsBenefit || 0;
+                existing.nonCashBenefits += entry.nonCashBenefits || 0;
+                existing.housingBenefit += entry.housingBenefit || 0;
+            } else {
+                monthlyData.push({
+                    monthIndex,
+                    basicPay: entry.basicPay || 0,
+                    carBenefit: entry.carBenefit || 0,
+                    mealsBenefit: entry.mealsBenefit || 0,
+                    nonCashBenefits: entry.nonCashBenefits || 0,
+                    housingBenefit: entry.housingBenefit || 0,
+                    grossPay: entry.grossPay || 0,
+                    ahlDeduction: entry.ahlDeduction || 0,
+                    shaDeduction: entry.shaDeduction || 0,
+                    nssfDeduction: entry.nssfDeduction || 0,
+                    totalDeductions: entry.totalDeductions || 0,
+                    taxablePay: entry.taxablePay || 0,
+                    payeTax: entry.payeTax || 0,
+                    otherPension: employeeRecord.otherPension || 0,
+                    postRetMedical: employeeRecord.postRetMedical || 0,
+                    mortgageInterest: employeeRecord.mortgageInterest || 0,
+                    insuranceRelief: employeeRecord.insuranceRelief || 0,
+                });
+            }
+        }
 
-        const shaDed = parseFloat(String(emp['Social Health Insurance Fund (I)'] || '0')) || 0;
-        const nssfDed = parseFloat(String(emp['NSSF Contribution (J)'] || '0')) || 0;
-        const otherPension = parseFloat(String(emp['Other Pension Contribution (K)'] || '0')) || 0;
-        const postRetMedical = parseFloat(String(emp['Post Retirement Medical Fund (L)'] || '0')) || 0;
-        const mortgage = parseFloat(String(emp['Mortgage Interest (M)'] || '0')) || 0;
-        const ahl = parseFloat(String(emp['Affordable Housing Levy (N)'] || '0')) || 0;
-        const taxablePay = parseFloat(String(emp['Taxable Pay(Ksh) (O)'] || '0')) || 0;
-        const personalRelief = parseFloat(String(emp['Monthly Personal Relief (Ksh) (P)'] || '0')) || 0;
-        const insuranceRelief = parseFloat(String(emp['Amount of Insurance Relief (Q)'] || '0')) || 0;
-        const payeTax = parseFloat(String(emp['PAYE Tax (Ksh) (R)'] || '0')) || 0;
-
-        const netPay = grossPay - shaDed - nssfDed - ahl - payeTax - otherPension - postRetMedical;
-        const monthNum = period ? parseInt(period.substring(0, 2)) : new Date().getMonth() + 1;
         generateP9WithPdfKit(res, {
-            companyName, companyPin, client, employeeName, kraPin, idNo, nssfNo, shaNo, payrollNo,
-            department, jobTitle, employmentType, grossPay, totalCashPay, carBenefit, meals, nonCash,
-            housingBenefit, otherBenefits, shaDed, nssfDed, otherPension, postRetMedical, mortgage,
-            ahl, taxablePay, personalRelief, insuranceRelief, payeTax, taxYear, periodLabel, netPay, monthNum,
+            companyName: client.name,
+            companyPin: client.pin,
+            client,
+            employeeName: employeeRecord.employeeName,
+            kraPin: employeeRecord.kraPin,
+            idNo: employeeRecord.idNumber,
+            nssfNo: employeeRecord.nssfNo,
+            shaNo: employeeRecord.shaNo,
+            payrollNo: employeeRecord.payrollNumber,
+            department: employeeRecord.department || '',
+            jobTitle: employeeRecord.jobTitle || '',
+            employmentType: employeeRecord.employmentType || '',
+            taxYear,
+            monthlyData,
         });
     } catch (err) {
         console.error('Error generating P9:', err);

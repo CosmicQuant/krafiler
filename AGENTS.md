@@ -178,6 +178,11 @@ Located at `backend/src/workers/services/`:
 - **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.
 - **`receipts/` is git-ignored** (`.gitignore` line 19).
 - **Work schedule + holiday proration**: `computePayrollEntry` now accepts optional `workScheduleConfig` and `holidays[]` to prorate `basicPay` against scheduled work days instead of assuming 30 days. `getScheduledWorkDays()` helper counts days with `hours>0` from the config JSON and excludes holidays.
+- **Rate vs proration separation**: `getScheduledWorkDays()` (excludes holidays) is used for **proration** (`daysWorked`, `prorationFactor`). `getScheduledDaysIncludingHolidays()` (includes holidays) is used for **rate calculations** (`dailyRate`, `hourlyRate`, `unpaidLeaveDeduction`, `attendanceDeduction`). This ensures the contractual hourly rate reflects paid holidays.
+- **Total scheduled hours from work schedule config**: `getTotalScheduledHours(config, period)` sums the per-day hours from the work schedule JSON for every scheduled day in the month (including holidays). E.g., Mon-Fri=9 hrs, Sat=4 hrs → total = (25 × 9) + (1 × 4) = 229 hrs. This replaces the old `dailyHoursFromCheckInCheckOut × scheduledDays` which assumed every day had identical hours.
+- **Hourly rate rounding**: computed rate rounded to 4 decimal places (`Math.round((basicPay / totalScheduledHours) * 10000) / 10000`) for precision.
+- **Attendance grid consistency**: Frontend `AttendanceCalendarGrid` computes `hourlyRate` using `getTotalScheduledHours()` (same as backend), so the displayed `Std Hourly` matches the payslip rate.
+- **Payslip uses stored values directly**: `generatePayslipPDF` reads `entry.attendanceDeduction`, `entry.unpaidLeaveDeduction`, and `entry.basicPay` directly from the `payroll_entries` row. It does NOT recompute `hourlyRate`, `dailyRate`, or deductions on-the-fly — that was causing mismatches between the engine and the PDF.
 
 ## Enterprise Payroll Pipeline
 

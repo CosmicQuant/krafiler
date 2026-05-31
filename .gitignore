@@ -39,3 +39,8 @@ backend/uploads/output/
 frontend/public/clients/**/*.zip
 frontend/public/clients/**/*.xlsx
 frontend/public/clients/**/*.csv
+
+# Archive & temp files
+.archive/
+temp-*.tsx
+frontend/temp-*.tsx

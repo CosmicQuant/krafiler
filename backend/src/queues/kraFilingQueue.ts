@@ -43,7 +43,7 @@ redisConnection.on('connect', () => {
  * without automatic retries so the user can correct the input and resubmit.
  */
 export const kraFilingQueue = new Queue<FilingJob>(KRA_QUEUE_NAME, {
-    connection: redisConnection,
+    connection: redisConnection as any,
     defaultJobOptions: {
         attempts: 1,
         keepLogs: 200,

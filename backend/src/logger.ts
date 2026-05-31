@@ -20,13 +20,10 @@ export const logger = pino({
                 },
             },
             {
-                target: 'pino-roll',
+                target: 'pino/file',
                 options: {
-                    file: path.join(logsDir, 'server.log'),
-                    frequency: 'daily',
+                    destination: path.join(logsDir, 'server.log'),
                     mkdir: true,
-                    size: '10m', // Rotate when file size reaches 10MB
-                    limit: { count: 14 }, // Keep logs for 14 days
                 },
             },
         ],

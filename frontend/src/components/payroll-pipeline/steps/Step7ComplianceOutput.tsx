@@ -12,6 +12,8 @@ import {
     Search,
     ChevronDown,
     ChevronUp,
+    Play,
+    Info,
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
@@ -110,6 +112,11 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
     const [complianceResult, setComplianceResult] = useState<ComplianceResult | null>(null);
     const [complianceProgress, setComplianceProgress] = useState<string | null>(null);
 
+    /* ── Auto-filing state ── */
+    const [filingType, setFilingType] = useState<string | null>(null);
+    const [filingLoading, setFilingLoading] = useState(false);
+    const [showShaInfo, setShowShaInfo] = useState(false);
+
     const handleGenerateCompliance = async () => {
         setComplianceLoading(true);
         setError(null);
@@ -201,6 +208,47 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
             setError('Network error sending payslips');
         } finally {
             setSendingEmail(false);
+        }
+    };
+
+    const handleAutoFile = async (type: string) => {
+        setFilingLoading(true);
+        setFilingType(type);
+        setError(null);
+        setSuccess(null);
+        try {
+            if (type === 'nssf') {
+                const res = await apiFetch(`/api/tax/file-nssf-return`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clientId: parseInt(clientId, 10), period: '' }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    setSuccess(`NSSF filing job queued. Job ID: ${data.jobId || 'N/A'}`);
+                } else {
+                    setError(data.message || 'Failed to queue NSSF filing');
+                }
+            } else if (type === 'paye') {
+                const res = await apiFetch(`/api/tax/file-return`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clientId: parseInt(clientId, 10), taxObligationType: 'paye', period: '' }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    setSuccess(`PAYE filing job queued. Job ID: ${data.jobId || 'N/A'}`);
+                } else {
+                    setError(data.message || 'Failed to queue PAYE filing');
+                }
+            } else if (type === 'sha') {
+                setShowShaInfo(true);
+            }
+        } catch {
+            setError(`Network error during ${type.toUpperCase()} auto-filing`);
+        } finally {
+            setFilingLoading(false);
+            setFilingType(null);
         }
     };
 
@@ -351,13 +399,23 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                     <span className="font-medium text-slate-900">PAYE ZIP</span>
                                     <span className="text-slate-400">{complianceResult.payeZipLabel}</span>
                                 </div>
-                                <a
-                                    href={complianceResult.payeZipUrl}
-                                    download
-                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
-                                >
-                                    <Download className="h-3 w-3" /> Download
-                                </a>
+                                <div className="flex items-center gap-2">
+                                    <a
+                                        href={complianceResult.payeZipUrl}
+                                        download
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                    >
+                                        <Download className="h-3 w-3" /> Download
+                                    </a>
+                                    <button
+                                        onClick={() => handleAutoFile('paye')}
+                                        disabled={filingLoading}
+                                        className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100 transition disabled:opacity-40"
+                                    >
+                                        {filingLoading && filingType === 'paye' ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                                        Auto-File
+                                    </button>
+                                </div>
                             </div>
                         )}
                         {complianceResult.nssfFileUrl && (
@@ -367,13 +425,23 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                     <span className="font-medium text-slate-900">NSSF XLSX</span>
                                     <span className="text-slate-400">{complianceResult.nssfFileLabel}</span>
                                 </div>
-                                <a
-                                    href={complianceResult.nssfFileUrl}
-                                    download
-                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
-                                >
-                                    <Download className="h-3 w-3" /> Download
-                                </a>
+                                <div className="flex items-center gap-2">
+                                    <a
+                                        href={complianceResult.nssfFileUrl}
+                                        download
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                    >
+                                        <Download className="h-3 w-3" /> Download
+                                    </a>
+                                    <button
+                                        onClick={() => handleAutoFile('nssf')}
+                                        disabled={filingLoading}
+                                        className="inline-flex items-center gap-1 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100 transition disabled:opacity-40"
+                                    >
+                                        {filingLoading && filingType === 'nssf' ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                                        Auto-File
+                                    </button>
+                                </div>
                             </div>
                         )}
                         {complianceResult.shaFileUrl && (
@@ -383,13 +451,21 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                     <span className="font-medium text-slate-900">SHA XLSX</span>
                                     <span className="text-slate-400">{complianceResult.shaFileLabel}</span>
                                 </div>
-                                <a
-                                    href={complianceResult.shaFileUrl}
-                                    download
-                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
-                                >
-                                    <Download className="h-3 w-3" /> Download
-                                </a>
+                                <div className="flex items-center gap-2">
+                                    <a
+                                        href={complianceResult.shaFileUrl}
+                                        download
+                                        className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                    >
+                                        <Download className="h-3 w-3" /> Download
+                                    </a>
+                                    <button
+                                        onClick={() => handleAutoFile('sha')}
+                                        className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 transition"
+                                    >
+                                        <Info className="h-3 w-3" /> Info
+                                    </button>
+                                </div>
                             </div>
                         )}
                         {complianceResult.summaryAmounts && (
@@ -440,13 +516,22 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                         <td className="px-3 py-2 font-medium text-slate-900">{emp.employeeName}</td>
                                         <td className="px-3 py-2 font-mono text-slate-700">{emp.kraPin}</td>
                                         <td className="px-3 py-2 text-right">
-                                            <a
-                                                href={`/api/clients/${clientId}/payroll-runs/${runId}/payslip/${emp.employeeId}`}
-                                                download
-                                                className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
-                                            >
-                                                <Download className="h-3 w-3" /> Payslip
-                                            </a>
+                                            <div className="flex items-center justify-end gap-2">
+                                                <a
+                                                    href={`/api/clients/${clientId}/payroll-runs/${runId}/payslip/${emp.employeeId}`}
+                                                    download
+                                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                                >
+                                                    <Download className="h-3 w-3" /> Payslip
+                                                </a>
+                                                <a
+                                                    href={`/api/clients/${clientId}/p9/${emp.kraPin}`}
+                                                    download
+                                                    className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                                >
+                                                    <Download className="h-3 w-3" /> P9
+                                                </a>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -551,6 +636,7 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                 )}
             </section>
 
+            {/* ── 4. P10 / P11 ── */}
             {/* ── 4. P10 / P11 ── */}
             <section className="rounded-xl border border-slate-200 bg-white p-5">
                 <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
@@ -696,6 +782,29 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                     <p className="text-xs text-slate-400">Enter a year and click Load P10 to view annual reconciliation.</p>
                 )}
             </section>
+
+            {/* SHA Info Modal */}
+            {showShaInfo && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-2xl">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Info className="h-5 w-5 text-amber-500" />
+                            <h3 className="text-sm font-bold text-slate-900">SHA Auto-Filing</h3>
+                        </div>
+                        <p className="text-xs text-slate-600 mb-4">
+                            SHA (Social Health Authority) auto-filing is not yet implemented. You can download the SHA XLSX compliance file and upload it manually to the SHA portal.
+                        </p>
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setShowShaInfo(false)}
+                                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700 transition"
+                            >
+                                Got it
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

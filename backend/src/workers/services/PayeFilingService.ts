@@ -1,14 +1,13 @@
 import { Page } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { resolveUploadArtifactPath, resolveBestPayeFileInput, selectUploadFile, waitForFileInputSelection, ensureDeclarationAccepted } from '../utils/filing-helpers';
 import { appendJobLog } from '../utils/job-helpers';
 
 export class PayeFilingService {
     private page: Page;
-    private job: Job<FilingJob>;
+    private job: JobContext;
 
-    constructor(page: Page, job: Job<FilingJob>) {
+    constructor(page: Page, job: JobContext) {
         this.page = page;
         this.job = job;
     }

@@ -72,18 +72,55 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
             .catch(() => setDepartments([]));
     }, [open, clientId]);
 
-    const computeHourly = (basicPay: number, checkIn: string, checkOut: string) => {
-        const [siH, siM] = (checkIn || '08:00').split(':').map(Number);
-        const [soH, soM] = (checkOut || '17:00').split(':').map(Number);
-        const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
-        const monthlyHours = dailyHours * 22;
-        return monthlyHours > 0 ? Math.round((basicPay / monthlyHours) * 100) / 100 : 0;
+    const getTotalScheduledHours = (workScheduleId: string | number | null) => {
+        const ws = workSchedules.find((s: any) => String(s.id) === String(workScheduleId));
+        if (!ws || !ws.config) return 0;
+        const config = JSON.parse(ws.config);
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
+        const daysInMonth = new Date(year, month, 0).getDate();
+        let totalHours = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+            const date = new Date(year, month - 1, d);
+            const dayName = dayNames[date.getDay()];
+            const hours = config[dayName] || 0;
+            if (hours > 0) totalHours += hours;
+        }
+        return totalHours;
+    };
+
+    const computeHourly = (basicPay: number, workScheduleId: string | number | null) => {
+        const totalHours = getTotalScheduledHours(workScheduleId);
+        if (totalHours <= 0) {
+            // Fallback: use check-in/check-out for a generic 22-day month
+            const [siH, siM] = (form.standardCheckIn || '08:00').split(':').map(Number);
+            const [soH, soM] = (form.standardCheckOut || '17:00').split(':').map(Number);
+            const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+            const monthlyHours = dailyHours * 22;
+            return monthlyHours > 0 ? Math.round((basicPay / monthlyHours) * 100) / 100 : 0;
+        }
+        return totalHours > 0 ? Math.round((basicPay / totalHours) * 100000000) / 100000000 : 0;
+    };
+
+    const computeBasicPay = (hourlyRate: number, workScheduleId: string | number | null) => {
+        const totalHours = getTotalScheduledHours(workScheduleId);
+        if (totalHours <= 0) {
+            // Fallback: use check-in/check-out for a generic 22-day month
+            const [siH, siM] = (form.standardCheckIn || '08:00').split(':').map(Number);
+            const [soH, soM] = (form.standardCheckOut || '17:00').split(':').map(Number);
+            const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
+            const monthlyHours = dailyHours * 22;
+            return monthlyHours > 0 ? Math.round((hourlyRate * monthlyHours) * 100) / 100 : 0;
+        }
+        return totalHours > 0 ? Math.round((hourlyRate * totalHours) * 100) / 100 : 0;
     };
 
     useEffect(() => {
         if (!open) return;
         if (employee) {
-            const computedHourly = computeHourly(employee.basicPay || 0, employee.standardCheckIn || '08:00', employee.standardCheckOut || '17:00');
+            const computedHourly = computeHourly(employee.basicPay || 0, employee.workScheduleId);
             setForm({
                 payrollNumber: employee.payrollNumber || '', employeeName: employee.employeeName || '',
                 idNumber: employee.idNumber || '', kraPin: employee.kraPin || '',
@@ -122,9 +159,8 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
             });
             if (res.ok) {
                 if (form.portalPassword && form.portalPassword.length >= 6) {
-                    await fetch('/api/auth/employee/set-password', {
+                    await apiFetch('/auth/employee/set-password', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ kraPin: form.kraPin, password: form.portalPassword }),
                     });
                 }
@@ -235,11 +271,19 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                         </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Basic Pay (KES)</label>
-                            <input type="number" value={form.basicPay} onChange={e => setForm((f: any) => ({ ...f, basicPay: parseFloat(e.target.value) || 0 }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                            <input type="number" value={form.basicPay} onChange={e => {
+                                const newBasicPay = parseFloat(e.target.value) || 0;
+                                const newHourly = computeHourly(newBasicPay, form.workScheduleId);
+                                setForm((f: any) => ({ ...f, basicPay: newBasicPay, hourlyRate: newHourly }));
+                            }} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
                         </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Hourly Rate (KES)</label>
-                            <input type="number" step="0.01" value={form.hourlyRate} onChange={e => setForm((f: any) => ({ ...f, hourlyRate: parseFloat(e.target.value) || 0 }))} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                            <input type="number" step="0.01" value={form.hourlyRate} onChange={e => {
+                                const newHourlyRate = parseFloat(e.target.value) || 0;
+                                const newBasicPay = computeBasicPay(newHourlyRate, form.workScheduleId);
+                                setForm((f: any) => ({ ...f, hourlyRate: newHourlyRate, basicPay: newBasicPay }));
+                            }} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
                         </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Bonus Pay (KES)</label>
@@ -254,13 +298,13 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                                     const ws = workSchedules.find((w: any) => String(w.id) === String(wsId));
                                     const newCheckIn = ws?.standardCheckIn || form.standardCheckIn || '08:00';
                                     const newCheckOut = ws?.standardCheckOut || form.standardCheckOut || '17:00';
-                                    const newHourly = computeHourly(form.basicPay || 0, newCheckIn, newCheckOut);
+                                    const newHourly = computeHourly(form.basicPay || 0, wsId);
                                     setForm((f: any) => ({
                                         ...f,
                                         workScheduleId: wsId,
                                         standardCheckIn: newCheckIn,
                                         standardCheckOut: newCheckOut,
-                                        hourlyRate: (f.hourlyRate || newHourly) || 0,
+                                        hourlyRate: newHourly,
                                     }));
                                 }}
                                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
@@ -294,7 +338,21 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
                         </div>
                         <div>
                             <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Portal Password</label>
-                            <input type="password" value={form.portalPassword || ''} onChange={e => setForm((f: any) => ({ ...f, portalPassword: e.target.value }))} placeholder="Set to update portal login" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                            <div className="flex gap-2">
+                                <input type="text" value={form.portalPassword || ''} onChange={e => setForm((f: any) => ({ ...f, portalPassword: e.target.value }))} placeholder="Set to update portal login" className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+                                        let pwd = '';
+                                        for (let i = 0; i < 8; i++) pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+                                        setForm((f: any) => ({ ...f, portalPassword: pwd }));
+                                    }}
+                                    className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition whitespace-nowrap"
+                                >
+                                    Generate
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

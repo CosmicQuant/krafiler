@@ -1,15 +1,14 @@
 import { Page } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { generatePRNSlip, PrnConfig } from '../../utils/kra-prn-generator';
 import { storeReceiptLocally } from '../../utils/storage';
 import { appendJobLog, setJobStep } from '../utils/job-helpers';
 
 export class PrnService {
     private page: Page;
-    private job: Job<FilingJob>;
+    private job: JobContext;
 
-    constructor(page: Page, job: Job<FilingJob>) {
+    constructor(page: Page, job: JobContext) {
         this.page = page;
         this.job = job;
     }

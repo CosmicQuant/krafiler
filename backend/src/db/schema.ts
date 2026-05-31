@@ -82,6 +82,7 @@ export interface ClientsTable {
     eLevyPassword: string | null;
     payStructure: string;
     logoUrl: string | null;
+    defaultWorkScheduleId: number | null;
 }
 
 export interface JobHistoryTable {
@@ -158,6 +159,8 @@ export interface LeaveRequestsTable {
     leaveType: string;
     startDate: string;
     endDate: string;
+    startTime: string | null;
+    endTime: string | null;
     daysCount: number;
     hours: number;
     reason: string;
@@ -280,6 +283,23 @@ export interface PayrollEntriesTable {
     bonusPay: number;
     taxableBonus: number;
     nonTaxableBonus: number;
+    attendanceDeduction: number;
+    originalBasicPay: number;
+    scheduledWorkDays: number;
+    totalScheduledHours: number;
+    // Attendance breakdown (for payslip display)
+    hourlyRate: number;
+    stdPayAmount: number;
+    holidayHours: number;
+    holidayPayAmount: number;
+    paidLeaveHours: number;
+    paidLeavePayAmount: number;
+    absentHours: number;
+    absentDedAmount: number;
+    lateHours: number;
+    lateDedAmount: number;
+    unpaidLeaveHours: number;
+    unpaidLeaveDedAmount: number;
     status: string;
     lockedAt: string | null;
     createdAt: string;

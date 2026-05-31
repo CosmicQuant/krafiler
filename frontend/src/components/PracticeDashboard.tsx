@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useParams, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import CompanyDetails from './CompanyDetails';
 import { useUIStore } from '../store/uiStore';
@@ -14,6 +14,7 @@ import { DeskNilView } from './dashboard/views/DeskNilView';
 import { ClientsView } from './dashboard/views/ClientsView';
 import { PayrollPipelineDashboard } from './payroll-pipeline/PayrollPipelineDashboard';
 import { PipelineWizard } from './payroll-pipeline/PipelineWizard';
+
 import { apiFetch } from '../services/api';
 
 import {
@@ -31,7 +32,7 @@ import { normalizeClientObligation, buildStoredArtifactUrl, isTerminalFilingJob 
 export default function PracticeDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { clientId: routeClientId } = useParams<{ clientId: string }>();
+
   const queryClient = useQueryClient();
 
   // UI Store
@@ -65,6 +66,7 @@ export default function PracticeDashboard() {
   const hasObligation = (val?: string | null) => !!val && val !== 'na';
 
   const handleGoToPayrollView = (client: ClientObligation) => {
+    setSelectedClient(client);
     navigate(`/dashboard/client/${client.id}/payroll`);
   };
 
@@ -226,6 +228,7 @@ export default function PracticeDashboard() {
         sector: updatedClient.sector || '',
         email: updatedClient.email || '',
         phone: updatedClient.phone || '',
+        defaultWorkScheduleId: updatedClient.defaultWorkScheduleId ?? null,
       }),
     });
 
@@ -468,7 +471,12 @@ export default function PracticeDashboard() {
 
             {/* Payroll Pipeline Routes — explicit pathname matching */}
             {(() => {
-              const resolvedClient = clients.find((c) => c.id === routeClientId) || selectedClient || null;
+              // Extract client ID from pathname (e.g. /dashboard/client/160/payroll)
+              const pathMatch = location.pathname.match(/\/dashboard\/client\/(\d+)/);
+              const pathClientId = pathMatch ? parseInt(pathMatch[1], 10) : null;
+              const resolvedClient = pathClientId != null
+                ? clients.find((c) => String(c.id) === String(pathClientId)) || selectedClient || null
+                : selectedClient || null;
 
               if (!fetchedClients) {
                 return (
@@ -495,8 +503,7 @@ export default function PracticeDashboard() {
                     <PipelineWizard
                       client={resolvedClient}
                       onBack={() => {
-                        setSelectedClient(null);
-                        navigate('/dashboard');
+                        navigate(`/dashboard/client/${resolvedClient.id}/payroll`);
                       }}
                     />
                   ) : (

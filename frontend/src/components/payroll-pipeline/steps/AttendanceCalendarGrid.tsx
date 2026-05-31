@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, CalendarCheck, CheckCircle2, Pencil, Trash2, X, Plus, CalendarDays } from 'lucide-react';
+import { RefreshCw, CalendarCheck, CheckCircle2, Pencil, Trash2, X, Plus, CalendarDays, Upload } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { EmployeeEditModal, type Employee } from './EmployeeEditModal';
 import { getCurrentFilingPeriod } from '../../../utils/taxPeriods';
@@ -43,6 +43,7 @@ interface LeaveRequest {
 interface AttendanceSummary {
     employeeId: number;
     absentDays: number;
+    absentHours: number;
     lateHours: number;
     halfDays: number;
     presentDays: number;
@@ -54,16 +55,28 @@ interface AttendanceSummary {
     overtimeAmount: number;
     hourlyRate: number;
     totalStdHours: number;
-    stdPay: number;
+    totalScheduledHours: number;
+    holidayHours: number;
     paidLeaveHours: number;
+    totalPaidStdHours: number;
+    stdPay: number;
     unpaidLeaveHours: number;
     paidLeaveAmount: number;
+    // Pay breakdown (monetary)
+    basicPay: number;
+    stdPayAmount: number;
+    holidayPayAmount: number;
+    paidLeavePayAmount: number;
+    absentDedAmount: number;
+    lateDedAmount: number;
+    unpaidLeaveDedAmount: number;
 }
 
 interface AttendanceCalendarGridProps {
     clientId: string;
     onApproved?: () => void;
     onPeriodChange?: (period: string) => void;
+    onRegisterApprove?: (trigger: () => Promise<boolean>) => void;
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -78,31 +91,25 @@ function parseConfig(config: string) {
     try { return JSON.parse(config); } catch { return null; }
 }
 
-function getScheduledWorkDays(config: any, year: number, month: number, offDay: string | null, holidays: Holiday[]): number {
-    if (!config || Object.keys(config).length === 0) return 30; // Match backend fallback
+/**
+ * Sum scheduled hours for the month from the work schedule config.
+ * Each day contributes its config hours (e.g. Saturday 4 hrs, Mon-Fri 9 hrs).
+ * Holidays are included because they are paid days off.
+ */
+function getTotalScheduledHours(config: any, year: number, month: number): number {
+    if (!config || Object.keys(config).length === 0) return 240; // Legacy: 30 × 8
 
     const total = daysInMonth(year, month);
-    let count = 0;
+    let totalHours = 0;
     for (let d = 1; d <= total; d++) {
         const date = new Date(year, month - 1, d);
         const dayName = DAY_LABELS[date.getDay()];
         const hours = config[dayName] || 0;
-        if (hours <= 0) continue;
-
-        // Check holidays (match backend logic)
-        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const monthDay = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        let isHoliday = false;
-        for (const h of holidays) {
-            if (h.date === dateStr) { isHoliday = true; break; }
-            if (h.isRecurring === 1 && h.date.substring(5) === monthDay) { isHoliday = true; break; }
+        if (hours > 0) {
+            totalHours += hours;
         }
-        if (isHoliday) continue;
-
-        if (offDay && offDay.startsWith(FULL_DAY_NAMES[date.getDay()])) continue;
-        count++;
     }
-    return count || 30;
+    return totalHours || 240;
 }
 
 function isScheduledWorkDay(config: any, year: number, month: number, day: number, offDay: string | null, holidays: Holiday[]): boolean {
@@ -172,7 +179,7 @@ function isOnLeave(employeeId: number, dateStr: string, leaveRequests: LeaveRequ
     return null;
 }
 
-export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }: AttendanceCalendarGridProps) {
+export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange, onRegisterApprove }: AttendanceCalendarGridProps) {
     const [period, setPeriod] = useState(getCurrentFilingPeriod().period);
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [attendanceMap, setAttendanceMap] = useState<Map<string, AttendanceRecord>>(new Map());
@@ -186,6 +193,7 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
     const [error, setError] = useState<string | null>(null);
     const [approved, setApproved] = useState(false);
     const [payStructure, setPayStructure] = useState<'fixed' | 'prorated'>('fixed');
+    const [importing, setImporting] = useState(false);
 
     // Modals
     const [modalEmployee, setModalEmployee] = useState<Employee | null>(null);
@@ -242,6 +250,7 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
             const sumMap = new Map<number, AttendanceSummary>();
             for (const emp of emps) {
                 let absent = 0;
+                let absentHours = 0;
                 let late = 0;
                 let lateCount = 0;
                 let half = 0;
@@ -252,15 +261,33 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                 let otHours = 0;
                 let paidLeaveHours = 0;
                 let unpaidLeaveHours = 0;
+                let holidayHours = 0;
                 const dailyHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut);
+                const ws = emp.workScheduleId ? schedMap.get(emp.workScheduleId) : null;
+                const config = ws ? parseConfig(ws.config) : null;
                 for (let d = 1; d <= totalDays; d++) {
                     const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                     const rec = attMap.get(`${emp.id}-${dateStr}`);
                     const leaveInfo = isOnLeave(emp.id, dateStr, leaves);
+                    const holInfo = isHoliday(config, year, month, d, emp.offDay, hols);
+
+                    // Count real holiday hours (paid days off from the holidays table)
+                    if (holInfo.isHoliday && !holInfo.isOffDay) {
+                        const date = new Date(year, month - 1, d);
+                        const dayName = DAY_LABELS[date.getDay()];
+                        holidayHours += config ? (config[dayName] || 0) : dailyHours;
+                        continue;
+                    }
 
                     if (rec) {
                         // Status counters (informational)
-                        if (rec.status === 'Absent') { absent += 1; continue; }
+                        if (rec.status === 'Absent') {
+                            const date = new Date(year, month - 1, d);
+                            const dayName = DAY_LABELS[date.getDay()];
+                            absentHours += config ? (config[dayName] || 0) : dailyHours;
+                            absent += 1;
+                            continue;
+                        }
                         if (rec.status === 'Off Day') { off += 1; continue; }
                         if (rec.status === 'On Leave') {
                             leave += 1;
@@ -307,23 +334,35 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                         }
                     }
                 }
-                const ws = emp.workScheduleId ? schedMap.get(emp.workScheduleId) : null;
-                const config = ws ? parseConfig(ws.config) : null;
-                const schedDays = getScheduledWorkDays(config, year, month, emp.offDay, holidays);
-                const monthlyHours = dailyHours * schedDays;
-                const computedRate = Math.round(((emp.basicPay || 0) / Math.max(1, monthlyHours)) * 100) / 100;
+                const totalScheduledHours = getTotalScheduledHours(config, year, month);
+                const computedRate = Math.round(((emp.basicPay || 0) / Math.max(1, totalScheduledHours)) * 100000000) / 100000000;
                 const hourlyRate = (emp.hourlyRate || computedRate) || 0;
                 const mult = 1.5;
                 const otRate = Math.round(hourlyRate * mult * 100) / 100;
+                const totalPaidStdHours = totalStdHours + holidayHours + paidLeaveHours;
                 const stdPay = payStructure === 'fixed'
                     ? Math.round((emp.basicPay || 0) * 100) / 100
-                    : Math.round(totalStdHours * hourlyRate * 100) / 100;
+                    : Math.round(totalPaidStdHours * hourlyRate * 100) / 100;
                 const paidLeaveAmount = payStructure === 'fixed'
                     ? 0
                     : Math.round(paidLeaveHours * hourlyRate * 100) / 100;
+                // Pay breakdown amounts
+                const basicPay = Math.round((emp.basicPay || 0) * 100) / 100;
+                // For fixed employees with no deductions, stdPayAmount should equal basicPay exactly
+                // to avoid rounding errors from hourlyRate precision
+                const hasDeductions = absentHours > 0 || late > 0 || unpaidLeaveHours > 0;
+                const stdPayAmount = (payStructure === 'fixed' && !hasDeductions)
+                    ? basicPay
+                    : Math.round(totalStdHours * hourlyRate * 100) / 100;
+                const holidayPayAmount = Math.round(holidayHours * hourlyRate * 100) / 100;
+                const paidLeavePayAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
+                const absentDedAmount = Math.round(absentHours * hourlyRate * 100) / 100;
+                const lateDedAmount = Math.round(late * hourlyRate * 100) / 100;
+                const unpaidLeaveDedAmount = Math.round(unpaidLeaveHours * hourlyRate * 100) / 100;
                 sumMap.set(emp.id, {
                     employeeId: emp.id,
                     absentDays: absent,
+                    absentHours: Math.round(absentHours * 100) / 100,
                     lateHours: Math.round(late * 100) / 100,
                     halfDays: half,
                     presentDays: present + lateCount,
@@ -335,10 +374,20 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                     overtimeAmount: Math.round(otHours * otRate * 100) / 100,
                     hourlyRate,
                     totalStdHours: Math.round(totalStdHours * 100) / 100,
-                    stdPay,
+                    totalScheduledHours,
+                    holidayHours: Math.round(holidayHours * 100) / 100,
                     paidLeaveHours: Math.round(paidLeaveHours * 100) / 100,
+                    totalPaidStdHours: Math.round(totalPaidStdHours * 100) / 100,
+                    stdPay,
                     unpaidLeaveHours: Math.round(unpaidLeaveHours * 100) / 100,
                     paidLeaveAmount,
+                    basicPay,
+                    stdPayAmount,
+                    holidayPayAmount,
+                    paidLeavePayAmount,
+                    absentDedAmount,
+                    lateDedAmount,
+                    unpaidLeaveDedAmount,
                 });
             }
             setSummaries(sumMap);
@@ -348,11 +397,34 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
         } finally {
             setLoading(false);
         }
-    }, [clientId, period, totalDays]);
+    }, [clientId, period, totalDays, payStructure]);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    const handleImportEmployees = async () => {
+        setImporting(true);
+        setError(null);
+        try {
+            const res = await apiFetch(`/clients/${clientId}/employees/import`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                setMessage(`Imported ${data.imported || 0} employees from Master CSV.`);
+                await loadData();
+            } else {
+                setError(data.message || 'Failed to import employees from Master CSV.');
+            }
+        } catch {
+            setError('Network error during employee import.');
+        } finally {
+            setImporting(false);
+        }
+    };
 
     // Set payStructure from first active employee when data loads
     useEffect(() => {
@@ -363,14 +435,6 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
             }
         }
     }, [employees]);
-
-    // Recompute summaries when payStructure toggles
-    useEffect(() => {
-        if (employees.length > 0 && attendanceMap.size > 0) {
-            recomputeAllSummaries(attendanceMap);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [payStructure]);
 
     const openCellModal = (employeeId: number, day: number) => {
         const dateStr = `${period}-${String(day).padStart(2, '0')}`;
@@ -542,6 +606,7 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
             const next = new Map(prev);
             for (const emp of employees) {
                 let absent = 0;
+                let absentHours = 0;
                 let late = 0;
                 let lateCount = 0;
                 let half = 0;
@@ -553,13 +618,21 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                 let paidLeaveHours = 0;
                 let unpaidLeaveHours = 0;
                 const dailyHours = getStandardWorkingHours(emp.standardCheckIn, emp.standardCheckOut);
+                const ws = emp.workScheduleId ? schedules.get(emp.workScheduleId) : null;
+                const config = ws ? parseConfig(ws.config) : null;
                 for (let d = 1; d <= totalDays; d++) {
                     const dateStr = `${period}-${String(d).padStart(2, '0')}`;
                     const rec = map.get(`${emp.id}-${dateStr}`);
                     const leaveInfo = isOnLeave(emp.id, dateStr, leaveRequests);
 
                     if (rec) {
-                        if (rec.status === 'Absent') { absent += 1; continue; }
+                        if (rec.status === 'Absent') {
+                            const date = new Date(year, month - 1, d);
+                            const dayName = DAY_LABELS[date.getDay()];
+                            absentHours += config ? (config[dayName] || 0) : dailyHours;
+                            absent += 1;
+                            continue;
+                        }
                         if (rec.status === 'Off Day') { off += 1; continue; }
                         if (rec.status === 'On Leave') {
                             leave += 1;
@@ -613,9 +686,11 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                     const paidLeaveAmount = payStructure === 'fixed'
                         ? 0
                         : Math.round(paidLeaveHours * existing.hourlyRate * 100) / 100;
+                    const hr = existing.hourlyRate;
                     next.set(emp.id, {
                         ...existing,
                         absentDays: absent,
+                        absentHours: Math.round(absentHours * 100) / 100,
                         lateHours: Math.round(late * 100) / 100,
                         halfDays: half,
                         presentDays: present + lateCount,
@@ -629,6 +704,13 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                         paidLeaveAmount,
                         overtimeRate: otRate,
                         overtimeAmount: Math.round(otHours * otRate * 100) / 100,
+                        basicPay: Math.round((emp.basicPay || 0) * 100) / 100,
+                        stdPayAmount: Math.round(totalStdHours * hr * 100) / 100,
+                        holidayPayAmount: Math.round(existing.holidayHours * hr * 100) / 100,
+                        paidLeavePayAmount: Math.round(paidLeaveHours * hr * 100) / 100,
+                        absentDedAmount: Math.round(absentHours * hr * 100) / 100,
+                        lateDedAmount: Math.round(late * hr * 100) / 100,
+                        unpaidLeaveDedAmount: Math.round(unpaidLeaveHours * hr * 100) / 100,
                     });
                 }
             }
@@ -639,7 +721,14 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
     const computedBasicPay = (emp: Employee): number => {
         const s = summaries.get(emp.id);
         if (!s) return emp.basicPay;
-        const computed = s.stdPay + s.paidLeaveAmount + s.overtimeAmount;
+        const structure = emp.payStructure || 'fixed';
+        if (structure === 'prorated') {
+            // Prorated: earnings from hours worked + holiday + paid leave + overtime
+            const computed = s.stdPayAmount + s.holidayPayAmount + s.paidLeavePayAmount + s.overtimeAmount;
+            return Math.max(0, Math.round(computed * 100) / 100);
+        }
+        // Fixed: contractual basic minus deductions plus overtime
+        const computed = s.basicPay - s.absentDedAmount - s.lateDedAmount - s.unpaidLeaveDedAmount + s.overtimeAmount;
         return Math.max(0, Math.round(computed * 100) / 100);
     };
 
@@ -651,7 +740,8 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
         } catch { /* ignore */ }
     };
 
-    const handleApprove = async () => {
+    const handleApprove = useCallback(async (): Promise<boolean> => {
+        if (employees.length === 0) return true;
         setSaving(true);
         setError(null);
         setMessage(null);
@@ -678,16 +768,25 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                 setMessage('Attendance approved and saved.');
                 setApproved(true);
                 onApproved?.();
+                return true;
             } else {
                 const d = await res.json();
                 setError(d.message || 'Failed to save approval');
+                return false;
             }
         } catch {
             setError('Network error during approval');
+            return false;
         } finally {
             setSaving(false);
         }
-    };
+    }, [employees, summaries, period, clientId, onApproved]);
+
+    useEffect(() => {
+        if (onRegisterApprove) {
+            onRegisterApprove(handleApprove);
+        }
+    }, [onRegisterApprove, handleApprove]);
 
     const cellClass = (status: string | undefined, holInfo: { isHoliday: boolean; label?: string; isOffDay?: boolean }, leaveInfo: LeaveRequest | null) => {
         if (leaveInfo) {
@@ -751,7 +850,18 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                     </button>
                     <div className="flex items-center rounded-lg border border-slate-200 bg-white overflow-hidden">
                         <button
-                            onClick={() => { setPayStructure('fixed'); }}
+                            onClick={() => {
+                                setPayStructure('fixed');
+                                employees.forEach(emp => {
+                                    if (emp.employmentStatus === 'Active') {
+                                        apiFetch(`/clients/${clientId}/employees/${emp.id}`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ payStructure: 'fixed' }),
+                                        }).catch(() => {});
+                                    }
+                                });
+                            }}
                             className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
                                 payStructure === 'fixed'
                                     ? 'bg-slate-900 text-white'
@@ -761,7 +871,18 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                             Fixed Monthly
                         </button>
                         <button
-                            onClick={() => { setPayStructure('prorated'); }}
+                            onClick={() => {
+                                setPayStructure('prorated');
+                                employees.forEach(emp => {
+                                    if (emp.employmentStatus === 'Active') {
+                                        apiFetch(`/clients/${clientId}/employees/${emp.id}`, {
+                                            method: 'PUT',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ payStructure: 'prorated' }),
+                                        }).catch(() => {});
+                                    }
+                                });
+                            }}
                             className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
                                 payStructure === 'prorated'
                                     ? 'bg-slate-900 text-white'
@@ -822,7 +943,22 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                     <RefreshCw className="h-5 w-5 animate-spin text-slate-400" />
                 </div>
             ) : employees.length === 0 ? (
-                <div className="text-sm text-slate-500 text-center py-8">No active employees found.</div>
+                <div className="flex flex-col items-center justify-center py-10 gap-3">
+                    <div className="text-sm text-slate-500">No active employees found.</div>
+                    <button
+                        onClick={handleImportEmployees}
+                        disabled={importing}
+                        className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                    >
+                        {importing ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Upload className="h-3.5 w-3.5" />
+                        )}
+                        Import Employees from Master CSV
+                    </button>
+                    <p className="text-[10px] text-slate-400">Upload a Master CSV on the Company Details page first, then click here.</p>
+                </div>
             ) : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                     <table className="w-full text-left text-[10px]">
@@ -837,16 +973,23 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                                     );
                                 })}
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Std Hourly</th>
-                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Absent</th>
-                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Late</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Total Sched Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Total Std Hrs</th>
-                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Std Pay</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Holiday Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Paid Lve Hrs</th>
-                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Paid Lve Amt</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Absent Hrs</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Late Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Unpd Lve Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Hrs</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Mult</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Basic Pay</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Std Pay</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Holiday Pay</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Paid Lve Pay</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">OT Amt</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Absent Ded</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Late Ded</th>
+                                <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Unpd Lve Ded</th>
                                 <th className="px-2 py-1.5 font-semibold text-right text-slate-500">Computed Pay</th>
                                 <th className="px-2 py-1.5 font-semibold text-center text-slate-500">Actions</th>
                             </tr>
@@ -909,41 +1052,51 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                                                         const next = new Map(prev);
                                                         const existing = next.get(emp.id);
                                                         if (existing) {
+                                                            const newBasicPay = Math.round(rate * existing.totalScheduledHours * 100) / 100;
                                                             const newOtRate = Math.round(rate * existing.overtimeMultiplier * 100) / 100;
                                                             const newStdPay = payStructure === 'fixed'
                                                                 ? existing.stdPay
-                                                                : Math.round(existing.totalStdHours * rate * 100) / 100;
+                                                                : Math.round(existing.totalPaidStdHours * rate * 100) / 100;
                                                             const newPaidLeaveAmount = payStructure === 'fixed'
                                                                 ? 0
                                                                 : Math.round(existing.paidLeaveHours * rate * 100) / 100;
                                                             next.set(emp.id, {
                                                                 ...existing,
+                                                                basicPay: newBasicPay,
                                                                 hourlyRate: rate,
                                                                 stdPay: newStdPay,
                                                                 paidLeaveAmount: newPaidLeaveAmount,
                                                                 overtimeRate: newOtRate,
                                                                 overtimeAmount: Math.round(existing.overtimeHours * newOtRate * 100) / 100,
+                                                                stdPayAmount: Math.round(existing.totalStdHours * rate * 100) / 100,
+                                                                holidayPayAmount: Math.round(existing.holidayHours * rate * 100) / 100,
+                                                                paidLeavePayAmount: Math.round(existing.paidLeaveHours * rate * 100) / 100,
+                                                                absentDedAmount: Math.round(existing.absentHours * rate * 100) / 100,
+                                                                lateDedAmount: Math.round(existing.lateHours * rate * 100) / 100,
+                                                                unpaidLeaveDedAmount: Math.round(existing.unpaidLeaveHours * rate * 100) / 100,
                                                             });
                                                         }
                                                         return next;
                                                     });
                                                     try {
+                                                        const existing = summaries.get(emp.id);
+                                                        const newBasicPay = existing ? Math.round(rate * existing.totalScheduledHours * 100) / 100 : 0;
                                                         await apiFetch(`/clients/${clientId}/employees/${emp.id}`, {
                                                             method: 'PUT',
                                                             headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({ hourlyRate: rate }),
+                                                            body: JSON.stringify({ hourlyRate: rate, basicPay: newBasicPay }),
                                                         });
                                                     } catch { /* ignore */ }
                                                 }}
                                                 className="w-14 rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
                                             />
                                         </td>
-                                        <td className="px-2 py-1 text-right font-mono text-rose-600">{s?.absentDays ?? 0}</td>
-                                        <td className="px-2 py-1 text-right font-mono text-amber-600">{s?.lateHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-slate-700">{s?.totalScheduledHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right font-mono text-blue-600">{s?.totalStdHours?.toFixed(1) ?? '0.0'}</td>
-                                        <td className="px-2 py-1 text-right font-mono text-slate-900">{s?.stdPay?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-emerald-600">{s?.holidayHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right font-mono text-purple-600">{s?.paidLeaveHours?.toFixed(1) ?? '0.0'}</td>
-                                        <td className="px-2 py-1 text-right font-mono text-purple-700">{s?.paidLeaveAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-rose-600">{s?.absentHours?.toFixed(1) ?? '0.0'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-amber-600">{s?.lateHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right font-mono text-fuchsia-600">{s?.unpaidLeaveHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right font-mono text-slate-900">{s?.overtimeHours?.toFixed(1) ?? '0.0'}</td>
                                         <td className="px-2 py-1 text-right">
@@ -971,7 +1124,14 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                                                 className="w-10 rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
                                             />
                                         </td>
+                                        <td className="px-2 py-1 text-right font-mono font-semibold text-slate-900">{s?.basicPay?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-slate-900">{s?.stdPayAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-emerald-700">{s?.holidayPayAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-purple-700">{s?.paidLeavePayAmount?.toFixed(2) ?? '0.00'}</td>
                                         <td className="px-2 py-1 text-right font-mono font-semibold text-slate-900">{s?.overtimeAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-rose-600">{s?.absentDedAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-amber-700">{s?.lateDedAmount?.toFixed(2) ?? '0.00'}</td>
+                                        <td className="px-2 py-1 text-right font-mono text-fuchsia-700">{s?.unpaidLeaveDedAmount?.toFixed(2) ?? '0.00'}</td>
                                         <td className="px-2 py-1 text-right font-mono font-bold text-emerald-700">{cbp.toLocaleString()}</td>
                                         <td className="px-2 py-1 text-center">
                                             <div className="flex items-center justify-center gap-1">
@@ -1005,13 +1165,11 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange }:
                     {employees.length} employees
                     {approved && <span className="ml-2 inline-flex items-center gap-1 text-emerald-600 font-semibold"><CheckCircle2 className="h-3 w-3" /> Approved</span>}
                 </p>
-                <button
-                    disabled={saving || employees.length === 0 || approved}
-                    onClick={handleApprove}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-5 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
-                >
-                    {saving ? 'Saving...' : approved ? 'Approved' : 'Approve & Save'}
-                </button>
+                {saving && (
+                    <span className="inline-flex items-center gap-1.5 text-[10px] text-slate-500">
+                        <RefreshCw className="h-3 w-3 animate-spin" /> Saving...
+                    </span>
+                )}
             </div>
 
             {/* Employee Edit Modal */}

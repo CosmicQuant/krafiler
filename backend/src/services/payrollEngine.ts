@@ -68,6 +68,8 @@ export interface PayrollComputed {
     bonusPay: number;
     taxableBonus: number;
     nonTaxableBonus: number;
+    attendanceDeduction: number;
+    originalBasicPay: number;
 }
 
 interface WorkScheduleConfig {
@@ -98,6 +100,13 @@ function dayName(date: Date): string {
     return days[date.getDay()];
 }
 
+function toLocalIsoDate(date: Date): string {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
 export function getScheduledWorkDays(config: WorkScheduleConfig, period: string, holidays: HolidayInfo[] = []): number {
     if (!config || Object.keys(config).length === 0) return 30; // Fallback to legacy
 
@@ -113,7 +122,7 @@ export function getScheduledWorkDays(config: WorkScheduleConfig, period: string,
         const hours = config[day as keyof WorkScheduleConfig] || 0;
         if (hours > 0) {
             // Check if it's a holiday
-            const dateStr = date.toISOString().split('T')[0];
+            const dateStr = toLocalIsoDate(date);
             const isHoliday = holidays.some(h => {
                 if (h.date === dateStr) return true;
                 // Recurring: match MM-DD
@@ -127,6 +136,56 @@ export function getScheduledWorkDays(config: WorkScheduleConfig, period: string,
         }
     }
     return workDays || 30;
+}
+
+/**
+ * Count ALL scheduled days in the month INCLUDING holidays.
+ * Holidays are paid days off — the employee is contractually paid for them.
+ * Used to compute totalScheduledHours for the payslip.
+ */
+export function getScheduledDaysIncludingHolidays(config: WorkScheduleConfig, period: string): number {
+    if (!config || Object.keys(config).length === 0) return 30;
+
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const totalDays = daysInMonth(year, month);
+
+    let scheduledDays = 0;
+    for (let d = 1; d <= totalDays; d++) {
+        const date = new Date(year, month - 1, d);
+        const day = dayName(date);
+        const hours = config[day as keyof WorkScheduleConfig] || 0;
+        if (hours > 0) {
+            scheduledDays++;
+        }
+    }
+    return scheduledDays || 30;
+}
+
+/**
+ * Sum the scheduled hours for the entire month from the work schedule config.
+ * Each day with hours>0 contributes its config hours (e.g., Saturday 4 hrs, Mon-Fri 9 hrs).
+ * Holidays are included because they are paid days off.
+ */
+export function getTotalScheduledHours(config: WorkScheduleConfig, period: string): number {
+    if (!config || Object.keys(config).length === 0) return 240; // Legacy: 30 days × 8 hrs
+
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const totalDays = daysInMonth(year, month);
+
+    let totalHours = 0;
+    for (let d = 1; d <= totalDays; d++) {
+        const date = new Date(year, month - 1, d);
+        const day = dayName(date);
+        const hours = config[day as keyof WorkScheduleConfig] || 0;
+        if (hours > 0) {
+            totalHours += hours;
+        }
+    }
+    return totalHours || 240;
 }
 
 export function computePayrollEntry(
@@ -150,6 +209,12 @@ export function computePayrollEntry(
     const scheduledWorkDays = workScheduleConfig
         ? getScheduledWorkDays(workScheduleConfig, period, holidays)
         : 30; // Legacy fallback
+
+    // Total scheduled days INCLUDING holidays — used for computing true daily/hourly rate
+    // because holidays are paid days off and the employee is contractually paid for them.
+    const scheduledDaysIncludingHolidays = workScheduleConfig
+        ? getScheduledDaysIncludingHolidays(workScheduleConfig, period)
+        : 30;
 
     let daysWorked = scheduledWorkDays;
 
@@ -204,7 +269,10 @@ export function computePayrollEntry(
     const totalBenefits = roundMoney(carBenefit + mealsBenefit + nonCashBenefits + housingBenefit + otherBenefits);
 
     const unpaidLeaveDays = input.unpaidLeaveDays || 0;
-    const unpaidLeaveDeduction = roundMoney((rawBasicPay / scheduledWorkDays) * unpaidLeaveDays);
+    // Daily rate for deductions uses scheduledDaysIncludingHolidays because holidays are paid days off
+    const unpaidLeaveDeduction = roundMoney(
+        (rawBasicPay / (payStructure === 'prorated' ? Math.max(1, totalDays) : scheduledDaysIncludingHolidays)) * unpaidLeaveDays
+    );
 
     const overtimePay = roundMoney(input.overtimePay || 0);
     const rawBonusPay = input.bonusPay || 0;
@@ -216,7 +284,7 @@ export function computePayrollEntry(
     const lateHours = hasOverride ? 0 : (input.attendanceLateDays || 0);
     const dailyRate = payStructure === 'prorated'
         ? rawBasicPay / Math.max(1, totalDays)
-        : rawBasicPay / scheduledWorkDays;
+        : rawBasicPay / scheduledDaysIncludingHolidays;
 
     // Calculate actual standard working hours per day from employee schedule
     const standardIn = input.standardCheckIn || '08:00';
@@ -255,7 +323,7 @@ export function computePayrollEntry(
 
     const ahlDeduction = roundMoney(adjustedGrossPay * 0.015);
 
-    const otherDeductions = roundMoney(loanDeduction + totalNonStatutoryDeductions);
+    const otherDeductions = roundMoney(totalNonStatutoryDeductions);
 
     // KRA caps per the official P10_Return template
     const otherPension = input.otherPension || 0;
@@ -279,7 +347,7 @@ export function computePayrollEntry(
 
     const payeTax = roundMoney(Math.max(0, grossPayeTax - personalRelief - insuranceRelief));
 
-    const totalDeductions = roundMoney(shaDeduction + nssfDeduction + ahlDeduction + otherDeductions + payeTax);
+    const totalDeductions = roundMoney(shaDeduction + nssfDeduction + ahlDeduction + otherDeductions + payeTax + loanDeduction);
     const netPay = roundMoney(adjustedGrossPay - totalDeductions + nonTaxableBonus);
 
     return {
@@ -314,5 +382,7 @@ export function computePayrollEntry(
         bonusPay: taxableBonus + nonTaxableBonus,
         taxableBonus,
         nonTaxableBonus,
+        attendanceDeduction,
+        originalBasicPay: rawBasicPay,
     };
 }

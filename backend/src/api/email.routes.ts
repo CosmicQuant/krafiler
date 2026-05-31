@@ -135,8 +135,7 @@ router.post('/:clientId/email/send-p9s', async (req, res) => {
         if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
 
         const { employeeIds } = req.body;
-        const period = (req.query.period as string) || '';
-        const taxYear = period ? `20${period.substring(2)}` : new Date().getFullYear().toString();
+        const taxYear = (req.query.year as string) || new Date().getFullYear().toString();
 
         let query = db
             .selectFrom('employees')
@@ -166,7 +165,7 @@ router.post('/:clientId/email/send-p9s', async (req, res) => {
             }
 
             const pdfRes = await fetch(
-                `${req.protocol}://${req.get('host')}/api/clients/${clientId}/p9/${emp.kraPin}${period ? `?period=${period}` : ''}`
+                `${req.protocol}://${req.get('host')}/api/clients/${clientId}/p9/${emp.kraPin}?year=${taxYear}`
             );
 
             if (!pdfRes.ok) {

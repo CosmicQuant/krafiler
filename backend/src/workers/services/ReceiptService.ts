@@ -6,15 +6,14 @@
  */
 
 import { Page } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob, JobResult } from '../../types';
+import { JobContext, JobResult } from '../../types';
 import { setJobStep, waitForPortalReadyWithReload } from '../utils';
 
 export class ReceiptService {
     private page: Page;
-    private job: Job<FilingJob>;
+    private job: JobContext;
 
-    constructor(page: Page, job: Job<FilingJob>) {
+    constructor(page: Page, job: JobContext) {
         this.page = page;
         this.job = job;
     }

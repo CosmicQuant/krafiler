@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
+import bcrypt from 'bcryptjs';
 import { openDb } from '../db/database';
 import { db as kyselyDb } from '../db/kysely';
 import path from 'path';
@@ -169,10 +170,12 @@ router.post('/', async (req, res) => {
         const incomeTaxCompany = obsList.includes('income_tax_company') ? 'due' : 'na';
         const exciseDuty = obsList.includes('excise_duty') ? 'due' : 'na';
 
+        const hashedPassword = await bcrypt.hash(effectivePassword, 12);
+
         const db = await openDb();
         const result = await db.run(
             `INSERT INTO clients (name, pin, password, obligations, sector, paye, nssf, sha, vat, tot, mri, eLevy, dst, incomeTaxResidentIndividual, incomeTaxNonResidentIndividual, incomeTaxCompany, exciseDuty, payStructure) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, pin, effectivePassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, incomeTaxResidentIndividual, incomeTaxNonResidentIndividual, incomeTaxCompany, exciseDuty, payStructure || 'fixed']
+            [name, pin, hashedPassword, obligations || '', sector || '', paye, nssf, sha, vat, tot, mri, eLevy, dst, incomeTaxResidentIndividual, incomeTaxNonResidentIndividual, incomeTaxCompany, exciseDuty, payStructure || 'fixed']
         );
         
         const newClient = await db.get('SELECT * FROM clients WHERE id = ?', [result.lastID]);
@@ -285,9 +288,10 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
             const dst = obsList.includes('dst') ? 'due' : 'na';
 
             try {
+                const hashedPw = password ? await bcrypt.hash(password, 12) : '';
                 await db.run(
                     `INSERT INTO clients (
-                        name, pin, password, obligations, 
+                        name, pin, password, obligations,
                         paye, nssf, sha, vat, tot, mri, eLevy, dst,
                         email, phone, nssfLogin, nssfPassword, shaLogin, shaPassword, etimsLogin, etimsPassword, eLevyLogin, eLevyPassword
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -300,7 +304,7 @@ router.post('/bulk', upload.single('clientsCsv'), async (req, res) => {
                         etimsLogin=excluded.etimsLogin, etimsPassword=excluded.etimsPassword,
                         eLevyLogin=excluded.eLevyLogin, eLevyPassword=excluded.eLevyPassword`,
                     [
-                        name, pin, password, obligations,
+                        name, pin, hashedPw, obligations,
                         paye, nssf, sha, vat, tot, mri, eLevy, dst,
                         email, phone, nssfLogin, nssfPassword, shaLogin, shaPassword, etimsLogin, etimsPassword, eLevyLogin, eLevyPassword
                     ]
@@ -360,6 +364,9 @@ router.put('/:id', async (req, res) => {
         const incomeTaxCompany = obsList.includes('income_tax_company') ? (existingClient.incomeTaxCompany === 'na' ? 'due' : existingClient.incomeTaxCompany) : 'na';
         const exciseDuty = obsList.includes('excise_duty') ? (existingClient.exciseDuty === 'na' ? 'due' : existingClient.exciseDuty) : 'na';
 
+        // Hash password before storing
+        const hashedPassword = await bcrypt.hash(effectivePassword, 12);
+
         // Build column list dynamically — only include columns that exist in the table
         const tableCols = new Set(Object.keys(existingClient));
         const setClauses: string[] = [];
@@ -370,7 +377,7 @@ router.put('/:id', async (req, res) => {
         };
         addCol('name', name);
         addCol('pin', pin);
-        addCol('password', effectivePassword);
+        addCol('password', hashedPassword);
         addCol('obligations', obligations || '');
         addCol('sector', sector || '');
         addCol('email', email || '');
@@ -388,6 +395,7 @@ router.put('/:id', async (req, res) => {
         addCol('incomeTaxCompany', incomeTaxCompany);
         addCol('exciseDuty', exciseDuty);
         addCol('payStructure', payStructure || 'fixed');
+        addCol('defaultWorkScheduleId', req.body.defaultWorkScheduleId ?? null);
 
         if (setClauses.length > 0) {
             setValues.push(clientIdInt);
@@ -789,6 +797,159 @@ router.put('/:id/payroll-data', async (req, res) => {
         res.json({ success: true, message: 'Payroll data saved and recalculated.' });
     } catch (err) {
         console.error('Error saving payroll data:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// POST /api/clients/:id/sync-master-csv — regenerate standardized master CSV from employees table
+router.post('/:id/sync-master-csv', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.id, 10);
+        if (isNaN(clientId)) return res.status(400).json({ message: 'Invalid client ID' });
+
+        const client = await kyselyDb
+            .selectFrom('clients')
+            .selectAll()
+            .where('id', '=', clientId)
+            .executeTakeFirst();
+        if (!client) return res.status(404).json({ message: 'Client not found' });
+
+        const employees = await kyselyDb
+            .selectFrom('employees')
+            .selectAll()
+            .where('clientId', '=', clientId)
+            .orderBy('employeeName', 'asc')
+            .execute();
+
+        const standardHeaders = [
+            'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
+            'SHA No', 'NSSF No', 'Residential Status', 'Type of Employee', 'Persons with Disability(PWD)',
+            'Exemption Certificate', 'Total Cash Pay (A)', 'Value of Car Benefit (B)', 'Value of Meals (C)',
+            'Non Cash Benefits (D)', 'Type of Housing', 'Housing Benefit (F)', 'Other Benefits (G)',
+            'Total Gross Pay (Ksh) (H)', 'Social Health Insurance Fund (I)', 'NSSF Contribution (J)',
+            'Other Pension Contribution (K)', 'Post Retirement Medical Fund (L)', 'Mortgage Interest (M)',
+            'Affordable Housing Levy (N)', 'Taxable Pay(Ksh) (O)', 'Monthly Personal Relief (Ksh) (P)',
+            'Amount of Insurance Relief (Q)', 'PAYE Tax (Ksh) (R)', 'Self Assessed PAYE Tax (Ksh) (S)',
+        ];
+
+        const safeName = String(client.name || 'Client').replace(/[^a-zA-Z0-9]/g, '_');
+        const clientsDir = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'clients', String(clientId));
+        await fs.mkdir(clientsDir, { recursive: true });
+        const csvPath = path.join(clientsDir, `${safeName}_Standardized.csv`);
+        const fileUrl = `/clients/${clientId}/${safeName}_Standardized.csv`;
+
+        const preambleRows = [
+            ['COMPANY NAME:', client.name || ''],
+            ['COMPANY KRA PIN:', client.pin || ''],
+            ['COMPANY NSSF NO:', ''],
+            ['COMPANY NSSF PASSWORD:', ''],
+            ['COMPANY SHA LOGIN:', ''],
+            ['COMPANY SHA PASSWORD:', ''],
+        ];
+
+        const csvLines: string[] = [];
+        preambleRows.forEach(row => csvLines.push(row.join(',')));
+        csvLines.push('');
+        csvLines.push(standardHeaders.join(','));
+
+        let totalPaye = 0;
+        let totalNssf = 0;
+        let totalSha = 0;
+        let totalNita = 0;
+        let totalHousingLevy = 0;
+
+        employees.forEach((emp, index) => {
+            const totalCashPay = emp.basicPay || 0;
+            const carBenefit = emp.carBenefit || 0;
+            const meals = emp.mealsBenefit || 0;
+            const nonCash = emp.nonCashBenefits || 0;
+            const housingBenefit = emp.housingBenefit || 0;
+            const otherBenefits = emp.otherBenefits || 0;
+            const otherPension = emp.otherPension || 0;
+            const postRetMedical = emp.postRetMedical || 0;
+            const mortgage = emp.mortgageInterest || 0;
+            const insuranceRelief = emp.insuranceRelief || 0;
+
+            const calc = calculatePayrollFields({
+                employeeName: emp.employeeName || '',
+                totalCashPay,
+                carBenefit,
+                meals,
+                nonCash,
+                housingBenefit,
+                otherBenefits,
+                pwd: emp.pwd || 'No',
+                otherPension,
+                postRetMedical,
+                mortgage,
+                insuranceRelief,
+            });
+
+            const row: string[] = [];
+            row.push(emp.payrollNumber || String(index + 1));
+            row.push(emp.kraPin || '');
+            row.push(emp.idNumber || '');
+            row.push(emp.identityType || 'National ID');
+            row.push(emp.employeeName || '');
+            row.push(emp.shaNo || '');
+            row.push(emp.nssfNo || '');
+            row.push(emp.residentialStatus || 'Resident');
+            row.push(emp.typeOfEmployee || 'Primary Employee');
+            row.push(emp.pwd || 'No');
+            row.push(emp.exemptionCert || '');
+            row.push(String(totalCashPay));
+            row.push(String(carBenefit));
+            row.push(String(meals));
+            row.push(String(nonCash));
+            row.push(emp.typeOfHousing || 'Benefit not given');
+            row.push(String(housingBenefit));
+            row.push(String(otherBenefits));
+            row.push(calc.grossSalary.toFixed(2));
+            row.push(calc.shaContribution.toFixed(2));
+            row.push(calc.nssfContribution.toFixed(2));
+            row.push(String(otherPension));
+            row.push(String(postRetMedical));
+            row.push(String(mortgage));
+            row.push(calc.ahl.toFixed(2));
+            row.push(calc.taxablePay.toFixed(2));
+            row.push(calc.personalRelief.toFixed(2));
+            row.push(String(insuranceRelief));
+            row.push(calc.paye.toFixed(2));
+            row.push(calc.selfAssessedPaye.toFixed(2));
+
+            totalPaye += calc.paye;
+            totalNssf += calc.nssfContribution;
+            totalSha += calc.shaContribution;
+            totalNita += calc.paye * 0.0175;
+            totalHousingLevy += calc.ahl;
+
+            csvLines.push(row.join(','));
+        });
+
+        await fs.writeFile(csvPath, '\ufeff' + csvLines.join('\n'), 'utf-8');
+
+        // Update client record
+        const legacyDb = await openDb();
+        await legacyDb.run(
+            `UPDATE clients SET
+                masterFileUrl = ?, masterFileLabel = ?,
+                payeAmount = ?, nitaAmount = ?, housingLevyAmount = ?,
+                nssfAmount = ?, shaAmount = ?
+             WHERE id = ?`,
+            [
+                fileUrl, `${safeName}_Standardized.csv`,
+                Math.round(totalPaye * 100) / 100,
+                Math.round(totalNita * 100) / 100,
+                Math.round(totalHousingLevy * 100) / 100,
+                Math.round(totalNssf * 100) / 100,
+                Math.round(totalSha * 100) / 100,
+                clientId,
+            ]
+        );
+
+        res.json({ success: true, fileUrl, fileLabel: `${safeName}_Standardized.csv` });
+    } catch (err) {
+        console.error('Error syncing master CSV:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

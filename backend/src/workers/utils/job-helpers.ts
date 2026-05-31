@@ -1,13 +1,13 @@
 /**
  * job-helpers.ts
  *
- * BullMQ job lifecycle utilities: logging, progress tracking,
+ * Job lifecycle utilities: logging, progress tracking,
  * cancellation checks, and phase measurement.
+ *
+ * Works with both BullMQ (via BullMQJobAdapter) and Firestore (via FirestoreJobAdapter).
  */
 
-import { Job } from 'bullmq';
-import { kraFilingQueue } from '../../queues/kraFilingQueue';
-import { FilingJob, FilingStepLog } from '../../types';
+import { JobContext, FilingJob, FilingStepLog } from '../../types';
 import { logger } from '../../logger';
 
 // ─── Cancellation ────────────────────────────────────────────────────────────
@@ -24,13 +24,12 @@ export function hasCancellationRequest(jobData?: Partial<FilingJob> | null): boo
 }
 
 export async function assertJobNotCancelled(
-    job: Job<FilingJob>,
+    job: JobContext,
     context: string,
     progress?: number
 ): Promise<void> {
-    const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId));
-    const latestJobData = (latestJob?.data ?? job.data) as FilingJob;
-    if (!hasCancellationRequest(latestJobData)) {
+    await job.refresh();
+    if (!hasCancellationRequest(job.data)) {
         return;
     }
 
@@ -50,7 +49,7 @@ export async function assertJobNotCancelled(
 // ─── Logging & Progress ──────────────────────────────────────────────────────
 
 export async function appendJobLog(
-    job: Job<FilingJob>,
+    job: JobContext,
     message: string,
     options: {
         progress?: number;
@@ -67,7 +66,7 @@ export async function appendJobLog(
     await job.log(JSON.stringify(entry));
 }
 
-export async function setJobStep(job: Job<FilingJob>, progress: number, message: string): Promise<void> {
+export async function setJobStep(job: JobContext, progress: number, message: string): Promise<void> {
     await assertJobNotCancelled(job, message, progress);
     await job.updateProgress(progress);
     await appendJobLog(job, message, { progress });
@@ -92,7 +91,7 @@ async function resolveTimingContext(
 }
 
 export async function measureJobPhase<T>(
-    job: Job<FilingJob>,
+    job: JobContext,
     label: string,
     progress: number | undefined,
     action: () => Promise<T>,

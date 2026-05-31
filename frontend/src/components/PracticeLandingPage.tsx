@@ -7,6 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { apiFetchJson } from '../services/api';
 import {
     ArrowRight,
     CheckCircle2,
@@ -195,12 +196,11 @@ function DemoTotForm() {
     const handleGenerate = async () => {
         if (!pin || !month || !amount) return;
         setStatus('generating');
-        
+
         try {
             const monthIndex = months.indexOf(month) + 1;
-            const response = await fetch('/api/tax/generate-tot-zip', {
+            const data = await apiFetchJson('/tax/generate-tot-zip', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     kraPin: pin,
                     year: parseInt(year),
@@ -209,13 +209,7 @@ function DemoTotForm() {
                     clientName: 'Demo'
                 })
             });
-            
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(err.error || 'Failed to generate TOT ZIP');
-            }
-            
-            const data = await response.json();
+
             setDownloadUrl(data.totInfo?.url || null);
             setDownloadLabel(data.totInfo?.label || null);
             setStatus('done');
@@ -544,13 +538,7 @@ export default function PracticeLandingPage() {
             formData.append('generateSha', String(payrollOptions.sha));
             formData.append('clientName', 'Demo');
 
-            const res = await fetch('/api/payroll/generate-unified', { method: 'POST', body: formData });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || err.message || 'Server error');
-            }
-
-            const data = await res.json();
+            const data = await apiFetchJson('/payroll/generate-unified', { method: 'POST', body: formData });
             if (!data.masterZipUrl) {
                 throw new Error('No payroll pack was generated');
             }

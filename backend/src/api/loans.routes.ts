@@ -33,11 +33,12 @@ router.post('/:clientId/loans', async (req, res) => {
         const { employeeId, employeeName, kraPin, loanType, principal, monthlyDeduction, installments, remainingInstallments, interestRate, totalInterest, totalRepayable, amountPaid, status, disbursedAt, notes } = req.body;
 
         const now = new Date().toISOString();
+        const empId = parseInt(employeeId, 10) || 0;
         const result = await db
             .insertInto('loans')
             .values({
                 clientId,
-                employeeId: employeeId || 0,
+                employeeId: empId,
                 employeeName: employeeName || '',
                 kraPin: kraPin || '',
                 loanType: loanType || 'Salary Advance',
@@ -99,10 +100,11 @@ router.put('/:clientId/loans/:id', async (req, res) => {
 
         const { employeeId, employeeName, kraPin, loanType, principal, monthlyDeduction, installments, remainingInstallments, interestRate, totalInterest, totalRepayable, amountPaid, status, disbursedAt, notes } = req.body;
 
+        const empIdUpdate = employeeId !== undefined ? (parseInt(employeeId, 10) || 0) : existing.employeeId;
         await db
             .updateTable('loans')
             .set({
-                employeeId: employeeId !== undefined ? employeeId : existing.employeeId,
+                employeeId: empIdUpdate,
                 employeeName: employeeName !== undefined ? employeeName : existing.employeeName,
                 kraPin: kraPin !== undefined ? kraPin : existing.kraPin,
                 loanType: loanType !== undefined ? loanType : existing.loanType,

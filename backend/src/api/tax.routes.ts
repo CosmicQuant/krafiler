@@ -12,16 +12,21 @@ import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import { v4 as uuidv4 } from 'uuid';
-// Password encryption disabled for speed — plaintext passed directly to worker
-import { kraFilingQueue } from '../queues/kraFilingQueue';
+import { encrypt } from '../utils/encryption';
 import {
     FilingJob,
-    FilingStepLog,
     FileNilReturnRequest,
     FileNilReturnResponse,
     TAX_OBLIGATION_TYPES,
     NilReturnPayload
 } from '../types';
+import {
+    findDuplicatePendingFiling,
+    queueFilingJob,
+    queueNssfJob,
+    cancelFilingJob,
+    getFilingJobStatus,
+} from '../services/filingQueue';
 import { fileNssfReturn } from '../scripts/file-nssf-return';
 import { packageToTZip } from '../scripts/kra-tot-generator';
 
@@ -57,167 +62,6 @@ function getPreviousMonthIsoRange(referenceDate = new Date()): { periodFrom: str
         periodFrom: previousMonthStart.toISOString().slice(0, 10),
         periodTo: previousMonthEnd.toISOString().slice(0, 10),
     };
-}
-
-function parseFilingStepLog(rawEntry: string): FilingStepLog {
-    try {
-        const parsed = JSON.parse(rawEntry) as Partial<FilingStepLog>;
-        return {
-            timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
-            message: typeof parsed.message === 'string' ? parsed.message : rawEntry,
-            progress: typeof parsed.progress === 'number' ? parsed.progress : null,
-            level: parsed.level === 'error' ? 'error' : 'info',
-        };
-    } catch {
-        return {
-            timestamp: new Date().toISOString(),
-            message: rawEntry,
-            progress: null,
-            level: 'info',
-        };
-    }
-}
-
-type PendingFilingState = 'waiting' | 'active' | 'delayed';
-
-function hasCancellationRequest(jobData?: Partial<FilingJob> | null): boolean {
-    return typeof jobData?.cancelRequestedAt === 'string' && jobData.cancelRequestedAt.trim().length > 0;
-}
-
-function createFilingStepLogEntry(
-    message: string,
-    progress?: number,
-    level: FilingStepLog['level'] = 'info'
-): string {
-    return JSON.stringify({
-        timestamp: new Date().toISOString(),
-        message,
-        progress: typeof progress === 'number' ? progress : null,
-        level,
-    });
-}
-
-function resolveApiJobState(
-    queueState: string,
-    jobData?: Partial<FilingJob> | null,
-    failedReason?: string | null
-): NonNullable<FileNilReturnResponse['jobState']> {
-    if (hasCancellationRequest(jobData)) {
-        if (queueState === 'active' || queueState === 'waiting' || queueState === 'delayed') {
-            return 'cancelling';
-        }
-
-        if (
-            queueState === 'failed' ||
-            typeof jobData?.cancelledAt === 'string' ||
-            /job cancelled by user/i.test(failedReason ?? '')
-        ) {
-            return 'cancelled';
-        }
-    }
-
-    if (
-        queueState === 'waiting' ||
-        queueState === 'active' ||
-        queueState === 'delayed' ||
-        queueState === 'completed' ||
-        queueState === 'failed'
-    ) {
-        return queueState;
-    }
-
-    return 'unknown';
-}
-
-type FilingGuardInput = {
-    userId: string;
-    kraPin: string;
-    clientName?: string;
-    periodFrom: string;
-    periodTo: string;
-    taxObligationType: FileNilReturnRequest['taxObligationType'];
-    ownsRentalProperty: boolean;
-    rentalIncomeAmount?: number;
-    totYear?: number;
-    totMonth?: number;
-    totTurnover?: number;
-    payeZipUrl?: string;
-    vatZipUrl?: string;
-    prepareVatOnly?: boolean;
-    vatPreviousCredit?: number;
-    sectionBWithoutPinSales?: number;
-    printPrnOnly?: boolean;
-};
-
-function normaliseOptionalNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function buildPendingFilingKey(input: FilingGuardInput): string {
-    return JSON.stringify({
-        userId: input.userId.trim(),
-        kraPin: input.kraPin.trim().toUpperCase(),
-        clientName: input.clientName?.trim() ?? '',
-        periodFrom: input.periodFrom.trim(),
-        periodTo: input.periodTo.trim(),
-        taxObligationType: input.taxObligationType,
-        ownsRentalProperty: Boolean(input.ownsRentalProperty),
-        rentalIncomeAmount: normaliseOptionalNumber(input.rentalIncomeAmount),
-        totYear: normaliseOptionalNumber(input.totYear),
-        totMonth: normaliseOptionalNumber(input.totMonth),
-        totTurnover: normaliseOptionalNumber(input.totTurnover),
-        payeZipUrl: input.payeZipUrl?.trim() ?? '',
-        vatZipUrl: input.vatZipUrl?.trim() ?? '',
-        prepareVatOnly: Boolean(input.prepareVatOnly),
-        vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
-        sectionBWithoutPinSales: normaliseOptionalNumber(input.sectionBWithoutPinSales),
-        printPrnOnly: Boolean(input.printPrnOnly),
-    });
-}
-
-async function findDuplicatePendingFiling(input: FilingGuardInput): Promise<{ jobId: string; state: PendingFilingState } | null> {
-    const requestedKey = buildPendingFilingKey(input);
-    const pendingJobs = await kraFilingQueue.getJobs(['waiting', 'active', 'delayed'], 0, 199, true);
-
-    for (const pendingJob of pendingJobs) {
-        const pendingJobData = pendingJob.data as FilingJob;
-        if (!pendingJobData?.payload) {
-            continue;
-        }
-
-        const pendingKey = buildPendingFilingKey({
-            userId: pendingJobData.userId,
-            kraPin: pendingJobData.payload.kraPin,
-            clientName: pendingJobData.payload.clientName,
-            periodFrom: pendingJobData.payload.periodFrom,
-            periodTo: pendingJobData.payload.periodTo,
-            taxObligationType: pendingJobData.payload.taxObligationType,
-            ownsRentalProperty: pendingJobData.payload.ownsRentalProperty,
-            rentalIncomeAmount: pendingJobData.payload.rentalIncomeAmount,
-            totYear: pendingJobData.payload.totYear,
-            totMonth: pendingJobData.payload.totMonth,
-            totTurnover: pendingJobData.payload.totTurnover,
-            payeZipUrl: pendingJobData.payload.payeZipUrl,
-            vatZipUrl: pendingJobData.payload.vatZipUrl,
-            prepareVatOnly: pendingJobData.payload.prepareVatOnly,
-            vatPreviousCredit: pendingJobData.payload.vatPreviousCredit,
-            printPrnOnly: pendingJobData.payload.printPrnOnly,
-        });
-
-        if (pendingKey !== requestedKey) {
-            continue;
-        }
-
-        const state = await pendingJob.getState();
-        if (state === 'waiting' || state === 'active' || state === 'delayed') {
-            return {
-                jobId: String(pendingJob.id ?? pendingJobData.jobId),
-                state,
-            };
-        }
-    }
-
-    return null;
 }
 
 // ─── Input Validation Middleware ─────────────────────────────────────────────
@@ -499,6 +343,25 @@ router.post(
 
             const jobId = uuidv4();
 
+            // Encrypt KRA password before it leaves the API handler.
+            // The worker decrypts with the same ENCRYPTION_SECRET + ENCRYPTION_SALT.
+            let encryptedPassword: string | undefined;
+            let iv: string | undefined;
+            let authTag: string | undefined;
+            try {
+                const encryptionResult = encrypt(kraPassword);
+                encryptedPassword = encryptionResult.encryptedData;
+                iv = encryptionResult.iv;
+                authTag = encryptionResult.authTag;
+            } catch (err) {
+                console.error('[API] Failed to encrypt KRA password:', err);
+                res.status(500).json({
+                    success: false,
+                    message: 'Credential encryption failed. Check ENCRYPTION_SECRET and ENCRYPTION_SALT env vars.',
+                });
+                return;
+            }
+
             const filingJob: FilingJob = {
                 jobId,
                 userId,
@@ -507,7 +370,9 @@ router.post(
                     clientName: typeof clientName === 'string' && clientName.trim().length > 0
                         ? clientName.trim()
                         : undefined,
-                    kraPassword,
+                    encryptedPassword,
+                    iv,
+                    authTag,
                     periodFrom: effectivePeriod.periodFrom,
                     periodTo: effectivePeriod.periodTo,
                     taxObligationType,
@@ -538,7 +403,7 @@ router.post(
                 createdAt: new Date().toISOString(),
             };
 
-            await kraFilingQueue.add('file-return', filingJob, { jobId });
+            await queueFilingJob(filingJob, userId);
 
             console.log(`[API] Queued job ${jobId} for KRA PIN ${kraPin}`);
 
@@ -585,80 +450,23 @@ router.post(
         const { jobId } = req.params;
 
         try {
-            const job = await kraFilingQueue.getJob(jobId);
+            const result = await cancelFilingJob(jobId);
 
-            if (!job) {
+            if (result.state === 'not_found') {
                 res.status(404).json({
                     success: false,
-                    message: `No job found with ID: ${jobId}`,
+                    message: result.message,
                 });
                 return;
             }
 
-            const queueState = await job.getState();
-            const currentProgress = typeof job.progress === 'number' ? job.progress : undefined;
-            const currentData = job.data as FilingJob;
-
-            if (queueState === 'completed') {
-                res.status(409).json({
-                    success: false,
-                    message: 'This job has already completed and can no longer be cancelled.',
-                    jobId,
-                    jobState: 'completed',
-                });
-                return;
-            }
-
-            if (queueState === 'failed') {
-                const resolvedFailedState = resolveApiJobState(queueState, currentData, job.failedReason ?? null);
-                const alreadyCancelled = resolvedFailedState === 'cancelled';
-
-                res.status(alreadyCancelled ? 200 : 409).json({
-                    success: alreadyCancelled,
-                    message: alreadyCancelled
-                        ? 'This job was already cancelled.'
-                        : 'This job has already failed and can no longer be cancelled.',
-                    jobId,
-                    jobState: resolvedFailedState,
-                    cancelRequested: alreadyCancelled,
-                });
-                return;
-            }
-
-            if (queueState === 'waiting' || queueState === 'delayed') {
-                const removed = await kraFilingQueue.remove(jobId, { removeChildren: true });
-
-                if (removed === 1) {
-                    res.status(202).json({
-                        success: true,
-                        message: 'Job cancelled before processing started.',
-                        jobId,
-                        jobState: 'cancelled',
-                        cancelRequested: true,
-                    });
-                    return;
-                }
-            }
-
-            if (!hasCancellationRequest(currentData)) {
-                await job.updateData({
-                    ...currentData,
-                    cancelRequestedAt: new Date().toISOString(),
-                });
-                await job.log(
-                    createFilingStepLogEntry(
-                        'Cancellation requested by operator. The worker will stop at the next safe checkpoint.',
-                        currentProgress
-                    )
-                );
-            }
-
-            res.status(202).json({
-                success: true,
-                message: 'Cancellation requested. The active filing will stop at the next safe checkpoint.',
+            const statusCode = result.state === 'cancelled' ? 202 : result.state === 'completed' ? 409 : 202;
+            res.status(statusCode).json({
+                success: result.success,
+                message: result.message,
                 jobId,
-                jobState: 'cancelling',
-                cancelRequested: true,
+                jobState: result.state as any,
+                cancelRequested: result.state === 'cancelled' || result.state === 'cancelling',
             });
         } catch (err) {
             console.error('[API] Failed to cancel filing job:', err);
@@ -689,35 +497,25 @@ router.get(
         const { jobId } = req.params;
 
         try {
-            const job = await kraFilingQueue.getJob(jobId);
+            const status = await getFilingJobStatus(jobId);
 
-            if (!job) {
+            if (!status) {
                 res.status(404).json({ message: `No job found with ID: ${jobId}` });
                 return;
             }
 
-            const queueState = await job.getState();
-            const state = resolveApiJobState(queueState, job.data as FilingJob, job.failedReason ?? null);
-            const jobLogsResult = await kraFilingQueue.getJobLogs(jobId, 0, 199, true);
-            const stepLogs = jobLogsResult.logs.map(parseFilingStepLog);
-            const lastStep = stepLogs.length > 0 ? stepLogs[stepLogs.length - 1] : null;
-
             res.status(200).json({
-                jobId,
-                state,
-                progress: job.progress,
-                attemptsMade: job.attemptsMade,
-                failedReason: job.failedReason ?? null,
-                stepLogs,
-                lastStep,
-                credentialUpdate: job.data.credentialUpdate ?? null,
-                result: job.returnvalue ?? null,
-                processedOn: job.processedOn
-                    ? new Date(job.processedOn).toISOString()
-                    : null,
-                finishedOn: job.finishedOn
-                    ? new Date(job.finishedOn).toISOString()
-                    : null,
+                jobId: status.jobId,
+                state: status.state,
+                progress: status.progress,
+                attemptsMade: status.attemptsMade,
+                failedReason: status.failedReason,
+                stepLogs: status.stepLogs,
+                lastStep: status.lastStep,
+                credentialUpdate: status.credentialUpdate,
+                result: status.result,
+                processedOn: status.processedOn,
+                finishedOn: status.finishedOn,
             });
         } catch (err) {
             console.error('[API] Failed to fetch job status:', err);
@@ -790,9 +588,25 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             return `${String(month).padStart(2, '0')}/${year}`;
         })();
 
+        // Encrypt NSSF credentials before queueing
+        let nssfEncryptedPassword: string | undefined;
+        let nssfIv: string | undefined;
+        let nssfAuthTag: string | undefined;
+        try {
+            const encryptionResult = encrypt(nssfPassword);
+            nssfEncryptedPassword = encryptionResult.encryptedData;
+            nssfIv = encryptionResult.iv;
+            nssfAuthTag = encryptionResult.authTag;
+        } catch (err) {
+            res.status(500).json({ success: false, message: 'Credential encryption failed.' });
+            return;
+        }
+
         const payload: NilReturnPayload = {
             kraPin: nssfUsername,
-            kraPassword: nssfPassword,
+            encryptedPassword: nssfEncryptedPassword,
+            iv: nssfIv,
+            authTag: nssfAuthTag,
             periodFrom: new Date().toISOString(),
             periodTo: new Date().toISOString(),
             taxObligationType: 'nssf',
@@ -802,17 +616,20 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             nssfPeriod: effectivePeriod,
         } as any;
 
-        const job = await kraFilingQueue.add(
-            'nssf-return',
-            { jobId, userId: 'dev-user', payload, createdAt: new Date().toISOString() },
-            { jobId }
-        );
+        const filingJob: FilingJob = {
+            jobId,
+            userId: 'dev-user',
+            payload,
+            createdAt: new Date().toISOString(),
+        };
+
+        const { taskName } = await queueNssfJob(filingJob, 'dev-user');
 
         res.json({
             success: true,
             jobId,
             message: 'NSSF filing job queued.',
-            job: job.toJSON()
+            taskName: taskName || undefined,
         });
     } catch (e: any) {
         console.error(e);

@@ -18,8 +18,8 @@ router.use(authMiddleware);
 // GET /api/portal/dashboard — aggregated dashboard data
 router.get('/dashboard', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
 
         // Latest payslip data from payroll (use the first employee that matches kraPin in payroll data)
         // Actually, we fetch from the employees table payrollNumber to match master payroll
@@ -141,8 +141,8 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
 // POST /api/portal/leave — submit leave request
 router.post('/leave', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const { leaveType, startDate, endDate, daysCount, hours, reason, isPaid } = req.body;
 
         if (!leaveType || !startDate || !endDate) {
@@ -198,8 +198,8 @@ router.post('/leave', async (req: AuthRequest, res) => {
 // PUT /api/portal/leave/:id — edit own pending leave request
 router.put('/leave/:id', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
 
@@ -257,8 +257,8 @@ router.put('/leave/:id', async (req: AuthRequest, res) => {
 // DELETE /api/portal/leave/:id — delete own leave request
 router.delete('/leave/:id', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
 
@@ -298,8 +298,8 @@ router.delete('/leave/:id', async (req: AuthRequest, res) => {
 // POST /api/portal/loans — submit loan request
 router.post('/loans', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const { loanType, principal, installments, interestRate, notes } = req.body;
 
         if (!principal || principal <= 0) {
@@ -366,8 +366,8 @@ router.post('/loans', async (req: AuthRequest, res) => {
 router.get('/payslip', async (req: AuthRequest, res) => {
     try {
         const kraPin = req.employee!.kraPin;
-        const clientId = req.employee!.clientId;
-        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId as number;
+        const employeeId = req.employee!.id as number;
 
         const employee = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).executeTakeFirst();
         if (!employee) { res.status(404).json({ message: 'Employee not found' }); return; }
@@ -519,8 +519,8 @@ router.get('/payslip', async (req: AuthRequest, res) => {
 router.get('/p9', async (req: AuthRequest, res) => {
     try {
         const kraPin = req.employee!.kraPin;
-        const clientId = req.employee!.clientId;
-        const employeeId = req.employee!.id;
+        const clientId = req.employee!.clientId as number;
+        const employeeId = req.employee!.id as number;
 
         const employee = await db.selectFrom('employees').selectAll().where('id', '=', employeeId).executeTakeFirst();
         if (!employee) { res.status(404).json({ message: 'Employee not found' }); return; }
@@ -745,8 +745,8 @@ router.get('/p9', async (req: AuthRequest, res) => {
 // GET /api/portal/documents — list employee documents
 router.get('/documents', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const docs = await db
             .selectFrom('documents')
             .selectAll()
@@ -764,8 +764,8 @@ router.get('/documents', async (req: AuthRequest, res) => {
 // GET /api/portal/documents/:id/download — download a specific document
 router.get('/documents/:id/download', async (req: AuthRequest, res) => {
     try {
-        const employeeId = req.employee!.id;
-        const clientId = req.employee!.clientId;
+        const employeeId = req.employee!.id as number;
+        const clientId = req.employee!.clientId as number;
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) { res.status(400).json({ message: 'Invalid ID' }); return; }
 

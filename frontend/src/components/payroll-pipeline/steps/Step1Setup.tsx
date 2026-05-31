@@ -14,11 +14,12 @@ interface Step1SetupProps {
     client: ClientObligation;
     onValidationChange?: (valid: boolean) => void;
     onPeriodChange?: (period: string) => void;
+    onRegisterApprove?: (trigger: () => Promise<boolean>) => void;
 }
 
-export function Step1Setup({ client, onValidationChange, onPeriodChange }: Step1SetupProps) {
+export function Step1Setup({ client, onValidationChange, onPeriodChange, onRegisterApprove }: Step1SetupProps) {
     const [employees, setEmployees] = useState<Employee[]>([]);
-    const [attendanceApproved, setAttendanceApproved] = useState(false);
+    const [period, setPeriod] = useState<string>('');
 
     const fetchEmployees = useCallback(async () => {
         try {
@@ -38,22 +39,27 @@ export function Step1Setup({ client, onValidationChange, onPeriodChange }: Step1
 
     useEffect(() => {
         const hasActive = employees.some((e) => e.employmentStatus === 'Active' && e.basicPay > 0);
-        onValidationChange?.(hasActive && attendanceApproved);
-    }, [employees, attendanceApproved, onValidationChange]);
+        onValidationChange?.(hasActive);
+    }, [employees, onValidationChange]);
+
+    const handlePeriodChange = (p: string) => {
+        setPeriod(p);
+        onPeriodChange?.(p);
+    };
 
     return (
         <div className="space-y-8">
             {/* Attendance Recording */}
             <AttendanceCalendarGrid
                 clientId={client.id}
-                onApproved={() => setAttendanceApproved(true)}
-                onPeriodChange={onPeriodChange}
+                onPeriodChange={handlePeriodChange}
+                onRegisterApprove={onRegisterApprove}
             />
 
             {/* Loan & Leave */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <LoanManager clientId={client.id} />
-                <LeaveManager clientId={client.id} />
+                <LoanManager clientId={client.id} period={period || undefined} />
+                <LeaveManager clientId={client.id} period={period || undefined} />
             </div>
         </div>
     );

@@ -1,20 +1,35 @@
 @echo off
-REM Start all KRAFILER services
-cd /d C:\Users\ADMIN\Desktop\KRAFILER
+title KRAFILER All Services
+echo [%date% %time%] Starting KRAFILER services...
 
-echo Starting Redis...
-start /B C:\Users\ADMIN\Desktop\KRAFILER\redis\redis-server.exe C:\Users\ADMIN\Desktop\KRAFILER\redis\redis-wsl.conf
-timeout /t 3 /nobreak >nul
+:: Start Redis (if not already running)
+tasklist /FI "IMAGENAME eq redis-server.exe" 2>nul | find /I "redis-server" >nul
+if errorlevel 1 (
+    echo [%time%] Starting Redis...
+    start /B redis-server.exe redis-local.conf
+    timeout /t 3 /nobreak >nul
+) else (
+    echo [%time%] Redis already running
+)
 
-echo Starting Backend API...
+:: Start backend (loops on crash for ts-node-dev respawn)
+echo [%time%] Starting Backend API...
 start /B npm run dev:backend
-timeout /t 2 /nobreak >nul
 
-echo Starting Worker...
+:: Start worker
+echo [%time%] Starting KRA Filing Worker...
 start /B npm run worker
-timeout /t 2 /nobreak >nul
 
-echo Starting Frontend...
+:: Start frontend
+echo [%time%] Starting Frontend...
 start /B npm run dev:frontend
 
-echo All services started!
+echo [%time%] All services started
+echo.
+echo  Backend:  http://localhost:3001
+echo  Frontend: http://localhost:3000
+echo  Worker:   (background)
+echo.
+echo Close this window to stop all services.
+echo.
+pause

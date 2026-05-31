@@ -15,6 +15,7 @@ import {
     ChevronRight,
 } from 'lucide-react';
 import { useUIStore } from '../../store/uiStore';
+import { useAuth } from '../../contexts/AuthContext';
 
 const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -160,19 +161,59 @@ export function Sidebar({
                     ))}
                 </nav>
 
-                {/* Footer */}
-                <div className="mt-auto border-t border-slate-100 px-2 py-3">
-                    <Link
-                        to="/"
-                        className={`flex items-center gap-2 rounded-lg py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 ${collapsed ? 'justify-center px-0' : 'px-3'}`}
-                        title="Sign Out"
-                    >
-                        <LogOut className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>Sign Out</span>}
-                    </Link>
-                </div>
+                {/* Footer: User profile + Sign Out */}
+                <SidebarFooter collapsed={collapsed} />
             </aside>
         </>
+    );
+}
+
+function SidebarFooter({ collapsed }: { collapsed: boolean }) {
+    const { user, signOutUser } = useAuth();
+
+    return (
+        <div className="mt-auto border-t border-slate-100 px-2 py-3 space-y-2">
+            {/* User info */}
+            {!collapsed && user && (
+                <div className="flex items-center gap-2 rounded-lg px-3 py-2">
+                    {user.photoURL ? (
+                        <img
+                            src={user.photoURL}
+                            alt=""
+                            className="h-8 w-8 rounded-full object-cover"
+                        />
+                    ) : (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-500 text-xs font-bold">
+                            {(user.displayName || user.email || 'U').charAt(0).toUpperCase()}
+                        </div>
+                    )}
+                    <div className="min-w-0">
+                        <p className="text-xs font-medium text-slate-700 truncate">
+                            {user.displayName || 'User'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
+                    </div>
+                </div>
+            )}
+            {collapsed && user?.photoURL && (
+                <div className="flex justify-center">
+                    <img
+                        src={user.photoURL}
+                        alt=""
+                        className="h-8 w-8 rounded-full object-cover"
+                    />
+                </div>
+            )}
+            {/* Sign Out */}
+            <button
+                onClick={signOutUser}
+                className={`flex w-full items-center gap-2 rounded-lg py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-50 hover:text-slate-700 ${collapsed ? 'justify-center px-0' : 'px-3'}`}
+                title="Sign Out"
+            >
+                <LogOut className="h-4 w-4 shrink-0" />
+                {!collapsed && <span>Sign Out</span>}
+            </button>
+        </div>
     );
 }
 

@@ -73,7 +73,7 @@ router.get('/employee/me', authMiddleware, async (req: AuthRequest, res) => {
         const employee = await db
             .selectFrom('employees')
             .selectAll()
-            .where('id', '=', req.employee!.id)
+            .where('id', '=', req.employee!.id as number)
             .executeTakeFirst();
 
         if (!employee) {

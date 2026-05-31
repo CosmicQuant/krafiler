@@ -101,6 +101,7 @@ export type ClientObligation = {
     exciseDutyLastFiledDate?: string;
     exciseDutyReceiptUrl?: string;
     logoUrl?: string;
+    defaultWorkScheduleId?: number | null;
 };
 
 export type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';

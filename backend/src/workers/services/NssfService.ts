@@ -1,11 +1,10 @@
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { fileNssfReturn } from '../../scripts/file-nssf-return';
 
 export class NssfService {
-    private job: Job<FilingJob>;
+    private job: JobContext;
 
-    constructor(job: Job<FilingJob>) {
+    constructor(job: JobContext) {
         this.job = job;
     }
 

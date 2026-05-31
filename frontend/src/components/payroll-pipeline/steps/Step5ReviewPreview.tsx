@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import {
     RefreshCw,
     AlertCircle,
@@ -47,6 +47,7 @@ interface PayrollEntry {
     loanDeduction?: number;
     totalDeductions?: number;
     personalRelief?: number;
+    otherDeductions?: number;
     _overrideKeys?: string[];
 }
 
@@ -59,6 +60,8 @@ interface ComputedPreview {
     netPay: number;
     daysWorked: number;
     taxablePay?: number;
+    totalDeductions?: number;
+    loanDeduction?: number;
 }
 
 interface Department {
@@ -202,6 +205,8 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
     const calculatePreview = useCallback(
         async (entry: PayrollEntry, updates: Partial<PayrollEntry>) => {
             try {
+                const emp = employees.find((e) => e.id === entry.employeeId);
+                const isProrated = emp?.payStructure === 'prorated';
                 const payload = {
                     basicPay: updates.basicPay ?? entry.basicPay,
                     carBenefit: updates.carBenefit ?? entry.carBenefit,
@@ -211,12 +216,19 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                     otherBenefits: updates.otherBenefits ?? entry.otherBenefits,
                     bonusPay: updates.bonusPay ?? entry.bonusPay,
                     overtimePay: updates.overtimePay ?? entry.overtimePay,
-                    absentDays: updates.absentDays ?? entry.absentDays,
-                    lateHours: updates.lateDays ?? entry.lateDays,
+                    // For prorated employees, attendance deductions are already factored into
+                    // the basicPay (which is hours-worked × rate). Sending absent/late values
+                    // would double-deduct them in the preview.
+                    absentDays: isProrated ? 0 : (updates.absentDays ?? entry.absentDays),
+                    lateHours: isProrated ? 0 : (updates.lateDays ?? entry.lateDays),
                     unpaidLeaveDays: updates.unpaidLeaveDays ?? entry.unpaidLeaveDays,
                     insuranceRelief: updates.insuranceRelief ?? entry.insuranceRelief,
-                    payStructure: 'fixed',
-                    period: '2026-01',
+                    loanDeduction: updates.loanDeduction ?? entry.loanDeduction ?? 0,
+                    otherDeductions: updates.otherDeductions ?? entry.otherDeductions ?? 0,
+                    payStructure: emp?.payStructure || 'fixed',
+                    period: period || '2026-01',
+                    standardCheckIn: emp?.standardCheckIn || '08:00',
+                    standardCheckOut: emp?.standardCheckOut || '17:00',
                 };
                 const res = await apiFetch('/payroll/calculate-preview', {
                     method: 'POST',
@@ -229,7 +241,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                 return null;
             }
         },
-        []
+        [employees, period]
     );
 
     const updateEntryField = useCallback(
@@ -280,6 +292,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                     lateHours: entry.lateDays,
                     unpaidLeaveDays: entry.unpaidLeaveDays,
                     insuranceRelief: entry.insuranceRelief,
+                    otherDeductions: entry.otherDeductions ?? 0,
                 }),
             });
             if (res.ok) {
@@ -470,7 +483,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
         { basicPay: 0, grossPay: 0, payeTax: 0, shaDeduction: 0, nssfDeduction: 0, ahlDeduction: 0, netPay: 0, loanDeduction: 0, totalDeductions: 0, taxablePay: 0 }
     );
 
-    const colCount = compareMode ? 22 : 20;
+    const colCount = compareMode ? 20 : 18;
     const sortableHeaderClass = 'cursor-pointer select-none hover:bg-slate-100 transition';
 
     if (loading) {
@@ -642,101 +655,45 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                             <thead>
                                 <tr className="border-b border-slate-100 bg-slate-50">
                                     <th className="sticky top-0 px-3 py-2.5 w-8" />
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500", sortableHeaderClass)}
-                                        onClick={() => handleSort('employeeName')}
-                                    >
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500", sortableHeaderClass)} onClick={() => handleSort('employeeName')}>
                                         Employee {sortColumn === 'employeeName' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500", sortableHeaderClass)}
-                                        onClick={() => handleSort('kraPin')}
-                                    >
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500", sortableHeaderClass)} onClick={() => handleSort('kraPin')}>
                                         KRA PIN {sortColumn === 'kraPin' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                     <th
-                                         className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                         onClick={() => handleSort('totalStdHours')}
-                                     >
-                                         Total Std Hrs {sortColumn === 'totalStdHours' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
-                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('basicPay')}
-                                    >
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('totalStdHours')}>
+                                        Total Std Hrs {sortColumn === 'totalStdHours' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
+                                    </th>
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('basicPay')}>
                                         Basic Pay {sortColumn === 'basicPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                     <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                         Benefits
-                                     </th>
-                                     <th
-                                         className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                         onClick={() => handleSort('bonusPay')}
-                                     >
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Benefits</th>
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('bonusPay')}>
                                         Bonus Pay {sortColumn === 'bonusPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('grossPay')}
-                                    >
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('grossPay')}>
                                         Gross {sortColumn === 'grossPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('payeTax')}
-                                    >
-                                        PAYE {sortColumn === 'payeTax' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        Loan Deduction
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        Total Deductions
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        SHA
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        NSSF
-                                    </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        AHL
-                                    </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('taxablePay')}
-                                    >
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">SHA</th>
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">NSSF</th>
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">AHL</th>
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('taxablePay')}>
                                         Taxable Pay {sortColumn === 'taxablePay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                        Personal Relief
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Personal Relief</th>
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('payeTax')}>
+                                        PAYE {sortColumn === 'payeTax' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('absentDays')}
-                                    >
-                                        Abs {sortColumn === 'absentDays' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
-                                    </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('lateDays')}
-                                    >
-                                        Late {sortColumn === 'lateDays' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
-                                    </th>
-                                    <th
-                                        className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)}
-                                        onClick={() => handleSort('netPay')}
-                                    >
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Loan Deduction</th>
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Other Deductions</th>
+                                    <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Total Deductions</th>
+                                    <th className={cn("sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right", sortableHeaderClass)} onClick={() => handleSort('netPay')}>
                                         Net {sortColumn === 'netPay' && (sortDirection === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-0.5" /> : <ArrowDown className="inline h-3 w-3 ml-0.5" />)}
                                     </th>
                                     {compareMode && (
                                         <>
-                                            <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                                Δ Gross
-                                            </th>
-                                            <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">
-                                                Δ Net
-                                            </th>
+                                            <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Δ Gross</th>
+                                            <th className="sticky top-0 px-3 py-2.5 font-semibold uppercase tracking-wider text-slate-500 text-right">Δ Net</th>
                                         </>
                                     )}
                                     <th className="sticky top-0 px-3 py-2.5" />
@@ -752,115 +709,50 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                     const deltaNet = prev ? (d.netPay || 0) - (prev.netPay || 0) : null;
 
                                     return (
-                                        <>
-                                            <tr
-                                                key={entry.id}
-                                                className={cn(
-                                                    'transition',
-                                                    isPreview || isUnsaved ? 'bg-amber-50/30' : 'hover:bg-slate-50/50'
-                                                )}
-                                            >
+                                        <Fragment key={entry.id}>
+                                            <tr className={cn('transition', isPreview || isUnsaved ? 'bg-amber-50/30' : 'hover:bg-slate-50/50')}>
                                                 <td className="px-3 py-2">
-                                                    <button
-                                                        onClick={() => toggleRow(entry.id)}
-                                                        className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition"
-                                                    >
-                                                        {expandedRows.has(entry.id) ? (
-                                                            <ChevronDown className="h-4 w-4" />
-                                                        ) : (
-                                                            <ChevronRight className="h-4 w-4" />
-                                                        )}
+                                                    <button onClick={() => toggleRow(entry.id)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition">
+                                                        {expandedRows.has(entry.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                                     </button>
                                                 </td>
                                                 <td className="px-3 py-2 font-medium text-slate-900 whitespace-nowrap">
                                                     {entry.employeeName}
-                                                    {isUnsaved && (
-                                                        <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
-                                                    )}
+                                                    {isUnsaved && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />}
                                                     {entry._overrideKeys && entry._overrideKeys.length > 0 && !isUnsaved && (
                                                         <span className="ml-1.5 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Modified</span>
                                                     )}
                                                 </td>
-                                                <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">
-                                                    {entry.kraPin}
-                                                </td>
-                                                 <td className="px-3 py-2 text-right font-mono text-blue-600">
-                                                     {(entry.totalStdHours ?? entry.daysWorked).toFixed(1)}
-                                                 </td>
+                                                <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">{entry.kraPin}</td>
+                                                <td className="px-3 py-2 text-right font-mono text-blue-600">{(entry.totalStdHours ?? entry.daysWorked).toFixed(1)}</td>
                                                 <td className="px-3 py-2 text-right">
-                                                    <input
-                                                        type="number"
-                                                        value={entry.basicPay}
-                                                        onChange={(e) =>
-                                                            updateEntryField(entry.id, 'basicPay', parseFloat(e.target.value) || 0)
-                                                        }
-                                                        className={cn(
-                                                            'w-20 rounded border bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400',
-                                                            entry._overrideKeys?.includes('basicPay')
-                                                                ? 'border-amber-300'
-                                                                : 'border-slate-200'
-                                                        )}
-                                                    />
+                                                    <input type="number" value={entry.basicPay} onChange={(e) => updateEntryField(entry.id, 'basicPay', parseFloat(e.target.value) || 0)}
+                                                        className={cn('w-20 rounded border bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400', entry._overrideKeys?.includes('basicPay') ? 'border-amber-300' : 'border-slate-200')} />
                                                 </td>
-                                                 <td className="px-3 py-2 text-right bg-amber-50/50">
-                                                     <button
-                                                         onClick={() => toggleBenefits(entry.id)}
-                                                         className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700 hover:bg-slate-200 transition"
-                                                     >
-                                                         {(entry.carBenefit + entry.mealsBenefit + entry.nonCashBenefits + entry.housingBenefit + entry.otherBenefits).toLocaleString()}
-                                                         {expandedBenefits.has(entry.id) ? (
-                                                             <ChevronUp className="h-3 w-3" />
-                                                         ) : (
-                                                             <ChevronDown className="h-3 w-3" />
-                                                         )}
-                                                     </button>
-                                                 </td>
+                                                <td className="px-3 py-2 text-right bg-amber-50/50">
+                                                    <button onClick={() => toggleBenefits(entry.id)} className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700 hover:bg-slate-200 transition">
+                                                        {(entry.carBenefit + entry.mealsBenefit + entry.nonCashBenefits + entry.housingBenefit + entry.otherBenefits).toLocaleString()}
+                                                        {expandedBenefits.has(entry.id) ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                                    </button>
+                                                </td>
                                                 <td className="px-3 py-2 text-right">
-                                                    <input
-                                                        type="number"
-                                                        value={entry.bonusPay}
-                                                        onChange={(e) =>
-                                                            updateEntryField(entry.id, 'bonusPay', parseFloat(e.target.value) || 0)
-                                                        }
-                                                        className="w-20 rounded border border-slate-200 bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                                                    />
+                                                    <input type="number" value={entry.bonusPay} onChange={(e) => updateEntryField(entry.id, 'bonusPay', parseFloat(e.target.value) || 0)}
+                                                        className="w-20 rounded border border-slate-200 bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400" />
                                                 </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono font-semibold bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.grossPay).toLocaleString()}
+                                                <td className={cn('px-3 py-2 text-right font-mono font-semibold bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.grossPay).toLocaleString()}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.shaDeduction).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.nssfDeduction).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.ahlDeduction).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.taxablePay ?? 0).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{entry.personalRelief ?? 2400}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.payeTax).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.loanDeduction ?? entry.loanDeduction ?? 0).toFixed(2)}</td>
+                                                <td className="px-3 py-2 text-right">
+                                                    <input type="number" value={entry.otherDeductions ?? 0} onChange={(e) => updateEntryField(entry.id, 'otherDeductions', parseFloat(e.target.value) || 0)}
+                                                        className={cn('w-20 rounded border bg-white px-1.5 py-1 text-right font-mono text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400', entry._overrideKeys?.includes('otherDeductions') ? 'border-amber-300' : 'border-slate-200')} />
                                                 </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.payeTax).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(entry.loanDeduction ?? 0).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(entry.totalDeductions ?? 0).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.shaDeduction).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.nssfDeduction).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.ahlDeduction).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.taxablePay ?? 0).toFixed(2)}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {entry.personalRelief ?? 2400}
-                                                </td>
-                                                <td className="px-3 py-2 text-right font-mono text-rose-600">
-                                                    {entry.absentDays}
-                                                </td>
-                                                <td className="px-3 py-2 text-right font-mono text-amber-600">
-                                                    {entry.lateDays}
-                                                </td>
-                                                <td className={cn('px-3 py-2 text-right font-mono font-semibold bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>
-                                                    {Number(d.netPay).toLocaleString()}
-                                                </td>
+                                                <td className={cn('px-3 py-2 text-right font-mono bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.totalDeductions ?? entry.totalDeductions ?? 0).toFixed(2)}</td>
+                                                <td className={cn('px-3 py-2 text-right font-mono font-semibold bg-slate-50', isPreview ? 'text-amber-700' : 'text-slate-900')}>{Number(d.netPay).toLocaleString()}</td>
                                                 {compareMode && (
                                                     <>
                                                         <td className="px-3 py-2 text-right font-mono">
@@ -904,7 +796,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                                 </td>
                                             </tr>
                                             {expandedRows.has(entry.id) && (
-                                                <tr className="bg-slate-50/50">
+                                                <tr key={`expanded-${entry.id}`} className="bg-slate-50/50">
                                                     <td colSpan={colCount} className="px-3 py-3">
                                                         <div className="grid grid-cols-2 gap-4 text-xs">
                                                             <div className="space-y-2">
@@ -918,9 +810,8 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                                                     { key: 'otherBenefits', label: 'Other Benefits' },
                                                                     { key: 'bonusPay', label: 'Bonus Pay' },
                                                                     { key: 'unpaidLeaveDays', label: 'Unpaid Leave Days' },
-                                                                    { key: 'absentDays', label: 'Absent Days' },
-                                                                    { key: 'lateDays', label: 'Late Hours' },
                                                                     { key: 'insuranceRelief', label: 'Insurance Relief' },
+                                                                    { key: 'otherDeductions', label: 'Other Deductions' },
                                                                 ].map((f) => (
                                                                     <div key={f.key} className="flex items-center justify-between gap-2">
                                                                         <span className="text-slate-500">{f.label}</span>
@@ -954,24 +845,28 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                                                     <span className="font-mono text-slate-900">{Number(d.ahlDeduction).toFixed(2)}</span>
                                                                 </div>
                                                                 <div className="flex items-center justify-between gap-2">
-                                                                    <span className="text-slate-500">Personal Relief</span>
-                                                                    <span className="font-mono text-slate-900">{2400}</span>
-                                                                </div>
-                                                                <div className="flex items-center justify-between gap-2">
-                                                                    <span className="text-slate-500">Loan Deduction</span>
-                                                                    <span className="font-mono text-slate-900">{Number(entry.loanDeduction ?? 0).toFixed(2)}</span>
-                                                                </div>
-                                                                <div className="flex items-center justify-between gap-2">
-                                                                    <span className="text-slate-500">Total Deductions</span>
-                                                                    <span className="font-mono text-slate-900">{Number(entry.totalDeductions ?? 0).toFixed(2)}</span>
-                                                                </div>
-                                                                <div className="flex items-center justify-between gap-2">
                                                                     <span className="text-slate-500">Taxable Pay</span>
                                                                     <span className="font-mono text-slate-900">{Number(d.taxablePay ?? 0).toFixed(2)}</span>
                                                                 </div>
                                                                 <div className="flex items-center justify-between gap-2">
+                                                                    <span className="text-slate-500">Personal Relief</span>
+                                                                    <span className="font-mono text-slate-900">{2400}</span>
+                                                                </div>
+                                                                <div className="flex items-center justify-between gap-2">
                                                                     <span className="text-slate-500">PAYE</span>
                                                                     <span className="font-mono text-slate-900">{Number(d.payeTax).toFixed(2)}</span>
+                                                                </div>
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className="text-slate-500">Loan Deduction</span>
+                                                                    <span className="font-mono text-slate-900">{Number(d.loanDeduction ?? entry.loanDeduction ?? 0).toFixed(2)}</span>
+                                                                </div>
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className="text-slate-500">Other Deductions</span>
+                                                                    <span className="font-mono text-slate-900">{Number(d.otherDeductions ?? entry.otherDeductions ?? 0).toFixed(2)}</span>
+                                                                </div>
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className="text-slate-500">Total Deductions</span>
+                                                                    <span className="font-mono text-slate-900">{Number(d.totalDeductions ?? entry.totalDeductions ?? 0).toFixed(2)}</span>
                                                                 </div>
                                                                 <div className="flex items-center justify-between gap-2">
                                                                     <span className="text-slate-500">Net Pay</span>
@@ -1010,7 +905,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                                     </td>
                                                 </tr>
                                             )}
-                                        </>
+                                        </Fragment>
                                     );
                                 })}
                             </tbody>
@@ -1028,9 +923,6 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                 Gross: <span className="font-mono font-semibold text-slate-900">{totals.grossPay.toLocaleString()}</span>
                             </span>
                             <span className="text-slate-700">
-                                PAYE: <span className="font-mono font-semibold text-slate-900">{totals.payeTax.toFixed(2)}</span>
-                            </span>
-                            <span className="text-slate-700">
                                 SHA: <span className="font-mono font-semibold text-slate-900">{totals.shaDeduction.toFixed(2)}</span>
                             </span>
                             <span className="text-slate-700">
@@ -1041,6 +933,9 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                             </span>
                             <span className="text-slate-700">
                                 Taxable Pay: <span className="font-mono font-semibold text-slate-900">{totals.taxablePay.toFixed(2)}</span>
+                            </span>
+                            <span className="text-slate-700">
+                                PAYE: <span className="font-mono font-semibold text-slate-900">{totals.payeTax.toFixed(2)}</span>
                             </span>
                             <span className="text-slate-700">
                                 Loan Deduction: <span className="font-mono font-semibold text-slate-900">{totals.loanDeduction.toFixed(2)}</span>

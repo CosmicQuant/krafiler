@@ -1,1 +1,0 @@
-import { generateComplianceFiles } from './src/scripts/axon-extraction-engine'; const p = 'C:/Users/ADMIN/Downloads/Axon_Populated_Payroll_Test_2026-04-22 (2).csv'; generateComplianceFiles(p, { employerName: '', employerPin: '', nssfEmployerNo: '', periodMMYYYY: '' }).then(console.log).catch(console.error);

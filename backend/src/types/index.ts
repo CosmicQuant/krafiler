@@ -1,3 +1,5 @@
+export * from './jobContext';
+
 // ─── Encryption ──────────────────────────────────────────────────────────────
 
 export interface EncryptionResult {

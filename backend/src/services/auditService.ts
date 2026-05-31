@@ -1,4 +1,4 @@
-import { db } from '../db/kysely';
+import { isFirestore } from '../db/dbRouter';
 
 export async function logAudit(params: {
     clientId: number;
@@ -10,7 +10,13 @@ export async function logAudit(params: {
     newValues?: any;
     performedBy: string;
 }): Promise<void> {
+    if (isFirestore()) {
+        // Audit logs not migrated to Firestore per user request
+        return;
+    }
+
     try {
+        const { db } = await import('../db/kysely');
         await db.insertInto('audit_log').values({
             clientId: params.clientId,
             employeeId: params.employeeId || null,

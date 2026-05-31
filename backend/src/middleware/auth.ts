@@ -1,12 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'krafiler-dev-secret-change-in-production';
+const JWT_SECRET = (() => {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+        throw new Error('JWT_SECRET environment variable is required. Set it in your .env file before starting the server.');
+    }
+    return secret;
+})();
 
 export interface AuthRequest extends Request {
     employee?: {
-        id: number;
-        clientId: number;
+        id: number | string;
+        clientId: number | string;
         kraPin: string;
         employeeName: string;
         email: string;
@@ -37,8 +43,8 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 }
 
 export function signToken(employee: {
-    id: number;
-    clientId: number;
+    id: number | string;
+    clientId: number | string;
     kraPin: string;
     employeeName: string;
     email: string;

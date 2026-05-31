@@ -5,10 +5,9 @@
  * Wraps Tesseract.js and falls back to manual entry logic.
  */
 
-import { Job } from 'bullmq';
 import { createWorker } from 'tesseract.js';
 import sharp from 'sharp';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { appendJobLog } from './job-helpers';
 
 /**
@@ -66,7 +65,7 @@ function evaluateArithmetic(expression: string): number | null {
  */
 export async function solveCaptchaWithTesseract(
     imageBuffer: Buffer,
-    job?: Job<FilingJob>,
+    job?: JobContext,
     progress?: number
 ): Promise<string> {
     const tesseractWorker = await createWorker('eng');
@@ -108,7 +107,7 @@ export async function solveCaptcha(
     page: any,
     captchaSelector: string,
     inputSelector: string,
-    job?: Job<FilingJob>,
+    job?: JobContext,
     progress?: number
 ): Promise<void> {
     try {

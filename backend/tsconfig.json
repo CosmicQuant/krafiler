@@ -24,6 +24,11 @@
     ],
     "exclude": [
         "node_modules",
-        "dist"
+        "dist",
+        "src/db/migrations",
+        "src/db/schema.ts",
+        "src/db/kysely.ts",
+        "src/scripts/migrateSqliteToFirestore.ts",
+        "src/services/complianceFileGenerator.ts"
     ]
 }

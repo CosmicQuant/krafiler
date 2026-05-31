@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react';
@@ -26,6 +26,8 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
     const [currentRunId, setCurrentRunId] = useState<number | null>(null);
     const [step1Valid, setStep1Valid] = useState(false);
     const [period, setPeriod] = useState(getCurrentFilingPeriod().period);
+    const [isNavigating, setIsNavigating] = useState(false);
+    const approveRef = useRef<(() => Promise<boolean>) | null>(null);
 
     // Resume existing run when runId is present in URL
     useEffect(() => {
@@ -66,15 +68,24 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
         return () => { mounted = false; };
     }, [runId, client.id]);
 
-    const handleNext = () => {
+    const handleNext = async () => {
+        if (isNavigating) return;
         if (currentStep < 4) {
-            setCompletedSteps((prev) => [...new Set([...prev, currentStep])]);
-            // When leaving Step 1, clear the run so Step 2 always regenerates
-            // with the latest attendance data and hourly rates
-            if (currentStep === 1) {
-                setCurrentRunId(null);
+            setIsNavigating(true);
+            try {
+                // Step 1: trigger attendance approval before advancing
+                if (currentStep === 1) {
+                    if (approveRef.current) {
+                        const success = await approveRef.current();
+                        if (!success) return; // stay on step 1 if approval failed
+                    }
+                    setCurrentRunId(null);
+                }
+                setCompletedSteps((prev) => [...new Set([...prev, currentStep])]);
+                setCurrentStep((prev) => prev + 1);
+            } finally {
+                setIsNavigating(false);
             }
-            setCurrentStep((prev) => prev + 1);
         }
     };
 
@@ -93,7 +104,7 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
     const renderStepContent = () => {
         switch (currentStep) {
             case 1:
-                return <Step1Setup client={client} onValidationChange={setStep1Valid} onPeriodChange={setPeriod} />;
+                return <Step1Setup client={client} onValidationChange={setStep1Valid} onPeriodChange={setPeriod} onRegisterApprove={(fn) => { approveRef.current = fn; }} />;
             case 2:
                 return (
                     <Step5ReviewPreview
@@ -202,7 +213,7 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
             <div className="space-y-2">
                 {currentStep === 1 && !step1Valid && (
                     <p className="text-xs text-amber-600 text-right">
-                        At least 1 active employee with basic pay &gt; 0 is required, and attendance must be approved
+                        At least 1 active employee with basic pay &gt; 0 is required
                     </p>
                 )}
                 <div className="flex items-center justify-between">
@@ -222,8 +233,9 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
                     <button
                         onClick={currentStep === 4 ? onBack : handleNext}
                         disabled={
-                            currentStep !== 4 &&
-                            (currentStep === 1 && !step1Valid)
+                            isNavigating ||
+                            (currentStep !== 4 &&
+                            (currentStep === 1 && !step1Valid))
                         }
                         className={cn(
                             'inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition',
@@ -236,7 +248,9 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
                             ? 'Back to Dashboard'
                             : currentStep === 3
                               ? 'Continue to Compliance'
-                              : 'Next'}
+                              : currentStep === 1
+                                ? 'Save & Continue'
+                                : 'Next'}
                         {currentStep !== 4 && <ArrowRight className="h-4 w-4" />}
                     </button>
                 </div>

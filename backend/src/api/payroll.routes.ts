@@ -228,6 +228,7 @@ router.post('/calculate-preview', async (req: Request, res: Response) => {
             lateHours = 0,
             bonusPay = 0,
             loanDeduction = 0,
+            otherDeductions = 0,
             unpaidLeaveDays = 0,
             otherPension = 0,
             postRetMedical = 0,
@@ -238,6 +239,8 @@ router.post('/calculate-preview', async (req: Request, res: Response) => {
             standardCheckOut = '17:00',
             payStructure = 'fixed',
             period = '2026-01',
+            workScheduleConfig,
+            holidays = [],
         } = req.body;
 
         const preview = computePayrollEntry(
@@ -273,6 +276,9 @@ router.post('/calculate-preview', async (req: Request, res: Response) => {
             },
             period,
             false, // no prorating for preview
+            workScheduleConfig,
+            holidays,
+            [{ type: 'deduction', amount: otherDeductions, isStatutory: false }],
         );
 
         res.json(preview);

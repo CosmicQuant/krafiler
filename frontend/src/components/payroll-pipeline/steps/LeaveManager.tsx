@@ -9,6 +9,8 @@ interface LeaveRequest {
     leaveType: string;
     startDate: string;
     endDate: string;
+    startTime?: string | null;
+    endTime?: string | null;
     daysCount: number;
     hours: number;
     reason: string;
@@ -31,9 +33,11 @@ interface Employee {
 
 interface LeaveManagerProps {
     clientId: string;
+    employeeId?: number;
+    period?: string; // YYYY-MM format — filter leave overlapping this period
 }
 
-export function LeaveManager({ clientId }: LeaveManagerProps) {
+export function LeaveManager({ clientId, employeeId, period }: LeaveManagerProps) {
     const [requests, setRequests] = useState<LeaveRequest[]>([]);
     const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -49,6 +53,8 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
     const [formLeaveType, setFormLeaveType] = useState('');
     const [formStartDate, setFormStartDate] = useState('');
     const [formEndDate, setFormEndDate] = useState('');
+    const [formStartTime, setFormStartTime] = useState('');
+    const [formEndTime, setFormEndTime] = useState('');
     const [formDaysCount, setFormDaysCount] = useState('1');
     const [formHours, setFormHours] = useState('');
     const [formReason, setFormReason] = useState('');
@@ -63,18 +69,35 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
                 apiFetch(`/clients/${clientId}/leave-types`),
                 apiFetch(`/clients/${clientId}/employees`),
             ]);
-            if (reqRes.ok) setRequests(await reqRes.json());
+            let reqs: LeaveRequest[] = [];
+            if (reqRes.ok) reqs = await reqRes.json();
             if (typesRes.ok) setLeaveTypes(await typesRes.json());
             if (empRes.ok) {
                 const emps = await empRes.json();
                 setEmployees(emps);
             }
+
+            if (employeeId) {
+                reqs = reqs.filter(r => r.employeeId === employeeId);
+            }
+            if (period) {
+                const [year, month] = period.split('-').map(Number);
+                const monthStart = new Date(year, month - 1, 1);
+                const monthEnd = new Date(year, month, 0);
+                reqs = reqs.filter(r => {
+                    const start = new Date(r.startDate);
+                    const end = new Date(r.endDate);
+                    // Include if leave overlaps the period at all
+                    return start <= monthEnd && end >= monthStart;
+                });
+            }
+            setRequests(reqs);
         } catch {
             setError('Failed to load leave data');
         } finally {
             setLoading(false);
         }
-    }, [clientId]);
+    }, [clientId, employeeId, period]);
 
     useEffect(() => {
         fetchData();
@@ -85,6 +108,8 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
         setFormLeaveType(leaveTypes[0]?.name || '');
         setFormStartDate('');
         setFormEndDate('');
+        setFormStartTime('');
+        setFormEndTime('');
         setFormDaysCount('1');
         setFormHours('');
         setFormReason('');
@@ -103,6 +128,8 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
         setFormLeaveType(req.leaveType);
         setFormStartDate(req.startDate);
         setFormEndDate(req.endDate);
+        setFormStartTime((req as any).startTime || '');
+        setFormEndTime((req as any).endTime || '');
         setFormDaysCount(String(req.daysCount || 1));
         setFormHours(req.hours ? String(req.hours) : '');
         setFormReason(req.reason || '');
@@ -124,6 +151,8 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
             leaveType: formLeaveType,
             startDate: formStartDate,
             endDate: formEndDate,
+            startTime: formStartTime || null,
+            endTime: formEndTime || null,
             daysCount: parseInt(formDaysCount, 10) || 1,
             hours: formHours ? parseFloat(formHours) : 0,
             reason: formReason,
@@ -445,6 +474,26 @@ export function LeaveManager({ clientId }: LeaveManagerProps) {
                                         type="date"
                                         value={formEndDate}
                                         onChange={(e) => setFormEndDate(e.target.value)}
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-slate-900"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Start Time</label>
+                                    <input
+                                        type="time"
+                                        value={formStartTime}
+                                        onChange={(e) => setFormStartTime(e.target.value)}
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-slate-900"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">End Time</label>
+                                    <input
+                                        type="time"
+                                        value={formEndTime}
+                                        onChange={(e) => setFormEndTime(e.target.value)}
                                         className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-slate-900"
                                     />
                                 </div>

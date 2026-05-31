@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
+import { apiFetchJson } from '../services/api';
 import ToggleSwitch from './ToggleSwitch';
 import {
     FilingFormData,
@@ -229,12 +230,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
 
         const pollStatus = async () => {
             try {
-                const response = await fetch(`/api/tax/filing-status/${activeJobId}`);
-                if (!response.ok) {
-                    return;
-                }
-
-                const status: FilingStatusResponse = await response.json();
+                const status = await apiFetchJson<FilingStatusResponse>(`/tax/filing-status/${activeJobId}`);
                 if (cancelled) {
                     return;
                 }
@@ -275,10 +271,8 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
     const onSubmit = async (data: FilingFormData): Promise<void> => {
         try {
             const fallbackMriPeriod = getPreviousMonthRange();
-            const response = await fetch('/api/tax/file-return', {
+            const result = await apiFetchJson<FilingResponse>('/tax/file-return', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                // kraPin is uppercased by the form; backend validates too
                 body: JSON.stringify({
                     ...data,
                     kraPin: data.kraPin.toUpperCase(),
@@ -304,9 +298,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                 }),
             });
 
-            const result: FilingResponse = await response.json();
-
-            if (response.ok && result.success) {
+            if (result.success) {
                 addToast(result.message, 'success');
                 setActiveJobId(result.jobId ?? null);
                 setJobStatus(result.jobId ? {
@@ -329,11 +321,11 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                     'error'
                 );
             }
-        } catch {
-            addToast(
-                'Network error. Please check your connection and try again.',
-                'error'
-            );
+        } catch (err) {
+            const message = (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string')
+                ? err.message
+                : 'Network error. Please check your connection and try again.';
+            addToast(message, 'error');
         }
     };
 

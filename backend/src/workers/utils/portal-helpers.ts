@@ -4,8 +4,7 @@
  * Generic KRA portal page-state detection utilities.
  */
 
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { assertJobNotCancelled, appendJobLog } from './job-helpers';
 import { navigationDelay } from './delays';
 import {
@@ -18,7 +17,7 @@ import {
 
 export async function waitForAnySelector(
     page: any, selectors: string[], timeout = 20_000,
-    cancellation?: { job?: Job<FilingJob>; context?: string; progress?: number }
+    cancellation?: { job?: JobContext; context?: string; progress?: number }
 ): Promise<string | null> {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -113,7 +112,7 @@ export type PostLoginOutcome =
     | { type: 'mobile-verification'; selector: string } | { type: 'dialog'; message: string }
     | { type: 'login-failure'; message: string } | { type: 'blank-login-shell' } | { type: 'timeout' };
 
-export async function waitForPostLoginOutcome(page: any, job: Job<FilingJob>, progress: number, timeout = 18_000): Promise<PostLoginOutcome> {
+export async function waitForPostLoginOutcome(page: any, job: JobContext, progress: number, timeout = 18_000): Promise<PostLoginOutcome> {
     let dialogMessage: string | null = null;
     void waitForDialogMessage(page, 4_000).then(m => { dialogMessage = m; }).catch(() => undefined);
     const deadline = Date.now() + timeout;
@@ -146,7 +145,7 @@ export async function detectAuthenticatedPortalState(page: any, timeout = 30_000
     return null;
 }
 
-export async function waitForPortalReadyWithReload(page: any, job: Job<FilingJob>, options: {
+export async function waitForPortalReadyWithReload(page: any, job: JobContext, options: {
     description: string; selectors: string[]; timeout?: number; reloadAttempts?: number; waitForNetworkIdle?: boolean;
 }): Promise<void> {
     const { description, selectors, timeout = 20_000, reloadAttempts = 1, waitForNetworkIdle = false } = options;

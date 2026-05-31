@@ -1,1 +1,0 @@
-const ExcelJS = require('exceljs'); async function f() { const wb = new ExcelJS.Workbook(); const sh = wb.addWorksheet('S1'); sh.dataValidations.add('D2:D1048576', {type: 'list', allowBlank: true, formulae: ['"A,B,C"']}); await wb.xlsx.writeFile('testval.xlsx'); console.log('ok'); } f();

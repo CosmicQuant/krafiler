@@ -1,5 +1,6 @@
 import { CheckCircle2, FileSpreadsheet, ShieldCheck, UploadCloud } from 'lucide-react';
 import { useState } from 'react';
+import { apiFetch } from '../services/api';
 
 type PayrollOptions = {
     paye: boolean;
@@ -45,7 +46,7 @@ export default function UnifiedPayrollUploader() {
             formData.append('generateSha', String(options.sha));
 
             // Call the API endpoint
-            const response = await fetch('/api/payroll/generate-unified', {
+            const response = await apiFetch('/payroll/generate-unified', {
                 method: 'POST',
                 body: formData,
             });

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud, Calendar, Clock, Trash2, Edit, Plus } from 'lucide-react';
 import { ClientObligation } from '../types';
+import { apiFetch, apiFetchJson } from '../services/api';
 import { WorkScheduleManager } from './payroll-pipeline/steps/WorkScheduleManager';
 import { LeaveTypesManager } from './payroll-pipeline/steps/LeaveTypesManager';
 import { DepartmentsView } from './dashboard/views/DepartmentsView';
@@ -61,20 +62,28 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
         const data = new FormData();
         data.append('masterCsv', file);
         try {
-            const res = await fetch(`/api/clients/${client.id}/master-csv`, {
+            const responseData = await apiFetchJson(`/clients/${client.id}/master-csv`, {
                 method: 'POST',
                 body: data
             });
-            if (res.ok) {
-                const responseData = await res.json();
-                setFormData((prev: ClientObligation) => ({
-                    ...prev,
-                    masterFileUrl: responseData.masterFileUrl,
-                    masterFileLabel: responseData.masterFileLabel
-                }));
-            } else {
-                const errorData = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
-                alert(errorData.message || errorData.error || 'Failed to upload Master CSV.');
+            setFormData((prev: ClientObligation) => ({
+                ...prev,
+                masterFileUrl: responseData.masterFileUrl,
+                masterFileLabel: responseData.masterFileLabel
+            }));
+            // Auto-import employees from the uploaded master CSV
+            try {
+                const importData = await apiFetchJson(`/clients/${client.id}/employees/import`, {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                if (importData.imported > 0) {
+                    alert(`Imported ${importData.imported} employees from Master CSV.`);
+                } else {
+                    alert('Master CSV uploaded. No new employees found to import (they may already exist).');
+                }
+            } catch (importErr) {
+                console.warn('Employee import failed:', importErr);
             }
         } catch (err) {
             console.error('Upload failed:', err);
@@ -123,13 +132,11 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
 
     const handleSaveSchedule = async () => {
         setScheduleError(null);
-        const body = editingSchedule ? JSON.stringify({ ...scheduleForm }) : JSON.stringify({ ...scheduleForm });
+        const body = JSON.stringify({ ...scheduleForm, config: JSON.parse(scheduleForm.config) });
         const method = editingSchedule ? 'PUT' : 'POST';
-        const url = editingSchedule ? `/api/clients/${client.id}/work-schedules/${editingSchedule.id}` : `/api/clients/${client.id}/work-schedules`;
+        const path = editingSchedule ? `/clients/${client.id}/work-schedules/${editingSchedule.id}` : `/clients/${client.id}/work-schedules`;
         try {
-            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body });
-            if (!res.ok) { setScheduleError('Failed to save schedule'); return; }
-            const data = await res.json();
+            const data = await apiFetchJson(path, { method, body });
             if (editingSchedule) { setWorkSchedules(prev => prev.map(s => s.id === editingSchedule.id ? data.schedule || data : s)); }
             else { setWorkSchedules(prev => [...prev, data.schedule || data]); }
             setShowScheduleForm(false); setEditingSchedule(null);
@@ -139,21 +146,18 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
 
     const handleDeleteSchedule = async (id: number) => {
         try {
-            const res = await fetch(`/api/clients/${client.id}/work-schedules/${id}`, { method: 'DELETE' });
-            if (res.ok) setWorkSchedules(prev => prev.filter(s => s.id !== id));
+            await apiFetchJson(`/clients/${client.id}/work-schedules/${id}`, { method: 'DELETE' });
+            setWorkSchedules(prev => prev.filter(s => s.id !== id));
         } catch { /* ignore */ }
     };
 
     const handleSeedSchedules = async () => {
         setSeedingSchedules(true);
         try {
-            const res = await fetch(`/api/clients/${client.id}/work-schedules/seed-defaults`, { method: 'POST' });
-            if (res.ok) {
-                const data = await res.json();
-                const r = await fetch(`/api/clients/${client.id}/work-schedules`);
-                if (r.ok) setWorkSchedules(await r.json());
-                alert(`Seeded ${data.seeded} default work schedules`);
-            }
+            const data = await apiFetchJson(`/clients/${client.id}/work-schedules/seed-defaults`, { method: 'POST' });
+            const schedules = await apiFetchJson(`/clients/${client.id}/work-schedules`);
+            setWorkSchedules(schedules);
+            alert(`Seeded ${data.seeded} default work schedules`);
         } catch { /* ignore */ }
         setSeedingSchedules(false);
     };
@@ -162,11 +166,9 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
         setHolidayError(null);
         const body = JSON.stringify({ ...holidayForm, date: holidayForm.date + '-01' });
         const method = editingHoliday ? 'PUT' : 'POST';
-        const url = editingHoliday ? `/api/clients/${client.id}/holidays/${editingHoliday.id}` : `/api/clients/${client.id}/holidays`;
+        const path = editingHoliday ? `/clients/${client.id}/holidays/${editingHoliday.id}` : `/clients/${client.id}/holidays`;
         try {
-            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body });
-            if (!res.ok) { setHolidayError('Failed to save holiday'); return; }
-            const data = await res.json();
+            const data = await apiFetchJson(path, { method, body });
             if (editingHoliday) { setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? data.holiday || data : h)); }
             else { setHolidays(prev => [...prev, data.holiday || data]); }
             setShowHolidayForm(false); setEditingHoliday(null);
@@ -176,27 +178,25 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
 
     const handleDeleteHoliday = async (id: number) => {
         try {
-            const res = await fetch(`/api/clients/${client.id}/holidays/${id}`, { method: 'DELETE' });
-            if (res.ok) setHolidays(prev => prev.filter(h => h.id !== id));
+            await apiFetchJson(`/clients/${client.id}/holidays/${id}`, { method: 'DELETE' });
+            setHolidays(prev => prev.filter(h => h.id !== id));
         } catch { /* ignore */ }
     };
 
     const handleSeedHolidays = async () => {
         setSeedingHolidays(true);
         try {
-            const res = await fetch(`/api/clients/${client.id}/holidays/seed-kenyan`, { method: 'POST' });
-            if (res.ok) {
-                const data = await res.json();
-                const r = await fetch(`/api/clients/${client.id}/holidays`);
-                if (r.ok) setHolidays(await r.json());
-                alert(`Seeded ${data.seeded} Kenyan holidays`);
-            } else {
-                const e = await res.json().catch(() => ({}));
-                alert(e.message || 'Failed to seed holidays');
-            }
-        } catch { alert('Network error seeding holidays'); }
+            const data = await apiFetchJson(`/clients/${client.id}/holidays/seed-kenyan`, { method: 'POST' });
+            const holidays = await apiFetchJson(`/clients/${client.id}/holidays`);
+            setHolidays(holidays);
+            alert(`Seeded ${data.seeded} Kenyan holidays`);
+        } catch (err: any) {
+            alert(err?.message || 'Network error seeding holidays');
+        }
         setSeedingHolidays(false);
     };
+
+
 
     const openEditSchedule = (s: any) => {
         setEditingSchedule(s);
@@ -325,12 +325,9 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                                         const data = new FormData();
                                         data.append('logo', file);
                                         try {
-                                            const res = await fetch(`/api/clients/${client.id}/logo`, { method: 'POST', body: data });
-                                            if (res.ok) {
-                                                const d = await res.json();
-                                                setFormData((prev: ClientObligation) => ({ ...prev, logoUrl: d.logoUrl }));
-                                            } else { alert('Failed to upload logo'); }
-                                        } catch { alert('Network error uploading logo'); }
+                                            const d = await apiFetchJson(`/clients/${client.id}/logo`, { method: 'POST', body: data });
+                                            setFormData((prev: ClientObligation) => ({ ...prev, logoUrl: d.logoUrl }));
+                                        } catch { alert('Failed to upload logo'); }
                                     }}
                                 />
                             </label>
@@ -379,6 +376,25 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                                 </button>
                             </div>
                         </div>
+                        {workSchedules.length > 0 && (
+                            <div className="mb-3 flex items-center gap-2">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Default Schedule</label>
+                                <select
+                                    value={formData.defaultWorkScheduleId ?? ''}
+                                    onChange={e => {
+                                        const val = e.target.value ? parseInt(e.target.value, 10) : null;
+                                        setFormData((prev: ClientObligation) => ({ ...prev, defaultWorkScheduleId: val }));
+                                    }}
+                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-indigo-400 transition"
+                                >
+                                    <option value="">None</option>
+                                    {workSchedules.map((s: any) => (
+                                        <option key={s.id} value={String(s.id)}>{s.name}</option>
+                                    ))}
+                                </select>
+                                <span className="text-[10px] text-slate-400">Applied automatically to new employees</span>
+                            </div>
+                        )}
                         {workSchedules.length === 0 && !showScheduleForm && (
                             <p className="text-xs text-slate-500 py-4 text-center">No work schedules yet. Add one or seed defaults.</p>
                         )}

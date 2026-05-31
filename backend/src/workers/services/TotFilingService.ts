@@ -1,8 +1,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { Page } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import { appendJobLog } from '../utils/job-helpers';
 import { ensureDeclarationAccepted } from '../utils/filing-helpers';
 
@@ -13,9 +12,9 @@ const TMP_DIR = path.join(
 
 export class TotFilingService {
     private page: Page;
-    private job: Job<FilingJob>;
+    private job: JobContext;
 
-    constructor(page: Page, job: Job<FilingJob>) {
+    constructor(page: Page, job: JobContext) {
         this.page = page;
         this.job = job;
     }

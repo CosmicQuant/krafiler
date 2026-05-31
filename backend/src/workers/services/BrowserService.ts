@@ -5,8 +5,7 @@
  */
 
 import { chromium, BrowserContext, Page, Browser } from 'playwright';
-import { Job } from 'bullmq';
-import { FilingJob } from '../../types';
+import { JobContext } from '../../types';
 import {
     KRA_BROWSER_PROFILE_DIR,
     KRA_REUSE_BROWSER_PROFILE,
@@ -22,9 +21,9 @@ export class BrowserService {
     private browser: Browser | null = null;
     private context: BrowserContext | null = null;
     private page: Page | null = null;
-    private readonly job: Job<FilingJob>;
+    private readonly job: JobContext;
 
-    constructor(job: Job<FilingJob>) {
+    constructor(job: JobContext) {
         this.job = job;
     }
 

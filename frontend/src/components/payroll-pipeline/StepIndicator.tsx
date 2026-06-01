@@ -11,7 +11,7 @@ const STEPS: PipelineStep[] = [
     { id: 1, label: 'Setup & Attendance', shortLabel: 'Setup' },
     { id: 2, label: 'Review & Generate', shortLabel: 'Review' },
     { id: 3, label: 'Finalize', shortLabel: 'Fin' },
-    { id: 4, label: 'Compliance', shortLabel: 'Com' },
+    { id: 4, label: 'Generate & File', shortLabel: 'File' },
 ];
 
 interface StepIndicatorProps {

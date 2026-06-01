@@ -1,8 +1,6 @@
 import {
   RefreshCw,
-  FileArchive,
   Rocket,
-  PlayCircle,
   FileSpreadsheet,
   X,
   Cloud,
@@ -72,23 +70,6 @@ export function Desk9thView({
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 rounded-t-2xl bg-slate-50/80 px-4 py-4 gap-3 sm:gap-0">
           <h3 className="font-bold text-slate-900">Payroll Clients</h3>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => void onGenerateAllZips()}
-              disabled={isGeneratingZips}
-              className={`inline-flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-100 px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-slate-900 transition hover:bg-slate-200 ${
-                isGeneratingZips ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              {isGeneratingZips ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileArchive className="h-4 w-4 shrink-0" />
-              )}
-              <span className="hidden sm:inline">
-                {isGeneratingZips ? 'Generating...' : 'Generate All ZIPs'}
-              </span>
-              <span className="sm:hidden">{isGeneratingZips ? '...' : 'Gen All'}</span>
-            </button>
             <button className="inline-flex items-center gap-2 rounded-xl bg-[#ff0613] px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-bold text-slate-950 transition hover:bg-[#d80000]">
               <Rocket className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline">Auto-File All</span>
@@ -197,139 +178,116 @@ export function Desk9thView({
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-2 pt-2 border-t border-slate-200/50">
-                  <button
-                    onClick={() => onGoToPayrollView?.(client)}
-                    className="flex items-center justify-center w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 hover:text-slate-900 transition"
-                  >
-                    <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0 text-slate-500" />
-                    Go to Payroll View
-                  </button>
+                  <div className="flex flex-col gap-2 pt-2 border-t border-slate-200/50">
+                    <button
+                      onClick={() => onGoToPayrollView?.(client)}
+                      className="flex items-center justify-center w-full rounded-lg border border-[#ff0613]/30 bg-[#ff0613]/5 px-3 py-2.5 text-xs font-bold text-[#ff0613] hover:bg-[#ff0613] hover:text-white transition"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-2 shrink-0" />
+                      Run Payroll
+                    </button>
 
-                  <div className="flex flex-col gap-2 mt-2">
                     {client.payeZipUrl && (
-                      <a
-                        href={client.payeZipUrl}
-                        download
-                        rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500 transition"
-                      >
-                        <ZipIcon className="h-4 w-4 mr-2 shrink-0" />
-                        <span className="truncate">{client.payeZipLabel || 'Download PAYE ZIP'}</span>
-                      </a>
-                    )}
-                    {client.nssfFileUrl && (
-                      <a
-                        href={client.nssfFileUrl}
-                        download
-                        rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-blue-50 border border-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition"
-                      >
-                        <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
-                        <span className="truncate">{client.nssfFileLabel || 'Download NSSF CSV'}</span>
-                      </a>
-                    )}
-                    {client.shaFileUrl && (
-                      <a
-                        href={client.shaFileUrl}
-                        download
-                        rel="noreferrer"
-                        className="flex items-center justify-center w-full rounded-lg bg-violet-50 border border-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100 hover:text-violet-500 transition"
-                      >
-                        <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
-                        <span className="truncate">{client.shaFileLabel || 'Download SHA CSV'}</span>
-                      </a>
-                    )}
-                  </div>
-
-                  {(() => {
-                    const job = activeJobs[client.id];
-                    const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
-                    const displayJob = isDesk9Job ? job : undefined;
-                    if (!displayJob) return null;
-                    return (
-                    <div className="w-full mt-3 mb-3 bg-white border border-slate-100 rounded-lg p-2">
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
-                          {getFilingStatusLabel(displayJob)}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          {displayJob.progress}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
-                        <div
-                          className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(displayJob)}`}
-                          style={{ width: `${Math.max(displayJob.progress, 5)}%` }}
-                        ></div>
-                      </div>
-                      <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
-                        {displayJob.state === 'failed' ? (
-                          <span className="text-red-600">
-                            {displayJob.failedReason || 'An error occurred during filing.'}
-                          </span>
-                        ) : (
-                          displayJob.message
+                      <div className="flex flex-col gap-2 mt-2">
+                        {client.payeZipUrl && (
+                          <a
+                            href={client.payeZipUrl}
+                            download
+                            rel="noreferrer"
+                            className="flex items-center justify-center w-full rounded-lg bg-emerald-50 border border-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500 transition"
+                          >
+                            <ZipIcon className="h-4 w-4 mr-2 shrink-0" />
+                            <span className="truncate">{client.payeZipLabel || 'Download PAYE ZIP'}</span>
+                          </a>
+                        )}
+                        {client.nssfFileUrl && (
+                          <a
+                            href={client.nssfFileUrl}
+                            download
+                            rel="noreferrer"
+                            className="flex items-center justify-center w-full rounded-lg bg-blue-50 border border-blue-500/20 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition"
+                          >
+                            <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
+                            <span className="truncate">{client.nssfFileLabel || 'Download NSSF CSV'}</span>
+                          </a>
+                        )}
+                        {client.shaFileUrl && (
+                          <a
+                            href={client.shaFileUrl}
+                            download
+                            rel="noreferrer"
+                            className="flex items-center justify-center w-full rounded-lg bg-violet-50 border border-violet-500/20 px-3 py-1.5 text-xs font-semibold text-violet-600 hover:bg-violet-100 hover:text-violet-500 transition"
+                          >
+                            <ExcelIcon className="h-4 w-4 mr-2 shrink-0" />
+                            <span className="truncate">{client.shaFileLabel || 'Download SHA CSV'}</span>
+                          </a>
                         )}
                       </div>
-                      {isPendingFilingJob(displayJob) && (
-                        <button
-                          onClick={() => void onCancelJob(client)}
-                          disabled={
-                            Boolean(cancellingClientIds[client.id]) ||
-                            displayJob.state === 'cancelling'
-                          }
-                          className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
-                        >
-                          {Boolean(cancellingClientIds[client.id]) ||
-                          displayJob.state === 'cancelling' ? (
-                            <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
-                          ) : (
-                            <X className="h-3 w-3 shrink-0" />
-                          )}
-                          <span>
-                            {displayJob.state === 'cancelling'
-                              ? 'Cancelling...'
-                              : 'Cancel Job'}
+                    )}
+
+                    {(() => {
+                      const job = activeJobs[client.id];
+                      const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
+                      const displayJob = isDesk9Job ? job : undefined;
+                      if (!displayJob) return null;
+                      return (
+                      <div className="w-full mt-3 mb-3 bg-white border border-slate-100 rounded-lg p-2">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
+                            {getFilingStatusLabel(displayJob)}
                           </span>
-                        </button>
-                      )}
-                    </div>
-                    );
-                  })()}
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <button
-                      onClick={() => void onGenerateClientZip(client)}
-                      disabled={
-                        !(client.masterFileUrl || client.payrollSourceUrl) ||
-                        Boolean(generatingClientIds[client.id]) ||
-                        isGeneratingZips
-                      }
-                      className="flex items-center justify-center w-full gap-2 rounded-lg border border-emerald-500/30 bg-emerald-50 px-2 py-2.5 text-xs font-bold text-emerald-600 transition hover:bg-[#ff0613] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
-                    >
-                      {generatingClientIds[client.id] ? (
-                        <RefreshCw className="h-4 w-4 animate-spin shrink-0" />
-                      ) : (
-                        <PlayCircle className="h-4 w-4 shrink-0" />
-                      )}
-                      <span className="truncate">
-                        {client.masterFileUrl || client.payrollSourceUrl
-                          ? generatingClientIds[client.id]
-                            ? 'Generating...'
-                            : 'Auto Gen ZIP'
-                          : 'No CSV'}
-                      </span>
-                    </button>
-                    <div className="flex w-full gap-2">
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {displayJob.progress}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
+                          <div
+                            className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(displayJob)}`}
+                            style={{ width: `${Math.max(displayJob.progress, 5)}%` }}
+                          ></div>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                          {displayJob.state === 'failed' ? (
+                            <span className="text-red-600">
+                              {displayJob.failedReason || 'An error occurred during filing.'}
+                            </span>
+                          ) : (
+                            displayJob.message
+                          )}
+                        </div>
+                        {isPendingFilingJob(displayJob) && (
+                          <button
+                            onClick={() => void onCancelJob(client)}
+                            disabled={
+                              Boolean(cancellingClientIds[client.id]) ||
+                              displayJob.state === 'cancelling'
+                            }
+                            className="mt-2 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
+                          >
+                            {Boolean(cancellingClientIds[client.id]) ||
+                            displayJob.state === 'cancelling' ? (
+                              <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
+                            ) : (
+                              <X className="h-3 w-3 shrink-0" />
+                            )}
+                            <span>
+                              {displayJob.state === 'cancelling'
+                                ? 'Cancelling...'
+                                : 'Cancel Job'}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                      );
+                    })()}
+
+                    <div className="flex flex-col gap-2">
                       <button
                         onClick={() => void onAutoFile(client)}
                         disabled={
-                          (!client.masterFileUrl &&
-                            !client.payrollSourceUrl &&
-                            !client.payeZipUrl) ||
-                          isPendingFilingJob(activeJobs[client.id])
+                          !client.payeZipUrl || isPendingFilingJob(activeJobs[client.id])
                         }
-                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
+                        className="flex items-center justify-center w-full gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-xs font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File PAYE"
                       >
                         {isPendingFilingJob(activeJobs[client.id]) ? (
@@ -346,11 +304,9 @@ export function Desk9thView({
                       <button
                         onClick={() => void onAutoFileNssf(client)}
                         disabled={
-                          !client.nssfFileUrl ||
-                          !client.masterFileUrl ||
-                          isPendingFilingJob(activeJobs[client.id])
+                          !client.nssfFileUrl || isPendingFilingJob(activeJobs[client.id])
                         }
-                        className="flex items-center justify-center flex-1 gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
+                        className="flex items-center justify-center w-full gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-2 py-2.5 text-[10px] font-bold text-blue-600 transition hover:bg-blue-600 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
                         title="Auto File NSSF"
                       >
                         {isPendingFilingJob(activeJobs[client.id]) ? (
@@ -363,7 +319,6 @@ export function Desk9thView({
                     </div>
                   </div>
                 </div>
-              </div>
             ))}
           </div>
 
@@ -548,29 +503,13 @@ export function Desk9thView({
                     </td>
                     <td className="whitespace-normal min-w-0 px-2 py-3 sm:px-4 sm:py-4 text-right align-top">
                       <div className="mb-2 ml-auto flex w-full max-w-[150px] flex-col items-stretch gap-1.5">
-                        <div className="flex flex-col items-end gap-1 w-full">
-                          {client.payeZipUrl && formatGeneratedDate(client.lastGeneratedAt) && (
-                            <span className="text-[10px] text-right text-slate-500">
-                              Generated: {formatGeneratedDate(client.lastGeneratedAt)}
-                            </span>
-                          )}
-                          <button
-                            onClick={() => void onGenerateClientZip(client)}
-                            disabled={
-                              !(client.masterFileUrl || client.payrollSourceUrl) ||
-                              Boolean(generatingClientIds[client.id]) ||
-                              isGeneratingZips
-                            }
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-50 px-3 py-2 text-xs font-bold leading-tight text-emerald-600 transition hover:bg-[#ff0613] hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-100 disabled:bg-white disabled:text-slate-500"
-                          >
-                            {generatingClientIds[client.id] ? (
-                              <RefreshCw className="h-3 w-3 animate-spin shrink-0" />
-                            ) : (
-                              <PlayCircle className="h-3 w-3 shrink-0" />
-                            )}
-                            {generatingClientIds[client.id] ? 'Generating...' : 'Generate PAYE ZIP'}
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => onGoToPayrollView?.(client)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#ff0613]/30 bg-[#ff0613]/5 px-3 py-2 text-xs font-bold leading-tight text-[#ff0613] transition hover:bg-[#ff0613] hover:text-white"
+                        >
+                          <FileSpreadsheet className="h-3 w-3 shrink-0" />
+                          Run Payroll
+                        </button>
                         <button
                           onClick={() => void onAutoFile(client)}
                           disabled={
@@ -626,9 +565,7 @@ export function Desk9thView({
                         <button
                           onClick={() => void onAutoFileNssf(client)}
                           disabled={
-                            !client.nssfFileUrl ||
-                            !client.masterFileUrl ||
-                            isPendingFilingJob((() => {
+                            !client.nssfFileUrl || isPendingFilingJob((() => {
                               const job = activeJobs[client.id];
                               const isDesk9Job = !job?.obligationType || ['paye', 'nssf'].includes(job.obligationType);
                               return isDesk9Job ? job : undefined;

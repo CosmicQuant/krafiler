@@ -78,7 +78,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const sourceUrl = client.masterFileUrl || client.payrollSourceUrl;
         if (!sourceUrl) throw new Error(`${client.name} does not have a stored payroll CSV yet.`);
 
-        const sourceResponse = await fetch(sourceUrl, { cache: 'no-store' });
+        const sourceResponse = await apiFetch(`/clients/${client.id}/master-csv-download`, { cache: 'no-store' });
         if (!sourceResponse.ok) throw new Error(`Could not load the stored payroll CSV for ${client.name}.`);
 
         const payrollFile = await sourceResponse.blob();
@@ -197,6 +197,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             console.log(`Dispatching KRA filing job for ${client.name}...`);
             const { periodFrom, periodTo } = getCurrentFilingPeriod('paye');
             const payload = {
+                clientId: activeClient.id,
                 kraPin: activeClient.pin,
                 kraPassword: activeClient.password || activeClient.iTaxPassword || "1234",
                 periodFrom,
@@ -242,6 +243,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    clientId: client.id,
                     clientName: client.name,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || client.pin,
@@ -300,6 +302,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    clientId: client.id,
                     clientName: client.name,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || client.pin,
@@ -344,6 +347,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    clientId: client.id,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || "1234",
                     periodFrom,
@@ -404,6 +408,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 totMonth = sel.periodFrom.includes('-') ? parseInt(parts[1], 10) : parseInt(parts[1], 10);
             }
             const payload = {
+                clientId: client.id,
                 kraPin: client.pin,
                 kraPassword: client.password || client.iTaxPassword || client.pin,
                 periodFrom: sel.periodFrom,
@@ -447,6 +452,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    clientId: client.id,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || client.pin,
                     periodFrom,
@@ -492,6 +498,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    clientId: client.id,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || client.pin,
                     periodFrom,

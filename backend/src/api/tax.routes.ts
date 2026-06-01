@@ -29,6 +29,8 @@ import {
 } from '../services/filingQueue';
 import { fileNssfReturn } from '../scripts/file-nssf-return';
 import { packageToTZip } from '../scripts/kra-tot-generator';
+import { adminDb } from '../lib/firebaseAdmin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 const TMP_DIR = path.join(__dirname, '../../../tmp');
 
@@ -285,7 +287,7 @@ router.post(
             return;
         }
 
-        const { kraPin, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
+        const { kraPin, clientId, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -367,6 +369,7 @@ router.post(
                 userId,
                 payload: {
                     kraPin,
+                    clientId: typeof clientId === 'string' && clientId.trim().length > 0 ? clientId.trim() : undefined,
                     clientName: typeof clientName === 'string' && clientName.trim().length > 0
                         ? clientName.trim()
                         : undefined,
@@ -404,6 +407,16 @@ router.post(
             };
 
             await queueFilingJob(filingJob, userId);
+
+            // Increment filing counter for subscription limits
+            try {
+                await adminDb.collection('users').doc(userId).update({
+                    filingsThisMonth: FieldValue.increment(1),
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+            } catch (e) {
+                console.error('[API] Failed to increment filingsThisMonth:', e);
+            }
 
             console.log(`[API] Queued job ${jobId} for KRA PIN ${kraPin}`);
 

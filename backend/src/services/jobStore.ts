@@ -15,6 +15,7 @@ const LOGS_SUBCOLLECTION = 'logs';
 
 export interface JobStoreDoc {
     ownerUid: string;
+    clientId?: string;
     payload: FilingJob;
     status: 'waiting' | 'active' | 'processing' | 'completed' | 'failed' | 'cancelled';
     progress: number;
@@ -36,11 +37,13 @@ export async function createJob(
     jobId: string,
     ownerUid: string,
     payload: FilingJob,
-    cloudTaskName?: string
+    cloudTaskName?: string,
+    clientId?: string
 ): Promise<void> {
     const docRef = adminDb.collection(JOBS_COLLECTION).doc(jobId);
     await docRef.set({
         ownerUid,
+        clientId: clientId || payload.payload?.clientId || null,
         payload,
         status: 'waiting',
         progress: 0,
@@ -50,7 +53,7 @@ export async function createJob(
         updatedAt: Timestamp.now(),
         expiresAt: Timestamp.fromMillis(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90-day TTL
     });
-    logger.info({ jobId, ownerUid }, 'Job created in Firestore');
+    logger.info({ jobId, ownerUid, clientId }, 'Job created in Firestore');
 }
 
 export async function getJob(jobId: string): Promise<JobStoreDoc | null> {

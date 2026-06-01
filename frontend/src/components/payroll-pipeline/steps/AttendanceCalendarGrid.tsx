@@ -87,8 +87,12 @@ function daysInMonth(year: number, month: number) {
     return new Date(year, month, 0).getDate();
 }
 
-function parseConfig(config: string) {
-    try { return JSON.parse(config); } catch { return null; }
+function parseConfig(config: any) {
+    if (!config) return null;
+    if (typeof config === 'string') {
+        try { return JSON.parse(config); } catch { return null; }
+    }
+    return config;
 }
 
 /**

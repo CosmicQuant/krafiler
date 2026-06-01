@@ -731,7 +731,7 @@ export function Step5ReviewPreview({ clientId, runId, onRunCreated, period: peri
                                                 </td>
                                                 <td className="px-3 py-2 text-right bg-amber-50/50">
                                                     <button onClick={() => toggleBenefits(entry.id)} className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700 hover:bg-slate-200 transition">
-                                                        {(entry.carBenefit + entry.mealsBenefit + entry.nonCashBenefits + entry.housingBenefit + entry.otherBenefits).toLocaleString()}
+                                                        {Number((entry.carBenefit || 0) + (entry.mealsBenefit || 0) + (entry.nonCashBenefits || 0) + (entry.housingBenefit || 0) + (entry.otherBenefits || 0)).toLocaleString()}
                                                         {expandedBenefits.has(entry.id) ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                                                     </button>
                                                 </td>

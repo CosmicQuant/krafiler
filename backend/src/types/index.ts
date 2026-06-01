@@ -26,6 +26,7 @@ export type TaxObligationType = (typeof TAX_OBLIGATION_TYPES)[number];
 
 export interface NilReturnPayload {
     kraPin: string;
+    clientId?: string;
     clientName?: string;
     /** Plaintext KRA password (encryption disabled for speed) */
     kraPassword?: string;
@@ -101,6 +102,7 @@ export interface JobResult {
 
 export interface FileNilReturnRequest {
     kraPin: string;
+    clientId?: string;
     clientName?: string;
     kraPassword: string;
     periodFrom?: string;

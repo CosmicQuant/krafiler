@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveSubscription() {
+      let user = getUserData();
+      return user.subscriptionStatus == 'active' ||
+             (user.subscriptionStatus == 'past_due' && user.subscriptionEndsAt > request.time);
+    }
+
+    function withinClientLimit() {
+      let user = getUserData();
+      let limit = {
+        'starter': 5,
+        'solo': 15,
+        'practice': 75,
+        'firm': 999999
+      }[user.plan];
+      return user.clientCount < limit;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    match /clients/{clientId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerUid == request.auth.uid
+        && isActiveSubscription()
+        && withinClientLimit();
+      allow update: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /employees/{employeeId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /payrollRuns/{runId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /payrollRuns/{runId}/entries/{entryId} {
+      allow read: if isAuthenticated() && get(/databases/$(database)/documents/payrollRuns/$(runId)).data.ownerUid == request.auth.uid;
+      allow write: if isAuthenticated() && get(/databases/$(database)/documents/payrollRuns/$(runId)).data.ownerUid == request.auth.uid;
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /jobs/{jobId}/logs/{logId} {
+      allow read: if isAuthenticated() &&
+        get(/databases/$(database)/documents/jobs/$(jobId)).data.ownerUid == request.auth.uid;
+      allow write: if false;  // Only worker writes logs
+    }
+
+    match /subscriptions/{subId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow write: if false;  // Only Cloud Functions write
+    }
+  }
+}

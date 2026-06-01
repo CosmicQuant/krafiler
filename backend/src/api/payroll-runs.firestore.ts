@@ -253,7 +253,7 @@ async function generateEntriesForRun(
         const empPayStructure = (emp.payStructure || client?.payStructure || 'fixed') as 'fixed' | 'prorated';
         const scheduleId = emp.workScheduleId || null;
         const schedule = scheduleId ? scheduleMap.get(String(scheduleId)) : null;
-        const scheduleConfig = schedule && schedule.config ? JSON.parse(schedule.config) : null;
+        const scheduleConfig = schedule && schedule.config ? (typeof schedule.config === 'string' ? JSON.parse(schedule.config) : schedule.config) : null;
         const scheduledDays = getScheduledWorkDays(scheduleConfig, (run as any).period, holidays);
         const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, (run as any).period);
 
@@ -496,10 +496,11 @@ router.get('/:clientId/payroll-runs', async (req: AuthenticatedRequest, res) => 
             .collection('payrollRuns')
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
-            .orderBy('createdAt', 'desc')
             .get();
 
-        const runs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
         res.json(runs);
     } catch (err) {
         console.error('Error fetching payroll runs from Firestore:', err);
@@ -675,11 +676,12 @@ router.get('/:clientId/payroll-runs/:id/entries', async (req: AuthenticatedReque
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .where('payrollRunId', '==', id)
-            .orderBy('employeeName', 'asc')
             .get();
 
-        const entriesWithOverrides = snapshot.docs.map((d) => {
-            const entry = { id: d.id, ...d.data() } as any;
+        const entriesWithOverrides = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (a.employeeName || '').localeCompare(b.employeeName || ''))
+            .map((entry: any) => {
             const merged = { ...entry };
             if (entry.overrides) {
                 try {
@@ -762,7 +764,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
             const schedule = emp.workScheduleId
                 ? await adminDb.collection('workSchedules').doc(String(emp.workScheduleId)).get()
                 : null;
-            const scheduleConfig = schedule && schedule.exists && schedule.data()?.config ? JSON.parse(schedule.data()!.config) : null;
+            const scheduleConfig = schedule && schedule.exists && schedule.data()?.config ? (typeof schedule.data()!.config === 'string' ? JSON.parse(schedule.data()!.config) : schedule.data()!.config) : null;
 
             const [runYear] = run.period.split('-');
             const holidaysSnapshot = await adminDb
@@ -1267,10 +1269,11 @@ router.get('/:clientId/p10', async (req: AuthenticatedRequest, res) => {
             .where('period', '>=', `${year}-01`)
             .where('period', '<=', `${year}-12`)
             .where('status', '==', 'completed')
-            .orderBy('period', 'asc')
             .get();
 
-        const runs = runsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
         let entries: any[] = [];
@@ -1357,10 +1360,11 @@ router.get('/:clientId/p11/:kraPin', async (req: AuthenticatedRequest, res) => {
             .where('period', '>=', `${year}-01`)
             .where('period', '<=', `${year}-12`)
             .where('status', '==', 'completed')
-            .orderBy('period', 'asc')
             .get();
 
-        const runs = runsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
         let entries: any[] = [];
@@ -1437,10 +1441,11 @@ router.get('/:clientId/p10/pdf', async (req: AuthenticatedRequest, res: Response
             .where('period', '>=', `${year}-01`)
             .where('period', '<=', `${year}-12`)
             .where('status', '==', 'completed')
-            .orderBy('period', 'asc')
             .get();
 
-        const runs = runsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
         let entries: any[] = [];
@@ -1542,10 +1547,11 @@ router.get('/:clientId/p11/:kraPin/pdf', async (req: AuthenticatedRequest, res: 
             .where('period', '>=', `${year}-01`)
             .where('period', '<=', `${year}-12`)
             .where('status', '==', 'completed')
-            .orderBy('period', 'asc')
             .get();
 
-        const runs = runsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
         let entries: any[] = [];
@@ -1645,14 +1651,194 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
         const clientId = req.params.clientId;
         const uid = req.user!.uid;
 
-        // Verify run exists and belongs to user
         const runDoc = await adminDb.collection('payrollRuns').doc(id).get();
         if (!runDoc.exists || runDoc.data()?.ownerUid !== uid || runDoc.data()?.clientId !== clientId) {
             return res.status(404).json({ message: 'Payroll run not found' });
         }
+        const run = runDoc.data() as any;
 
-        return res.status(501).json({
-            message: 'Compliance generation not yet available in Firestore mode. Feature coming soon.',
+        const clientDoc = await adminDb.collection('clients').doc(clientId).get();
+        if (!clientDoc.exists || clientDoc.data()?.ownerUid !== uid) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+        const client = clientDoc.data() as any;
+
+        const entriesSnapshot = await adminDb
+            .collection('payrollEntries')
+            .where('ownerUid', '==', uid)
+            .where('clientId', '==', clientId)
+            .where('payrollRunId', '==', id)
+            .get();
+        if (entriesSnapshot.empty) {
+            return res.status(400).json({ message: 'No payroll entries found for this run' });
+        }
+        const entries = entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        const employeesSnapshot = await adminDb
+            .collection('employees')
+            .where('ownerUid', '==', uid)
+            .where('clientId', '==', clientId)
+            .get();
+        const empMap = new Map(employeesSnapshot.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+
+        const { generateComplianceFiles } = await import('../scripts/axon-extraction-engine');
+        const { uploadFile, getSignedDownloadUrl } = await import('../lib/cloudStorage');
+
+        const workspaceDir = path.join(process.env.TEMP_DIR || '/tmp', 'compliance-gen', `${clientId}_${id}_${Date.now()}`);
+        fs.mkdirSync(workspaceDir, { recursive: true });
+
+        const [yearStr, monthStr] = run.period.split('-');
+        const mm = String(parseInt(monthStr, 10)).padStart(2, '0');
+        const yyyy = yearStr;
+        const periodMMYYYY = `${mm}${yyyy}`;
+
+        const headers = [
+            'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
+            'SHA No', 'NSSF No', 'Residential Status', 'Type of Employee', 'Persons with Disability(PWD)',
+            'Exemption Certificate', 'Total Cash Pay (A)', 'Value of Car Benefit (B)', 'Value of Meals (C)',
+            'Non Cash Benefits (D)', 'Type of Housing', 'Housing Benefit (F)', 'Other Benefits (G)',
+            'Total Gross Pay (Ksh) (H)', 'Social Health Insurance Fund (I)', 'NSSF Contribution (J)',
+            'Other Pension Contribution (K)', 'Post Retirement Medical Fund (L)', 'Mortgage Interest (M)',
+            'Affordable Housing Levy (N)', 'Taxable Pay(Ksh) (O)', 'Monthly Personal Relief (Ksh) (P)',
+            'Amount of Insurance Relief (Q)', 'PAYE Tax (Ksh) (R)', 'Self Assessed PAYE Tax (Ksh) (S)',
+        ];
+
+        const csvLines: string[] = [];
+        csvLines.push(`COMPANY NAME:,${client.name || ''}`);
+        csvLines.push(`COMPANY KRA PIN:,${client.pin || ''}`);
+        csvLines.push(`COMPANY NSSF NO:,${client.nssfNo || ''}`);
+        csvLines.push(`COMPANY NSSF PASSWORD:,${client.nssfPassword || ''}`);
+        csvLines.push(`COMPANY SHA LOGIN:,${client.shaLogin || ''}`);
+        csvLines.push(`COMPANY SHA PASSWORD:,${client.shaPassword || ''}`);
+        csvLines.push('');
+        csvLines.push(headers.join(','));
+
+        for (const entry of entries) {
+            const e = entry as any;
+            const emp = empMap.get(String(e.employeeId)) as any;
+            const row: (string | number)[] = [];
+            row.push(e.payrollNumber || emp?.payrollNumber || '');
+            row.push(e.kraPin || emp?.kraPin || '');
+            row.push(emp?.idNumber || '');
+            row.push(emp?.identityType || 'National ID');
+            row.push(e.employeeName || '');
+            row.push(emp?.shaNo || '');
+            row.push(emp?.nssfNo || '');
+            row.push(emp?.residentialStatus || 'Resident');
+            row.push(emp?.typeOfEmployee || 'Primary Employee');
+            row.push(emp?.pwd || 'No');
+            row.push(emp?.exemptionCert || '');
+            row.push(e.basicPay || 0);
+            row.push(emp?.carBenefit || 0);
+            row.push(emp?.mealsBenefit || 0);
+            row.push(emp?.nonCashBenefits || 0);
+            row.push(emp?.typeOfHousing || 'Benefit not given');
+            row.push(emp?.housingBenefit || 0);
+            row.push(emp?.otherBenefits || 0);
+            row.push(e.grossPay || 0);
+            row.push(e.shaDeduction || 0);
+            row.push(e.nssfDeduction || 0);
+            row.push(emp?.otherPension || 0);
+            row.push(emp?.postRetMedical || 0);
+            row.push(emp?.mortgageInterest || 0);
+            row.push(e.ahlDeduction || 0);
+            row.push(e.taxablePay || 0);
+            row.push(2400);
+            row.push(emp?.insuranceRelief || 0);
+            row.push(e.payeTax || 0);
+            row.push(e.payeTax || 0);
+            csvLines.push(row.map((v) => String(v ?? '')).join(','));
+        }
+
+        const csvPath = path.join(workspaceDir, 'payroll_entries.csv');
+        fs.writeFileSync(csvPath, csvLines.join('\n'), 'utf-8');
+
+        const config = {
+            employerPin: client.pin || 'P000000000A',
+            nssfEmployerNo: client.nssfNo || 'N00000000',
+            employerName: client.name || 'Generated Client',
+            periodMMYYYY,
+        };
+
+        const { generatePaye, generateNssf, generateSha } = req.body;
+        const options = {
+            generatePaye: generatePaye !== false,
+            generateNssf: generateNssf !== false,
+            generateSha: generateSha !== false,
+        };
+
+        const outputPaths = await generateComplianceFiles(csvPath, config, options);
+
+        const timestamp = Date.now();
+        let payeZipUrl: string | null = null;
+        let payeZipLabel: string | null = null;
+        let nssfFileUrl: string | null = null;
+        let nssfFileLabel: string | null = null;
+        let shaFileUrl: string | null = null;
+        let shaFileLabel: string | null = null;
+
+        if (outputPaths.payeZipPath && fs.existsSync(outputPaths.payeZipPath)) {
+            const label = `${timestamp}_${config.employerPin}_PAYE.zip`;
+            const gcsPath = `users/${uid}/clients/${clientId}/generated/${label}`;
+            await uploadFile(outputPaths.payeZipPath, gcsPath);
+            payeZipUrl = await getSignedDownloadUrl(gcsPath, 60);
+            payeZipLabel = label;
+        }
+        if (outputPaths.nssfFilePath && fs.existsSync(outputPaths.nssfFilePath)) {
+            const label = path.basename(outputPaths.nssfFilePath);
+            const gcsPath = `users/${uid}/clients/${clientId}/generated/${label}`;
+            await uploadFile(outputPaths.nssfFilePath, gcsPath);
+            nssfFileUrl = await getSignedDownloadUrl(gcsPath, 60);
+            nssfFileLabel = label;
+        }
+        if (outputPaths.shaFilePath && fs.existsSync(outputPaths.shaFilePath)) {
+            const label = path.basename(outputPaths.shaFilePath);
+            const gcsPath = `users/${uid}/clients/${clientId}/generated/${label}`;
+            await uploadFile(outputPaths.shaFilePath, gcsPath);
+            shaFileUrl = await getSignedDownloadUrl(gcsPath, 60);
+            shaFileLabel = label;
+        }
+
+        // Clean up temp workspace
+        try {
+            if (fs.existsSync(workspaceDir)) fs.rmSync(workspaceDir, { recursive: true, force: true });
+        } catch { /* ignore */ }
+
+        // Update client doc
+        const updateData: any = { updatedAt: Timestamp.now() };
+        if (payeZipUrl) {
+            updateData['generatedFiles.payeZipUrl'] = payeZipUrl;
+            updateData['generatedFiles.payeZipLabel'] = payeZipLabel;
+            updateData['status.paye'] = 'generated';
+        }
+        if (nssfFileUrl) {
+            updateData['generatedFiles.nssfFileUrl'] = nssfFileUrl;
+            updateData['generatedFiles.nssfFileLabel'] = nssfFileLabel;
+            updateData['status.nssf'] = 'generated';
+        }
+        if (shaFileUrl) {
+            updateData['generatedFiles.shaFileUrl'] = shaFileUrl;
+            updateData['generatedFiles.shaFileLabel'] = shaFileLabel;
+            updateData['status.sha'] = 'generated';
+        }
+        if (outputPaths.summaryAmounts) {
+            const sa = outputPaths.summaryAmounts;
+            if (sa.payeAmount !== undefined) updateData['amounts.payeAmount'] = sa.payeAmount;
+            if (sa.nitaAmount !== undefined) updateData['amounts.nitaAmount'] = sa.nitaAmount;
+            if (sa.housingLevyAmount !== undefined) updateData['amounts.housingLevyAmount'] = sa.housingLevyAmount;
+            if (sa.nssfAmount !== undefined) updateData['amounts.nssfAmount'] = sa.nssfAmount;
+            if (sa.shaAmount !== undefined) updateData['amounts.shaAmount'] = sa.shaAmount;
+        }
+        await adminDb.collection('clients').doc(clientId).update(updateData);
+
+        res.json({
+            payeZipUrl,
+            payeZipLabel,
+            nssfFileUrl,
+            nssfFileLabel,
+            shaFileUrl,
+            shaFileLabel,
+            summaryAmounts: outputPaths.summaryAmounts || {},
         });
     } catch (err: any) {
         console.error('Error generating compliance files from Firestore:', err);
@@ -1705,7 +1891,6 @@ router.post('/:clientId/attendance-payroll-preview', async (req: AuthenticatedRe
             .where('clientId', '==', clientId)
             .where('date', '>=', periodStart)
             .where('date', '<=', periodEnd)
-            .orderBy('date', 'desc')
             .get();
 
         const latestAttByDay = new Map<string, any>();
@@ -1911,7 +2096,7 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
             if (absentCount <= 0) continue;
 
             const ws = (emp as any).workScheduleId ? scheduleMap2.get(String((emp as any).workScheduleId)) : null;
-            const scheduleConfig = ws && (ws as any).config ? JSON.parse((ws as any).config) : null;
+            const scheduleConfig = ws && (ws as any).config ? (typeof (ws as any).config === 'string' ? JSON.parse((ws as any).config) : (ws as any).config) : null;
 
             const workDays: string[] = [];
             for (let d = 1; d <= daysInMonth; d++) {

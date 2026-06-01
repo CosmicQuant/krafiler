@@ -157,7 +157,7 @@ export function EmployeeManager({ clientId, onEmployeeClick }: EmployeeManagerPr
                                         </span>
                                     </td>
                                     <td className="py-2 text-right font-medium text-slate-700">
-                                        KES {emp.basicPay.toLocaleString()}
+                                        KES {Number(emp.basicPay || 0).toLocaleString()}
                                     </td>
                                     <td className="py-2 text-right">
                                         <div className="flex items-center justify-end gap-1">

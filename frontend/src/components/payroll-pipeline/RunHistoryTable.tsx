@@ -33,7 +33,7 @@ function formatDate(dateStr: string) {
 }
 
 function formatMoney(amount: number) {
-    return `KES ${amount.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `KES ${Number(amount || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function mapStatusToRunStatus(status: string): RunStatus {

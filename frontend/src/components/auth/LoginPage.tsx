@@ -27,7 +27,7 @@ export function LoginPage() {
         <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4">
             <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-lg">
                 <div className="mb-6 text-center">
-                    <h1 className="text-2xl font-bold text-slate-900">KRAFILER</h1>
+                    <h1 className="text-2xl font-bold text-slate-900">zani</h1>
                     <p className="mt-2 text-sm text-slate-500">
                         Tax filing & payroll automation for accountants
                     </p>

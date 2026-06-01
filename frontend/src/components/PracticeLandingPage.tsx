@@ -1,7 +1,7 @@
 /**
  * PracticeLandingPage.tsx
  *
- * Modern, conversion-focused landing page for Kwanta.ai.
+ * Modern, conversion-focused landing page for zani.
  * White + KRA red + black palette. Clean SaaS aesthetic.
  */
 
@@ -43,7 +43,7 @@ const features = [
     {
         icon: Zap,
         title: 'One Master Payroll, All Authorities',
-        desc: 'Upload a single payroll file. Kwanta.ai auto-generates KRA PAYE, NSSF, SHA & HELB packs — formatted and ready to file. It can also automatically file for you.',
+        desc: 'Upload a single payroll file. zani auto-generates KRA PAYE, NSSF, SHA & HELB packs — formatted and ready to file. It can also automatically file for you.',
         color: 'red',
     },
     {
@@ -82,7 +82,7 @@ const workflowSteps = [
     {
         step: '01',
         title: 'Upload Your Data',
-        desc: 'Drop your unified payroll spreadsheet (Excel or CSV). Kwanta.ai reads employee details, PINs, and statutory lines automatically.',
+        desc: 'Drop your unified payroll spreadsheet (Excel or CSV). zani reads employee details, PINs, and statutory lines automatically.',
     },
     {
         step: '02',
@@ -106,7 +106,7 @@ const testimonials = [
         name: 'James Mwangi',
         title: 'CPA, Managing Partner',
         firm: 'Mwangi & Associates',
-        quote: 'We used to spend 3 days every month on KRA filings. With Kwanta.ai, it is done in 2 hours. The automation is a game changer for our practice.',
+        quote: 'We used to spend 3 days every month on KRA filings. With zani, it is done in 2 hours. The automation is a game changer for our practice.',
         rating: 5,
     },
     {
@@ -120,7 +120,7 @@ const testimonials = [
         name: 'Peter Kimani',
         title: 'Tax Consultant',
         firm: 'PK Tax Advisory',
-        quote: 'I manage 45 clients. Before Kwanta.ai, I needed two junior staff just for portal work. Now I handle everything myself from one dashboard.',
+        quote: 'I manage 45 clients. Before zani, I needed two junior staff just for portal work. Now I handle everything myself from one dashboard.',
         rating: 5,
     },
 ];
@@ -136,7 +136,7 @@ const authorityLogos = [
 
 type PayrollOptions = { paye: boolean; nssf: boolean; sha: boolean };
 
-const KwantaLoader = () => (
+const ZaniLoader = () => (
     <div className="flex items-center justify-center space-x-1">
         <div className="h-2 w-2 animate-bounce rounded-full bg-[#ff0613]" style={{ animationDelay: '0ms' }} />
         <div className="h-2 w-2 animate-bounce rounded-full bg-[#ff0613]" style={{ animationDelay: '150ms' }} />
@@ -210,8 +210,9 @@ function DemoTotForm() {
                 })
             });
 
-            setDownloadUrl(data.totInfo?.url || null);
-            setDownloadLabel(data.totInfo?.label || null);
+            const totData = data as any;
+            setDownloadUrl(totData.totInfo?.url || null);
+            setDownloadLabel(totData.totInfo?.label || null);
             setStatus('done');
         } catch (err) {
             console.error('TOT generation error:', err);
@@ -313,7 +314,7 @@ function DemoTotForm() {
                     disabled={!pin || !month || !amount || status === 'generating'}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#ff0613] px-5 py-3.5 text-sm font-bold text-white transition hover:bg-[#d80000] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                    {status === 'generating' ? <KwantaLoader /> : <FileArchive className="h-4 w-4" />}
+                    {status === 'generating' ? <ZaniLoader /> : <FileArchive className="h-4 w-4" />}
                     {status === 'generating' ? 'Generating ZIP...' : status === 'done' ? 'Regenerate ZIP' : 'Generate ToT ZIP'}
                 </button>
 
@@ -538,7 +539,7 @@ export default function PracticeLandingPage() {
             formData.append('generateSha', String(payrollOptions.sha));
             formData.append('clientName', 'Demo');
 
-            const data = await apiFetchJson('/payroll/generate-unified', { method: 'POST', body: formData });
+            const data = await apiFetchJson<any>('/payroll/generate-unified', { method: 'POST', body: formData });
             if (!data.masterZipUrl) {
                 throw new Error('No payroll pack was generated');
             }
@@ -551,7 +552,7 @@ export default function PracticeLandingPage() {
             });
             setPayrollStatus('done');
 
-            const filename = data.masterZipUrl.split('/').pop() || 'Kwanta.ai_Payroll_Pack.zip';
+            const filename = data.masterZipUrl.split('/').pop() || 'zani_Payroll_Pack.zip';
             const a = document.createElement('a');
             a.href = data.masterZipUrl;
             a.download = filename;
@@ -588,7 +589,7 @@ export default function PracticeLandingPage() {
                         </div>
                         <div>
                             <span className="text-lg font-black tracking-tight text-slate-900">
-                                Kwanta<span className="text-[#ff0613]">.ai</span>
+                                zani<span className="text-[#ff0613]">.ai</span>
                             </span>
                         </div>
                     </div>
@@ -622,7 +623,7 @@ export default function PracticeLandingPage() {
                         </h1>
 
                         <p className="mx-auto mt-8 max-w-2xl text-lg text-slate-500 sm:text-xl leading-relaxed">
-                            AI-powered automation for <span className="text-[#ff0613] font-semibold">KRA, NSSF, SHA, Tourism Fund & More</span>. Kwanta.ai generates ZIP files and Excel/CSV files ready to upload and submit, and can also file everything automatically.
+                            AI-powered automation for <span className="text-[#ff0613] font-semibold">KRA, NSSF, SHA, Tourism Fund & More</span>. zani generates ZIP files and Excel/CSV files ready to upload and submit, and can also file everything automatically.
                             <span className="text-slate-900 font-semibold"> No Excel data entry. No portal hopping. Just results.</span>
                         </p>
 
@@ -835,7 +836,7 @@ export default function PracticeLandingPage() {
                                 disabled={!payrollFile || selectedOutputCount === 0 || payrollStatus === 'processing'}
                                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#ff0613] px-5 py-3.5 text-sm font-bold text-white transition hover:bg-[#d80000] disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                {payrollStatus === 'processing' ? <KwantaLoader /> : <Download className="h-4 w-4" />}
+                                {payrollStatus === 'processing' ? <ZaniLoader /> : <Download className="h-4 w-4" />}
                                 {payrollStatus === 'processing' ? 'Generating...' : 'Generate Payroll Pack'}
                             </button>
 
@@ -847,7 +848,7 @@ export default function PracticeLandingPage() {
                                         </div>
                                         <a
                                             href={payrollResponse.masterZipUrl}
-                                            download={payrollResponse.masterZipUrl.split('/').pop() || 'Kwanta.ai_Payroll_Pack.zip'}
+                                            download={payrollResponse.masterZipUrl.split('/').pop() || 'zani_Payroll_Pack.zip'}
                                             className="rounded-lg bg-[#ff0613] px-4 py-2 text-xs font-bold text-white hover:bg-[#d80000]"
                                         >
                                             Download All ZIP
@@ -920,7 +921,7 @@ export default function PracticeLandingPage() {
                                 Trusted by Kenyan accounting firms
                             </h2>
                             <p className="mt-4 text-lg text-slate-500">
-                                See what practicing accountants say about Kwanta.ai.
+                                See what practicing accountants say about zani.
                             </p>
                         </div>
                     </div>
@@ -976,7 +977,7 @@ export default function PracticeLandingPage() {
                                 Ready to automate your practice?
                             </h2>
                             <p className="mx-auto mt-6 max-w-xl text-lg text-slate-500">
-                                Join 150+ Kenyan firms already using Kwanta.ai to file returns faster, track clients better,
+                                Join 150+ Kenyan firms already using zani to file returns faster, track clients better,
                                 and never miss a deadline.
                             </p>
                             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -1008,11 +1009,11 @@ export default function PracticeLandingPage() {
                                 <Landmark className="h-4 w-4" />
                             </div>
                             <span className="text-lg font-black tracking-tight text-slate-900">
-                                Kwanta<span className="text-[#ff0613]">.ai</span>
+                                zani<span className="text-[#ff0613]">.ai</span>
                             </span>
                         </div>
                         <p className="text-sm text-slate-400">
-                            &copy; 2026 Kwanta.ai. Built for Kenyan finance teams.
+                            &copy; 2026 zani. Built for Kenyan finance teams.
                         </p>
                         <div className="flex gap-6 text-sm font-medium text-slate-500">
                             <a href="#features" className="transition hover:text-[#ff0613]">Features</a>

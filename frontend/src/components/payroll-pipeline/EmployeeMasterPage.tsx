@@ -408,14 +408,14 @@ export function EmployeeMasterPage({ client, onBack }: EmployeeMasterPageProps) 
                                                 );
                                             })}
                                             {/* Computed columns */}
-                                            <td className="px-2 py-1.5 text-right font-mono font-semibold text-slate-900">{computed.grossSalary.toLocaleString()}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.shaContribution.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.nssfContribution.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.ahl.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.taxablePay.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.personalRelief.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.paye.toFixed(2)}</td>
-                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.selfAssessedPaye.toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono font-semibold text-slate-900">{Number(computed.grossSalary || 0).toLocaleString()}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.shaContribution || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.nssfContribution || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.ahl || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.taxablePay || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.personalRelief || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.paye || 0).toFixed(2)}</td>
+                                            <td className="px-2 py-1.5 text-right font-mono text-slate-700">{Number(computed.selfAssessedPaye || 0).toFixed(2)}</td>
                                         </tr>
                                     );
                                 })

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+
 import {
     LayoutDashboard,
     LogOut,
@@ -85,7 +85,7 @@ export function Sidebar({
                         </div>
                         {!collapsed && (
                             <span className="text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap">
-                                Kwanta<span className="text-[#ff0613]">.ai</span>
+                                zani
                             </span>
                         )}
                     </div>

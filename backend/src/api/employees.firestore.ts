@@ -31,10 +31,11 @@ router.get('/:clientId/employees', async (req: AuthenticatedRequest, res) => {
             .collection(EMPLOYEES_COLLECTION)
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
-            .orderBy('employeeName', 'asc')
             .get();
 
-        const employees = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const employees = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .sort((a: any, b: any) => (a.employeeName || '').localeCompare(b.employeeName || ''));
         res.json(employees);
     } catch (err) {
         console.error('Error fetching employees from Firestore:', err);
@@ -269,8 +270,10 @@ router.post('/:clientId/employees/import', async (req: AuthenticatedRequest, res
 
         const clientData = clientDoc.data()!;
 
-        // Fetch payroll data via internal API (routes through current database mode)
-        const payrollRes = await fetch(`${req.protocol}://${req.get('host')}/api/clients/${clientId}/payroll-data`);
+        // Fetch payroll data via internal API (same container, so localhost works in Cloud Run / local)
+        const payrollRes = await fetch(`http://localhost:${process.env.PORT || '3001'}/api/clients/${clientId}/payroll-data`, {
+            headers: { Authorization: req.headers.authorization || '' },
+        });
         const payrollData = await payrollRes.json();
 
         if (!payrollData.hasData || !payrollData.employees?.length) {
@@ -391,8 +394,10 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const period = (req.query.period as string) || '';
         const periodLabel = period ? `${period.substring(0, 2)}/${period.substring(2)}` : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
-        // Fetch payroll data via internal API
-        const payrollRes = await fetch(`${req.protocol}://${req.get('host')}/api/clients/${clientId}/payroll-data`);
+        // Fetch payroll data via internal API (same container, so localhost works in Cloud Run / local)
+        const payrollRes = await fetch(`http://localhost:${process.env.PORT || '3001'}/api/clients/${clientId}/payroll-data`, {
+            headers: { Authorization: req.headers.authorization || '' },
+        });
         const payrollData = await payrollRes.json();
 
         if (!payrollData.hasData || !payrollData.employees?.length) {

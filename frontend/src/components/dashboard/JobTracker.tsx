@@ -142,9 +142,9 @@ export default function JobTracker({
     const [elapsedTime, setElapsedTime] = useState(0);
     const colors = obligationColors[obligationType] || obligationColors.paye;
 
-    // Track elapsed time for active jobs
+    // Track elapsed time for active / queued jobs
     useEffect(() => {
-        if (status !== 'processing' && status !== 'preparing') return;
+        if (status !== 'processing' && status !== 'preparing' && status !== 'queued') return;
         const interval = setInterval(() => setElapsedTime(t => t + 1), 1000);
         return () => clearInterval(interval);
     }, [status]);
@@ -195,8 +195,15 @@ export default function JobTracker({
                                 <div className="text-sm font-semibold text-amber-400">
                                     {queuePosition !== undefined && queuePosition > 0
                                         ? `Position #${queuePosition} in queue`
-                                        : 'Waiting to start'}
+                                        : elapsedTime > 30
+                                            ? 'Warming up worker...'
+                                            : 'Waiting to start'}
                                 </div>
+                                {elapsedTime > 30 && (
+                                    <div className="text-xs text-slate-400 mt-0.5">
+                                        Cloud Run cold start (~45s). Your job will begin shortly.
+                                    </div>
+                                )}
                                 {estimatedStartTime && (
                                     <div className="text-xs text-slate-400 mt-0.5">
                                         Estimated start: {new Date(estimatedStartTime).toLocaleTimeString()}

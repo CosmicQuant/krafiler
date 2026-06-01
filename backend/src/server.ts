@@ -59,6 +59,8 @@ import pinoHttp from 'pino-http';
 import { verifyAuth } from './middleware/verifyAuth';
 import { serveReceipt } from './middleware/receipts';
 import httpWorkerRoutes from './workers/httpWorker';
+import subscriptionRoutes from './api/subscriptions.firestore';
+import { checkSubscriptionLimits } from './middleware/subscription';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
@@ -107,24 +109,30 @@ app.use('/health', (_req, res) => {
 // Auth-protected receipt serving
 app.use('/api/receipts/*', verifyAuth, serveReceipt);
 
+// Public Paystack webhook (must be before protected routes so verifyAuth doesn't block it)
+app.use('/api/subscriptions/webhook', subscriptionRoutes);
+
 // Protected API routes — Firestore only
-app.use('/api/tax', verifyAuth, taxRoutes);
-app.use('/api/payroll', verifyAuth, payrollFirestoreRoutes);
-app.use('/api/clients', verifyAuth, clientFirestoreRoutes);
-app.use('/api/clients', verifyAuth, employeeFirestoreRoutes);
-app.use('/api/clients', verifyAuth, leaveFirestoreRoutes);
-app.use('/api/clients', verifyAuth, loansFirestoreRoutes);
-app.use('/api/clients', verifyAuth, attendanceFirestoreRoutes);
-app.use('/api/clients', verifyAuth, reportsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, emailFirestoreRoutes);
-app.use('/api/portal', verifyAuth, portalFirestoreRoutes);
-app.use('/api/clients', verifyAuth, payrollRunsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, departmentsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, documentsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, auditFirestoreRoutes);
-app.use('/api/clients', verifyAuth, kpiFirestoreRoutes);
-app.use('/api/clients', verifyAuth, workScheduleFirestoreRoutes);
-app.use('/api/clients', verifyAuth, holidaysFirestoreRoutes);
+app.use('/api/tax', verifyAuth, checkSubscriptionLimits, taxRoutes);
+app.use('/api/payroll', verifyAuth, checkSubscriptionLimits, payrollFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, clientFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, employeeFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, leaveFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, loansFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, attendanceFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, reportsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, emailFirestoreRoutes);
+app.use('/api/portal', verifyAuth, checkSubscriptionLimits, portalFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, payrollRunsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, departmentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, documentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, auditFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, kpiFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, workScheduleFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, holidaysFirestoreRoutes);
+
+// Subscription routes (protected, except webhook mounted above)
+app.use('/api/subscriptions', verifyAuth, subscriptionRoutes);
 
 // Cloud Tasks worker endpoint
 if (process.env.USE_CLOUD_TASKS === 'true') {

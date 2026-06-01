@@ -6,7 +6,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { kraFilingQueue } from '../queues/kraFilingQueue';
+
 import { enqueueFilingJob, cancelTask, listQueueTasks } from '../lib/cloudTasks';
 import * as jobStore from './jobStore';
 import { FilingJob, FilingStepLog } from '../types';
@@ -74,6 +74,7 @@ export async function findDuplicatePendingFiling(
 async function findDuplicateInBullMQ(
     input: FilingGuardInput
 ): Promise<{ jobId: string; state: PendingFilingState } | null> {
+    const { kraFilingQueue } = await import('../queues/kraFilingQueue');
     const requestedKey = buildPendingFilingKey(input);
     const pendingJobs = await kraFilingQueue.getJobs(['waiting', 'active', 'delayed'], 0, 199, true);
 
@@ -165,11 +166,12 @@ export async function queueFilingJob(
     ownerUid: string
 ): Promise<{ jobId: string; taskName?: string }> {
     if (!USE_CLOUD_TASKS) {
+        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         await (kraFilingQueue.add as any)('file-return', filingJob, { jobId: filingJob.jobId });
         return { jobId: filingJob.jobId };
     }
 
-    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob);
+    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
     const taskName = await enqueueFilingJob(filingJob.jobId);
     await jobStore.updateJob(filingJob.jobId, { cloudTaskName: taskName });
     return { jobId: filingJob.jobId, taskName };
@@ -180,11 +182,12 @@ export async function queueNssfJob(
     ownerUid: string
 ): Promise<{ jobId: string; taskName?: string }> {
     if (!USE_CLOUD_TASKS) {
+        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         await (kraFilingQueue.add as any)('nssf-return', filingJob, { jobId: filingJob.jobId });
         return { jobId: filingJob.jobId };
     }
 
-    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob);
+    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
     const taskName = await enqueueFilingJob(filingJob.jobId);
     await jobStore.updateJob(filingJob.jobId, { cloudTaskName: taskName });
     return { jobId: filingJob.jobId, taskName };
@@ -196,6 +199,7 @@ export async function cancelFilingJob(jobId: string): Promise<{
     message: string;
 }> {
     if (!USE_CLOUD_TASKS) {
+        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         const job = await kraFilingQueue.getJob(jobId);
         if (!job) {
             return { success: false, state: 'not_found', message: `No job found with ID: ${jobId}` };
@@ -270,6 +274,7 @@ export interface JobStatusResult {
 
 export async function getFilingJobStatus(jobId: string): Promise<JobStatusResult | null> {
     if (!USE_CLOUD_TASKS) {
+        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         const job = await kraFilingQueue.getJob(jobId);
         if (!job) return null;
 

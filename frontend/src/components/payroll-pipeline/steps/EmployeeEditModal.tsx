@@ -75,7 +75,7 @@ export function EmployeeEditModal({ clientId, employee, open, onClose, onSaved }
     const getTotalScheduledHours = (workScheduleId: string | number | null) => {
         const ws = workSchedules.find((s: any) => String(s.id) === String(workScheduleId));
         if (!ws || !ws.config) return 0;
-        const config = JSON.parse(ws.config);
+        const config = typeof ws.config === 'string' ? JSON.parse(ws.config) : ws.config;
         const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const now = new Date();
         const year = now.getFullYear();

@@ -2,11 +2,12 @@
  * firebase.ts
  *
  * Firebase client SDK initialization for the KRAFILER frontend.
- * Only Auth is used in Phase 1. Firestore client will be added in Phase 2.
+ * Auth + Firestore real-time listeners.
  */
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
     apiKey: 'AIzaSyCjKhlzHKMWkm0V-TTHQZASYBsb3lJ5I7o',
@@ -21,6 +22,7 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+export const db = getFirestore(app);
 
 // Optional: force account selection every time (useful for testing multiple users)
 // googleProvider.setCustomParameters({ prompt: 'select_account' });

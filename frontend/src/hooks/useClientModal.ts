@@ -84,7 +84,7 @@ export function useClientModal(
     setNewClientModalError(null);
 
     try {
-      const result = await saveClientMutation.mutateAsync({
+        const result = await saveClientMutation.mutateAsync({
         id: editingClientId !== null ? String(editingClientId) : null,
         data: {
           name,
@@ -92,7 +92,7 @@ export function useClientModal(
           password,
           obligations: newClientObligations.map(normalizeClientObligation).join(', '),
         },
-      });
+      }) as any;
 
       if (newClientObligations.includes('paye') && newClientMasterCsv) {
         await uploadMasterCsv(String(result.id), newClientMasterCsv, { propagateError: true });

@@ -219,8 +219,8 @@ export function LoanManager({ clientId, employeeId, period }: LoanManagerProps) 
                                 >
                                     <td className="py-2 font-medium text-slate-900">{ln.employeeName}</td>
                                     <td className="py-2 text-slate-600">{ln.loanType}</td>
-                                    <td className="py-2 text-right">KES {ln.principal.toLocaleString()}</td>
-                                    <td className="py-2 text-right">KES {ln.monthlyDeduction.toLocaleString()}</td>
+                                    <td className="py-2 text-right">KES {Number(ln.principal || 0).toLocaleString()}</td>
+                                    <td className="py-2 text-right">KES {Number(ln.monthlyDeduction || 0).toLocaleString()}</td>
                                     <td className="py-2">{ln.remainingInstallments}/{ln.installments}</td>
                                     <td className="py-2">
                                         <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${

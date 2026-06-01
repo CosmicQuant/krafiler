@@ -4,6 +4,7 @@ import { LoginPage } from './components/auth/LoginPage';
 import { PrivateRoute } from './components/auth/PrivateRoute';
 import PracticeDashboard from './components/PracticeDashboard';
 import PracticeLandingPage from './components/PracticeLandingPage';
+import SubscriptionPage from './components/SubscriptionPage';
 
 function App() {
     return (
@@ -17,6 +18,14 @@ function App() {
                         element={
                             <PrivateRoute>
                                 <PracticeDashboard />
+                            </PrivateRoute>
+                        }
+                    />
+                    <Route
+                        path="/subscription"
+                        element={
+                            <PrivateRoute>
+                                <SubscriptionPage />
                             </PrivateRoute>
                         }
                     />

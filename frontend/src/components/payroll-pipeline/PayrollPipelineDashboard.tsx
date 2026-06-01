@@ -598,7 +598,7 @@ export function PayrollPipelineDashboard({ client, onBack }: PayrollPipelineDash
                                                     );
                                                 })}
                                                 {/* Computed columns */}
-                                                <td className="px-2 py-1.5 text-right font-mono font-semibold text-slate-900">{computed.grossSalary.toLocaleString()}</td>
+                                                <td className="px-2 py-1.5 text-right font-mono font-semibold text-slate-900">{Number(computed.grossSalary || 0).toLocaleString()}</td>
                                                 <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.shaContribution.toFixed(2)}</td>
                                                 <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.nssfContribution.toFixed(2)}</td>
                                                 <td className="px-2 py-1.5 text-right font-mono text-slate-700">{computed.ahl.toFixed(2)}</td>

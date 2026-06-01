@@ -25,25 +25,26 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-function getClientWorkspaceDir(clientName?: string) {
+function getTempWorkspaceDir(clientName?: string) {
     const safeClientName = (clientName ?? 'Generated Client')
         .replace(/[<>:"\/|?*\x00-\x1F]/g, '')
         .trim() || 'Generated Client';
 
-    return path.join(__dirname, '../../../frontend/public/clients', safeClientName);
+    return path.join(process.env.TEMP_DIR || '/tmp', 'payroll-gen', `${safeClientName}_${Date.now()}`);
 }
 
-function copyToWorkspace(sourcePath: string | undefined | null, workspaceDir: string): { url: string, label: string } | null {
-    if (!sourcePath || !fs.existsSync(sourcePath)) return null;
-    const filename = path.basename(sourcePath);
-    const destPath = path.join(workspaceDir, filename);
-    fs.copyFileSync(sourcePath, destPath);
-
-    const clientName = path.basename(workspaceDir);
-    return {
-        url: `/clients/${encodeURIComponent(clientName)}/${filename}`,
-        label: filename
-    };
+async function uploadGeneratedFile(
+    localPath: string,
+    uid: string,
+    clientId: string,
+    fileName: string
+): Promise<{ url: string; label: string } | null> {
+    if (!localPath || !fs.existsSync(localPath)) return null;
+    const { uploadFile, getSignedDownloadUrl } = await import('../lib/cloudStorage');
+    const gcsPath = `users/${uid}/clients/${clientId}/generated/${fileName}`;
+    await uploadFile(localPath, gcsPath, { contentType: 'application/octet-stream' });
+    const url = await getSignedDownloadUrl(gcsPath, 60);
+    return { url, label: fileName };
 }
 
 router.post('/generate-unified', upload.single('payrollFile'), async (req: AuthenticatedRequest, res: Response) => {
@@ -66,17 +67,33 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
 
         const periodMMYYYY = req.body.periodMMYYYY || defaultPeriod;
 
-        const config = {
-            employerPin: 'P000000000A',
-            nssfEmployerNo: 'N00000000',
-            employerName: 'TEST COMPANY LTD',
-            periodMMYYYY,
-        };
-
         const options = {
             generatePaye: req.body.generatePaye !== 'false',
             generateNssf: req.body.generateNssf !== 'false',
             generateSha: req.body.generateSha !== 'false'
+        };
+
+        let clientId = req.body.clientId;
+        const uid = req.user!.uid;
+        let clientName = typeof req.body.clientName === 'string' ? req.body.clientName : undefined;
+        let employerPin = 'P000000000A';
+        let nssfEmployerNo = 'N00000000';
+
+        if (clientId) {
+            const clientDoc = await adminDb.collection('clients').doc(String(clientId)).get();
+            if (clientDoc.exists && clientDoc.data()?.ownerUid === uid) {
+                const c = clientDoc.data() as any;
+                clientName = c.name || clientName;
+                employerPin = c.pin || employerPin;
+                nssfEmployerNo = c.nssfNo || nssfEmployerNo;
+            }
+        }
+
+        const config = {
+            employerPin,
+            nssfEmployerNo,
+            employerName: clientName || 'Generated Client',
+            periodMMYYYY,
         };
 
         let inputCsvPath = req.file.path;
@@ -90,14 +107,13 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
             inputCsvPath = csvPath;
         }
 
-        const clientName = typeof req.body.clientName === 'string' ? req.body.clientName : undefined;
-        const clientWorkspaceDir = getClientWorkspaceDir(clientName);
+        const clientWorkspaceDir = getTempWorkspaceDir(clientName);
         await fs.promises.mkdir(clientWorkspaceDir, { recursive: true });
 
         const dummyClient = {
             name: clientName || 'Demo Client',
-            pin: '',
-            nssfNo: '',
+            pin: employerPin,
+            nssfNo: nssfEmployerNo,
             nssfPassword: '',
             shaNo: '',
             shaPassword: ''
@@ -115,11 +131,17 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
         const outputPaths = await generateComplianceFiles(inputCsvPath, config, options);
         fs.mkdirSync(clientWorkspaceDir, { recursive: true });
 
-        const payeInfo = copyToWorkspace(outputPaths.payeZipPath, clientWorkspaceDir);
-        const nssfInfo = copyToWorkspace(outputPaths.nssfFilePath, clientWorkspaceDir);
-        const shaInfo  = copyToWorkspace(outputPaths.shaFilePath, clientWorkspaceDir);
+        const payeInfo = outputPaths.payeZipPath
+            ? await uploadGeneratedFile(outputPaths.payeZipPath, uid, String(clientId || 'unknown'), path.basename(outputPaths.payeZipPath))
+            : null;
+        const nssfInfo = outputPaths.nssfFilePath
+            ? await uploadGeneratedFile(outputPaths.nssfFilePath, uid, String(clientId || 'unknown'), path.basename(outputPaths.nssfFilePath))
+            : null;
+        const shaInfo = outputPaths.shaFilePath
+            ? await uploadGeneratedFile(outputPaths.shaFilePath, uid, String(clientId || 'unknown'), path.basename(outputPaths.shaFilePath))
+            : null;
 
-        const masterZipName = `${clientName || outputPaths.companyConfig?.employerName?.replace(/\s+/g, '_') || 'Payroll'}_Generated_Files.zip`;
+        const masterZipName = `${(clientName || outputPaths.companyConfig?.employerName || 'Payroll').replace(/\s+/g, '_')}_Generated_Files.zip`;
         const masterZipPath = path.join(clientWorkspaceDir, masterZipName);
         let masterZipUrl: string | null = null;
 
@@ -146,8 +168,8 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
                 archive.finalize();
             });
 
-            const urlClientName = path.basename(clientWorkspaceDir);
-            masterZipUrl = `/clients/${encodeURIComponent(urlClientName)}/${masterZipName}`;
+            const masterGcs = await uploadGeneratedFile(masterZipPath, uid, String(clientId || 'unknown'), masterZipName);
+            masterZipUrl = masterGcs?.url || null;
         } catch (zipErr) {
             console.error('Error creating master ZIP:', zipErr);
         }
@@ -158,16 +180,15 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
             if (outputPaths.shaFilePath && fs.existsSync(outputPaths.shaFilePath)) fs.unlinkSync(outputPaths.shaFilePath);
             if (outputPaths.nssfFilePath && fs.existsSync(outputPaths.nssfFilePath)) fs.unlinkSync(outputPaths.nssfFilePath);
             if (outputPaths.payeZipPath && fs.existsSync(outputPaths.payeZipPath)) fs.unlinkSync(outputPaths.payeZipPath);
+            if (fs.existsSync(clientWorkspaceDir)) fs.rmSync(clientWorkspaceDir, { recursive: true, force: true });
         } catch (cleanupError) {
             console.warn('Cleanup warning after payroll generation:', cleanupError);
         }
 
         // Update Firestore client doc with generated file URLs and summary amounts
-        let clientId = req.body.clientId;
         let updatedClient = null;
 
         if (clientId) {
-            const uid = req.user!.uid;
             const docRef = adminDb.collection('clients').doc(String(clientId));
             const doc = await docRef.get();
 

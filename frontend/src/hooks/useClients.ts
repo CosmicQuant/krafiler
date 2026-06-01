@@ -20,7 +20,7 @@ export const useSaveClient = () => {
         mutationFn: async ({ id, data }: { id?: string | null, data: any }) => {
             const isEdit = !!id;
             const path = isEdit ? `/clients/${id}` : '/clients';
-            return apiFetchJson(path, {
+            return apiFetchJson<{ id: string } & any>(path, {
                 method: isEdit ? 'PUT' : 'POST',
                 body: JSON.stringify(data),
             });

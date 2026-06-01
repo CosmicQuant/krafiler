@@ -39,7 +39,7 @@ function payslipHtml(employeeName: string, companyName: string, period: string):
 <p>Your payslip for the period of <strong>${period}</strong> from <strong>${companyName}</strong> is attached.</p>
 <p>You can also view your payslip by logging into the employee portal.</p>
 <br/>
-<p style="color:#666;font-size:12px;">This is an automated message from KRAFILER. Please do not reply.</p>
+<p style="color:#666;font-size:12px;">This is an automated message from zani. Please do not reply.</p>
 </body></html>`;
 }
 
@@ -52,7 +52,7 @@ function p9Html(employeeName: string, companyName: string, taxYear: string): str
 <p>Your P9 Annual Tax Deduction Card for the tax year <strong>${taxYear}</strong> from <strong>${companyName}</strong> is attached.</p>
 <p>Please keep this document for your records.</p>
 <br/>
-<p style="color:#666;font-size:12px;">This is an automated message from KRAFILER. Please do not reply.</p>
+<p style="color:#666;font-size:12px;">This is an automated message from zani. Please do not reply.</p>
 </body></html>`;
 }
 

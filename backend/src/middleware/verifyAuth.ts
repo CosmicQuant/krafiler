@@ -67,7 +67,9 @@ export async function verifyAuth(
     }
 
     try {
+        logger.info({ tokenPrefix: idToken.substring(0, 20) }, 'About to call verifyIdToken');
         const decoded = await adminAuth.verifyIdToken(idToken, true); // checkRevoked = true
+        logger.info({ uid: decoded.uid }, 'verifyIdToken succeeded');
 
         // Fetch user document from Firestore for plan/subscription data
         const userDoc = await adminDb.collection('users').doc(decoded.uid).get();
@@ -104,7 +106,11 @@ export async function verifyAuth(
             return;
         }
 
-        if (userData.subscriptionStatus === 'cancelled') {
+        const subStatus = userData.subscriptionStatus || 'active';
+        const userPlan = userData.plan || 'starter';
+        logger.info({ uid: decoded.uid, plan: userPlan, subscriptionStatus: subStatus }, 'verifyAuth user doc found');
+
+        if (subStatus === 'cancelled') {
             res.status(403).json({ error: 'Subscription cancelled. Please renew your plan.' });
             return;
         }
@@ -114,13 +120,14 @@ export async function verifyAuth(
             email: decoded.email || '',
             displayName: decoded.name || '',
             photoURL: decoded.picture || '',
-            plan: userData.plan || 'starter',
-            subscriptionStatus: userData.subscriptionStatus || 'active',
+            plan: userPlan,
+            subscriptionStatus: subStatus,
         };
 
         next();
-    } catch (err) {
-        logger.warn({ err }, 'Firebase token verification failed');
+    } catch (err: any) {
+        const errorMessage = err?.message || String(err);
+        logger.error({ err: errorMessage, stack: err?.stack }, 'Firebase token verification failed');
 
         // In local dev, fall back to dev-user so existing SQLite data remains accessible
         // while the developer sets up ADC or resolves token issues.
@@ -136,6 +143,6 @@ export async function verifyAuth(
             return;
         }
 
-        res.status(401).json({ error: 'Invalid or expired token' });
+        res.status(401).json({ error: 'Invalid or expired token', detail: errorMessage });
     }
 }

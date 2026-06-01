@@ -172,6 +172,15 @@ export async function deleteFile(destination: string): Promise<void> {
 }
 
 /**
+ * Create a readable stream for a Cloud Storage file.
+ */
+export function createReadStream(destination: string): NodeJS.ReadableStream {
+    const bucket = getBucket();
+    const file = bucket.file(destination);
+    return file.createReadStream();
+}
+
+/**
  * Check if a file exists in Cloud Storage.
  */
 export async function fileExists(destination: string): Promise<boolean> {

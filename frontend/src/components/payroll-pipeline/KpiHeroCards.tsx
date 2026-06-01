@@ -25,7 +25,7 @@ export function KpiHeroCards({ data, className }: KpiHeroCardsProps) {
         },
         {
             label: 'Total Payroll',
-            value: `KES ${data.totalPayroll.toLocaleString()}`,
+            value: `KES ${Number(data.totalPayroll || 0).toLocaleString()}`,
             sub: 'Current period',
             icon: Banknote,
             color: 'bg-emerald-50 text-emerald-600 border-emerald-200',

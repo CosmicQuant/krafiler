@@ -18,7 +18,7 @@ import { calculatePayrollFields } from '../utils/payroll-calculations';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { ClientDoc, TaxObligationType, FilingStatus } from '../types/firestoreSchema';
 import { verifyAuth, AuthenticatedRequest } from '../middleware/verifyAuth';
-import { uploadFile, getSignedDownloadUrl, masterCsvPath, logoPath } from '../lib/cloudStorage';
+import { uploadFile, uploadBuffer, getSignedDownloadUrl, masterCsvPath, logoPath } from '../lib/cloudStorage';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -54,10 +54,22 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
         const snapshot = await adminDb
             .collection(COLLECTION)
             .where('ownerUid', '==', uid)
-            .orderBy('createdAt', 'desc')
             .get();
 
-        const clients = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const clients = await Promise.all(
+            snapshot.docs.map(async (doc) => {
+                const data = doc.data() as any;
+                const client: any = { id: doc.id, ...data };
+                if (data.masterFile?.gcsPath) {
+                    try {
+                        client.masterFileUrl = await getSignedDownloadUrl(data.masterFile.gcsPath, 60);
+                    } catch {
+                        // leave as-is
+                    }
+                }
+                return client;
+            })
+        );
         res.json(clients);
     } catch (err) {
         console.error('Error fetching clients from Firestore:', err);
@@ -76,7 +88,19 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
             return res.status(404).json({ message: 'Client not found' });
         }
 
-        res.json({ id: doc.id, ...doc.data() });
+        const data = doc.data() as any;
+        const result: any = { id: doc.id, ...data };
+
+        // Generate fresh signed URL for master file so the frontend "View" link works
+        if (data.masterFile?.gcsPath) {
+            try {
+                result.masterFileUrl = await getSignedDownloadUrl(data.masterFile.gcsPath, 60);
+            } catch {
+                // leave masterFileUrl as-is if signing fails
+            }
+        }
+
+        res.json(result);
     } catch (err) {
         console.error('Error fetching client:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -299,6 +323,33 @@ router.post('/:id/logo', upload.single('logo'), async (req: AuthenticatedRequest
     }
 });
 
+// GET /api/clients/:id/master-csv-download — proxy GCS download to avoid CORS
+router.get('/:id/master-csv-download', async (req: AuthenticatedRequest, res) => {
+    try {
+        const uid = req.user!.uid;
+        const clientId = req.params.id;
+
+        const doc = await adminDb.collection(COLLECTION).doc(clientId).get();
+        if (!doc.exists || doc.data()?.ownerUid !== uid) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        const gcsPath = (doc.data() as any).masterFile?.gcsPath;
+        if (!gcsPath) {
+            return res.status(404).json({ message: 'No master CSV found' });
+        }
+
+        const { createReadStream } = await import('../lib/cloudStorage');
+        const stream = createReadStream(gcsPath);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(gcsPath)}"`);
+        stream.pipe(res);
+    } catch (err) {
+        console.error('Error downloading master CSV from GCS:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 // ─── Payroll Data Endpoints ───────────────────────────────────────────────────
 
 // GET /api/clients/:id/payroll-data
@@ -317,7 +368,6 @@ router.get('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
             .collection('employees')
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
-            .orderBy('employeeName', 'asc')
             .get();
 
         if (employeesSnapshot.empty) {
@@ -509,6 +559,129 @@ router.get('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
         });
     } catch (err) {
         console.error('[PayrollData] Error fetching payroll data from Firestore:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// POST /api/clients/:id/sync-master-csv — regenerate standardized master CSV from employees
+router.post('/:id/sync-master-csv', async (req: AuthenticatedRequest, res) => {
+    try {
+        const uid = req.user!.uid;
+        const clientId = req.params.id;
+
+        const clientDoc = await adminDb.collection('clients').doc(clientId).get();
+        if (!clientDoc.exists || clientDoc.data()?.ownerUid !== uid) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+        const client = clientDoc.data() as any;
+
+        // Fetch employees for this client
+        const employeesSnapshot = await adminDb
+            .collection('employees')
+            .where('ownerUid', '==', uid)
+            .where('clientId', '==', clientId)
+            .get();
+
+        // If no employees in Firestore but a GCS master CSV exists, return its signed URL
+        if (employeesSnapshot.empty) {
+            if (client.masterFile?.gcsPath) {
+                const url = await getSignedDownloadUrl(client.masterFile.gcsPath, 60);
+                return res.json({ fileUrl: url, imported: 0, source: 'existing-gcs' });
+            }
+            return res.status(400).json({ message: 'No employees found and no master CSV uploaded.' });
+        }
+
+        // Build standardized CSV from Firestore employees
+        const headers = [
+            'Payroll Number', 'PIN of Employee', 'ID Number', 'Identity Type', 'Name of Employee',
+            'SHA No', 'NSSF No', 'Residential Status', 'Type of Employee', 'Persons with Disability(PWD)',
+            'Exemption Certificate', 'Total Cash Pay (A)', 'Value of Car Benefit (B)', 'Value of Meals (C)',
+            'Non Cash Benefits (D)', 'Type of Housing', 'Housing Benefit (F)', 'Other Benefits (G)',
+            'Total Gross Pay (Ksh) (H)', 'Social Health Insurance Fund (I)', 'NSSF Contribution (J)',
+            'Other Pension Contribution (K)', 'Post Retirement Medical Fund (L)', 'Mortgage Interest (M)',
+            'Affordable Housing Levy (N)', 'Taxable Pay(Ksh) (O)', 'Monthly Personal Relief (Ksh) (P)',
+            'Amount of Insurance Relief (Q)', 'PAYE Tax (Ksh) (R)', 'Self Assessed PAYE Tax (Ksh) (S)',
+        ];
+
+        const csvLines: string[] = [];
+        csvLines.push(['COMPANY NAME:', client.name || ''].join(','));
+        csvLines.push(['COMPANY KRA PIN:', client.pin || ''].join(','));
+        csvLines.push(['COMPANY NSSF NO:', ''].join(','));
+        csvLines.push(['COMPANY NSSF PASSWORD:', ''].join(','));
+        csvLines.push(['COMPANY SHA LOGIN:', client.shaLogin || ''].join(','));
+        csvLines.push(['COMPANY SHA PASSWORD:', ''].join(','));
+        csvLines.push('');
+        csvLines.push(headers.join(','));
+
+        employeesSnapshot.docs.forEach((doc, i) => {
+            const emp = doc.data() as any;
+            const totalCashPay = emp.basicPay || 0;
+            const grossSalary = totalCashPay + (emp.carBenefit || 0) + (emp.mealsBenefit || 0) + (emp.nonCashBenefits || 0) + (emp.housingBenefit || 0) + (emp.otherBenefits || 0);
+            const sha = Math.round(grossSalary * 0.0275 * 100) / 100;
+            const nssf = Math.round((Math.min(grossSalary, 9000) * 0.06 + Math.max(0, Math.min(grossSalary - 9000, 99000)) * 0.06) * 100) / 100;
+            const ahl = Math.round(grossSalary * 0.015 * 100) / 100;
+            const taxablePay = Math.round(Math.max(0, grossSalary - sha - nssf - ahl) * 100) / 100;
+            const paye = Math.round(Math.max(0,
+                Math.max(0, taxablePay * 0.1) + Math.max(0, (taxablePay - 24000) * 0.15) + Math.max(0, (taxablePay - 32333) * 0.05) + Math.max(0, (taxablePay - 500000) * 0.025) + Math.max(0, (taxablePay - 800000) * 0.025) - 2400
+            ) * 100) / 100;
+
+            const row = [
+                emp.payrollNumber || String(i + 1),
+                emp.kraPin || '',
+                emp.idNumber || '',
+                emp.identityType || 'National ID',
+                emp.employeeName || '',
+                emp.shaNo || '',
+                emp.nssfNo || '',
+                emp.residentialStatus || 'Resident',
+                emp.typeOfEmployee || 'Primary Employee',
+                emp.pwd || 'No',
+                emp.exemptionCert || '',
+                totalCashPay,
+                emp.carBenefit || 0,
+                emp.mealsBenefit || 0,
+                emp.nonCashBenefits || 0,
+                emp.typeOfHousing || 'Benefit not given',
+                emp.housingBenefit || 0,
+                emp.otherBenefits || 0,
+                grossSalary,
+                sha,
+                nssf,
+                emp.otherPension || 0,
+                emp.postRetMedical || 0,
+                emp.mortgageInterest || 0,
+                ahl,
+                taxablePay,
+                2400,
+                emp.insuranceRelief || 0,
+                paye,
+                paye,
+            ];
+            csvLines.push(row.join(','));
+        });
+
+        const csvContent = csvLines.join('\n');
+        const safeName = String(client.name || 'Client').replace(/[^a-zA-Z0-9]/g, '_');
+        const destName = `users/${uid}/clients/${clientId}/master-csv/${safeName}_Standardized.csv`;
+
+        await uploadBuffer(Buffer.from(csvContent, 'utf-8'), destName, {
+            contentType: 'text/csv',
+            metadata: { generatedAt: new Date().toISOString() },
+        });
+
+        const fileUrl = await getSignedDownloadUrl(destName, 60);
+
+        // Update client doc with new master file reference
+        await adminDb.collection('clients').doc(clientId).update({
+            masterFile: { gcsPath: destName },
+            masterFileLabel: `${safeName}_Standardized.csv`,
+            masterFileUrl: fileUrl,
+            updatedAt: Timestamp.now(),
+        });
+
+        res.json({ fileUrl, imported: employeesSnapshot.size, source: 'generated' });
+    } catch (err) {
+        console.error('[SyncMasterCsv] Error:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });

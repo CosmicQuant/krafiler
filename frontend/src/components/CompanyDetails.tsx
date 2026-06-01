@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Save, Building2, FileSpreadsheet, Percent, Calculator, FileArchive, Cloud, Calendar, Clock, Trash2, Edit, Plus } from 'lucide-react';
 import { ClientObligation } from '../types';
-import { apiFetch, apiFetchJson } from '../services/api';
+import { apiFetchJson } from '../services/api';
 import { WorkScheduleManager } from './payroll-pipeline/steps/WorkScheduleManager';
 import { LeaveTypesManager } from './payroll-pipeline/steps/LeaveTypesManager';
 import { DepartmentsView } from './dashboard/views/DepartmentsView';
@@ -32,7 +32,10 @@ const ALL_OBLIGATIONS = [
 export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollView }: CompanyDetailsProps) {
     const [formData, setFormData] = useState({ ...client });
     const [selectedObligations, setSelectedObligations] = useState<string[]>(() => {
-        if (client.obligations) {
+        if (Array.isArray(client.obligations)) {
+            return client.obligations.map(s => String(s).trim()).filter(Boolean);
+        }
+        if (typeof client.obligations === 'string' && client.obligations) {
             return client.obligations.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
         }
         return [];
@@ -62,7 +65,7 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
         const data = new FormData();
         data.append('masterCsv', file);
         try {
-            const responseData = await apiFetchJson(`/clients/${client.id}/master-csv`, {
+            const responseData = await apiFetchJson<any>(`/clients/${client.id}/master-csv`, {
                 method: 'POST',
                 body: data
             });
@@ -73,7 +76,7 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
             }));
             // Auto-import employees from the uploaded master CSV
             try {
-                const importData = await apiFetchJson(`/clients/${client.id}/employees/import`, {
+                const importData = await apiFetchJson<any>(`/clients/${client.id}/employees/import`, {
                     method: 'POST',
                     body: JSON.stringify({})
                 });
@@ -136,7 +139,7 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
         const method = editingSchedule ? 'PUT' : 'POST';
         const path = editingSchedule ? `/clients/${client.id}/work-schedules/${editingSchedule.id}` : `/clients/${client.id}/work-schedules`;
         try {
-            const data = await apiFetchJson(path, { method, body });
+            const data = await apiFetchJson<any>(path, { method, body });
             if (editingSchedule) { setWorkSchedules(prev => prev.map(s => s.id === editingSchedule.id ? data.schedule || data : s)); }
             else { setWorkSchedules(prev => [...prev, data.schedule || data]); }
             setShowScheduleForm(false); setEditingSchedule(null);
@@ -154,8 +157,8 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
     const handleSeedSchedules = async () => {
         setSeedingSchedules(true);
         try {
-            const data = await apiFetchJson(`/clients/${client.id}/work-schedules/seed-defaults`, { method: 'POST' });
-            const schedules = await apiFetchJson(`/clients/${client.id}/work-schedules`);
+            const data = await apiFetchJson<any>(`/clients/${client.id}/work-schedules/seed-defaults`, { method: 'POST' });
+            const schedules = await apiFetchJson<any[]>(`/clients/${client.id}/work-schedules`);
             setWorkSchedules(schedules);
             alert(`Seeded ${data.seeded} default work schedules`);
         } catch { /* ignore */ }
@@ -168,7 +171,7 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
         const method = editingHoliday ? 'PUT' : 'POST';
         const path = editingHoliday ? `/clients/${client.id}/holidays/${editingHoliday.id}` : `/clients/${client.id}/holidays`;
         try {
-            const data = await apiFetchJson(path, { method, body });
+            const data = await apiFetchJson<any>(path, { method, body });
             if (editingHoliday) { setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? data.holiday || data : h)); }
             else { setHolidays(prev => [...prev, data.holiday || data]); }
             setShowHolidayForm(false); setEditingHoliday(null);
@@ -186,8 +189,8 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
     const handleSeedHolidays = async () => {
         setSeedingHolidays(true);
         try {
-            const data = await apiFetchJson(`/clients/${client.id}/holidays/seed-kenyan`, { method: 'POST' });
-            const holidays = await apiFetchJson(`/clients/${client.id}/holidays`);
+            const data = await apiFetchJson<any>(`/clients/${client.id}/holidays/seed-kenyan`, { method: 'POST' });
+            const holidays = await apiFetchJson<any[]>(`/clients/${client.id}/holidays`);
             setHolidays(holidays);
             alert(`Seeded ${data.seeded} Kenyan holidays`);
         } catch (err: any) {
@@ -325,7 +328,7 @@ export default function CompanyDetails({ client, onBack, onSave, onGoToPayrollVi
                                         const data = new FormData();
                                         data.append('logo', file);
                                         try {
-                                            const d = await apiFetchJson(`/clients/${client.id}/logo`, { method: 'POST', body: data });
+                                            const d = await apiFetchJson<any>(`/clients/${client.id}/logo`, { method: 'POST', body: data });
                                             setFormData((prev: ClientObligation) => ({ ...prev, logoUrl: d.logoUrl }));
                                         } catch { alert('Failed to upload logo'); }
                                     }}

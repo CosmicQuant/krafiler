@@ -138,7 +138,7 @@ export function PipelineWizard({ client, onBack }: PipelineWizardProps) {
                 );
             case 4:
                 return currentRunId ? (
-                    <Step7ComplianceOutput clientId={client.id} runId={currentRunId} />
+                    <Step7ComplianceOutput clientId={client.id} runId={currentRunId} period={period} />
                 ) : (
                     <div className="flex flex-col items-center justify-center py-20 text-center">
                         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 mb-3">

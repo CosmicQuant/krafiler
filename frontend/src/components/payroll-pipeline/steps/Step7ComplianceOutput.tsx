@@ -95,11 +95,13 @@ interface PayrollEntry {
 interface Step7ComplianceOutputProps {
     clientId: string;
     runId: number;
+    period?: string; // YYYY-MM
 }
 
 /* ─── Component ─── */
 
-export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutputProps) {
+export function Step7ComplianceOutput({ clientId, runId, period }: Step7ComplianceOutputProps) {
+    const periodMMYYYY = period ? `${period.split('-')[1]}${period.split('-')[0]}` : '';
     /* Shared state */
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
         }
     };
 
-    const handleAutoFile = async (type: string) => {
+    const handleAutoFile = async (type: string, printPrnOnly = false) => {
         setFilingLoading(true);
         setFilingType(type);
         setError(null);
@@ -233,19 +235,19 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                 const res = await apiFetch(`/api/tax/file-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId: parseInt(clientId, 10), taxObligationType: 'paye', period: '' }),
+                    body: JSON.stringify({ clientId: parseInt(clientId, 10), taxObligationType: 'paye', period: '', printPrnOnly }),
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    setSuccess(`PAYE filing job queued. Job ID: ${data.jobId || 'N/A'}`);
+                    setSuccess(printPrnOnly ? `PAYE PRN generation queued. Job ID: ${data.jobId || 'N/A'}` : `PAYE filing job queued. Job ID: ${data.jobId || 'N/A'}`);
                 } else {
-                    setError(data.message || 'Failed to queue PAYE filing');
+                    setError(data.message || `Failed to queue PAYE ${printPrnOnly ? 'PRN' : 'filing'}`);
                 }
             } else if (type === 'sha') {
                 setShowShaInfo(true);
             }
         } catch {
-            setError(`Network error during ${type.toUpperCase()} auto-filing`);
+            setError(`Network error during ${type.toUpperCase()} ${printPrnOnly ? 'PRN' : 'auto-filing'}`);
         } finally {
             setFilingLoading(false);
             setFilingType(null);
@@ -415,6 +417,14 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                         {filingLoading && filingType === 'paye' ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
                                         Auto-File
                                     </button>
+                                    <button
+                                        onClick={() => handleAutoFile('paye', true)}
+                                        disabled={filingLoading}
+                                        className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-100 transition disabled:opacity-40"
+                                    >
+                                        {filingLoading && filingType === 'paye' ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                                        Print PRN
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -487,12 +497,14 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                     <FileText className="h-4 w-4 text-slate-500" /> Payslips
                 </h3>
                 <div className="mb-4">
-                    <a
-                        href={`/api/clients/${clientId}/payroll-runs/${runId}/payslips`}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
+                    <button
+                        onClick={handleSendPayslips}
+                        disabled={sendingEmail}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-40"
                     >
-                        <Download className="h-3.5 w-3.5" /> Download All Payslips (ZIP)
-                    </a>
+                        {sendingEmail ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                        Send All Payslips via Email
+                    </button>
                 </div>
                 {entriesLoading ? (
                     <div className="flex items-center justify-center py-6">
@@ -518,7 +530,7 @@ export function Step7ComplianceOutput({ clientId, runId }: Step7ComplianceOutput
                                         <td className="px-3 py-2 text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 <a
-                                                    href={`/api/clients/${clientId}/payroll-runs/${runId}/payslip/${emp.employeeId}`}
+                                                    href={`/api/clients/${clientId}/payslip/${emp.kraPin}${periodMMYYYY ? `?period=${periodMMYYYY}` : ''}`}
                                                     download
                                                     className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                                 >

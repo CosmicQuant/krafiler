@@ -95,6 +95,16 @@
       ]
     },
     {
+      "collectionGroup": "payrollEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "payrollRunId", "order": "ASCENDING" },
+        { "fieldPath": "employeeId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "leaveRequests",
       "queryScope": "COLLECTION",
       "fields": [

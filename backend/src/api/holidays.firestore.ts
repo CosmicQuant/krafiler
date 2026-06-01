@@ -3,6 +3,7 @@ import { adminDb } from '../lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { logAudit } from '../services/auditService';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
+import { ensureDefaultHolidays } from '../services/seedClientDefaults';
 
 const router = Router();
 
@@ -14,6 +15,8 @@ router.get('/:clientId/holidays', async (req: AuthenticatedRequest, res) => {
         const uid = req.user!.uid;
         const clientId = req.params.clientId;
         const year = (req.query.year as string) || new Date().getFullYear().toString();
+
+        await ensureDefaultHolidays(uid, clientId);
 
         const snapshot = await adminDb
             .collection(HOLIDAYS_COLLECTION)
@@ -156,18 +159,22 @@ router.post('/:clientId/holidays/seed-kenyan', async (req: AuthenticatedRequest,
         ];
 
         const now = Timestamp.now();
+        // Fetch all existing holidays for this client and filter in memory to avoid composite index requirement
+        const allExistingSnapshot = await adminDb
+            .collection(HOLIDAYS_COLLECTION)
+            .where('ownerUid', '==', uid)
+            .where('clientId', '==', clientId)
+            .get();
+        const existingKeys = new Set(
+            allExistingSnapshot.docs.map((d) => {
+                const data = d.data() as any;
+                return `${data.name}|${data.date}`;
+            })
+        );
+
         let inserted = 0;
         for (const h of kenyanHolidays) {
-            const existing = await adminDb
-                .collection(HOLIDAYS_COLLECTION)
-                .where('ownerUid', '==', uid)
-                .where('clientId', '==', clientId)
-                .where('name', '==', h.name)
-                .where('date', '>=', `${year}-01-01`)
-                .where('date', '<=', `${year}-12-31`)
-                .limit(1)
-                .get();
-            if (existing.empty) {
+            if (!existingKeys.has(`${h.name}|${h.date}`)) {
                 await adminDb.collection(HOLIDAYS_COLLECTION).add({
                     ownerUid: uid,
                     clientId,

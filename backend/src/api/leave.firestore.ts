@@ -3,6 +3,7 @@ import { adminDb } from '../lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { logAudit } from '../services/auditService';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
+import { ensureDefaultLeaveTypes } from '../services/seedClientDefaults';
 
 const router = Router();
 
@@ -16,6 +17,8 @@ router.get('/:clientId/leave-types', async (req: AuthenticatedRequest, res) => {
     try {
         const uid = req.user!.uid;
         const clientId = req.params.clientId;
+
+        await ensureDefaultLeaveTypes(uid, clientId);
 
         const snapshot = await adminDb
             .collection(LEAVE_TYPES_COLLECTION)

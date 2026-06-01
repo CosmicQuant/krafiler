@@ -19,6 +19,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { ClientDoc, TaxObligationType, FilingStatus } from '../types/firestoreSchema';
 import { verifyAuth, AuthenticatedRequest } from '../middleware/verifyAuth';
 import { uploadFile, uploadBuffer, getSignedDownloadUrl, masterCsvPath, logoPath } from '../lib/cloudStorage';
+import { ensureAllClientDefaults } from '../services/seedClientDefaults';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -81,7 +82,8 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
 router.get('/:id', async (req: AuthenticatedRequest, res) => {
     try {
         const uid = req.user!.uid;
-        const docRef = adminDb.collection(COLLECTION).doc(req.params.id);
+        const clientId = req.params.id;
+        const docRef = adminDb.collection(COLLECTION).doc(clientId);
         const doc = await docRef.get();
 
         if (!doc.exists || doc.data()?.ownerUid !== uid) {
@@ -99,6 +101,11 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
                 // leave masterFileUrl as-is if signing fails
             }
         }
+
+        // Auto-create default work schedules, holidays, and leave types on first access
+        ensureAllClientDefaults(uid, clientId).catch((err) => {
+            console.error('[auto-seed] Failed to seed defaults for client', clientId, err);
+        });
 
         res.json(result);
     } catch (err) {

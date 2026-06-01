@@ -68,7 +68,7 @@ const PORT = parseInt(process.env.PORT ?? '3001', 10);
 // ─── Security Middleware ──────────────────────────────────────────────────────
 
 app.use(pinoHttp({ logger }));
-app.use(helmet());
+app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }));
 app.use(
     cors({
         origin: process.env.ALLOWED_ORIGIN ?? 'http://localhost:3000',

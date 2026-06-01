@@ -3,6 +3,7 @@ import { adminDb } from '../lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { logAudit } from '../services/auditService';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
+import { ensureDefaultWorkSchedules } from '../services/seedClientDefaults';
 
 const router = Router();
 
@@ -13,6 +14,7 @@ router.get('/:clientId/work-schedules', async (req: AuthenticatedRequest, res) =
     try {
         const uid = req.user!.uid;
         const clientId = req.params.clientId;
+        await ensureDefaultWorkSchedules(uid, clientId);
         const snapshot = await adminDb
             .collection(WORK_SCHEDULES_COLLECTION)
             .where('ownerUid', '==', uid)

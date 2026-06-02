@@ -1,0 +1,25 @@
+{
+  "displayName": "zani Worker Container Restart",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Container restarted",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/container/restart_count\" AND resource.labels.service_name=\"krafiler-api\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {"count": 1}
+      }
+    }
+  ],
+  "alertStrategy": {"autoClose": "86400s"},
+  "severity": "CRITICAL"
+}

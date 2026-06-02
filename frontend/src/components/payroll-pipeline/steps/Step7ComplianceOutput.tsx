@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
+import { downloadPdf } from '../../../utils/downloadPdf';
 
 /* ─── Types ─── */
 
@@ -529,20 +530,18 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                                         <td className="px-3 py-2 font-mono text-slate-700">{emp.kraPin}</td>
                                         <td className="px-3 py-2 text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                                <a
-                                                    href={`/api/clients/${clientId}/payslip/${emp.kraPin}${periodMMYYYY ? `?period=${periodMMYYYY}` : ''}`}
-                                                    download
+                                                <button
+                                                    onClick={() => downloadPdf(`/clients/${clientId}/payslip/${emp.kraPin}${periodMMYYYY ? `?period=${periodMMYYYY}` : ''}`, `Payslip_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError)}
                                                     className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                                 >
                                                     <Download className="h-3 w-3" /> Payslip
-                                                </a>
-                                                <a
-                                                    href={`/api/clients/${clientId}/p9/${emp.kraPin}`}
-                                                    download
+                                                </button>
+                                                <button
+                                                    onClick={() => downloadPdf(`/clients/${clientId}/p9/${emp.kraPin}`, `P9_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError)}
                                                     className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                                 >
                                                     <Download className="h-3 w-3" /> P9
-                                                </a>
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -735,12 +734,12 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                                     <h4 className="text-xs font-bold text-slate-900">
                                         P11 — {p11Data.employeeName} ({p11Data.kraPin})
                                     </h4>
-                                    <a
-                                        href={`/api/clients/${clientId}/p11/${p11Data.kraPin}/pdf?year=${p10Year}`}
+                                    <button
+                                        onClick={() => downloadPdf(`/clients/${clientId}/p11/${p11Data.kraPin}/pdf?year=${p10Year}`, `P11_${p11Data.kraPin}_${p10Year}.pdf`, setError)}
                                         className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                     >
                                         <Download className="h-3 w-3" /> PDF
-                                    </a>
+                                    </button>
                                 </div>
                                 {loadingP11 ? (
                                     <div className="flex items-center justify-center py-4">

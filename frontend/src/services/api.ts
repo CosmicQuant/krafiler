@@ -87,6 +87,13 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 }
 
 /**
+ * Sleep helper for exponential backoff.
+ */
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Convenience wrapper that parses JSON and throws structured errors.
  */
 export async function apiFetchJson<T = unknown>(path: string, init?: RequestInit): Promise<T> {
@@ -110,4 +117,67 @@ export async function apiFetchJson<T = unknown>(path: string, init?: RequestInit
     }
 
     return data as T;
+}
+
+/**
+ * Upload a file with automatic retry on network failures.
+ * Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+ * Only retries on 5xx or network errors, not 4xx (client errors).
+ */
+export async function apiUploadFile(
+    path: string,
+    formData: FormData,
+    options?: { maxRetries?: number; onProgress?: (percent: number) => void }
+): Promise<unknown> {
+    const maxRetries = options?.maxRetries ?? 3;
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await apiFetch(path, {
+                method: 'POST',
+                body: formData,
+            });
+
+            let data: unknown;
+            try {
+                data = await response.json();
+            } catch {
+                data = null;
+            }
+
+            if (!response.ok) {
+                // Don't retry 4xx client errors
+                if (response.status >= 400 && response.status < 500) {
+                    const message =
+                        (data && typeof data === 'object' && 'message' in data && typeof (data as any).message === 'string')
+                            ? (data as any).message
+                            : `HTTP ${response.status}`;
+                    throw new ApiError(message, response.status, data);
+                }
+                // 5xx server errors — retry
+                throw new ApiError(`HTTP ${response.status}`, response.status, data);
+            }
+
+            return data;
+        } catch (err) {
+            lastError = err as Error;
+
+            // Don't retry on 4xx client errors
+            if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+                throw err;
+            }
+
+            // Don't retry if we're on the last attempt
+            if (attempt === maxRetries) {
+                break;
+            }
+
+            const delayMs = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+            console.warn(`[apiUploadFile] attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`, err);
+            await sleep(delayMs);
+        }
+    }
+
+    throw lastError || new ApiError('Upload failed after retries', 0);
 }

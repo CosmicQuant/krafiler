@@ -32,6 +32,15 @@
       "fields": [
         { "fieldPath": "ownerUid", "order": "ASCENDING" },
         { "fieldPath": "clientId", "order": "ASCENDING" },
+        { "fieldPath": "period", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payrollRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "clientId", "order": "ASCENDING" },
         { "fieldPath": "period", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]

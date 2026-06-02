@@ -216,35 +216,47 @@ export default function PracticeDashboard() {
   const handleSaveClientDetails = async (updatedClient: ClientObligation) => {
     const name = updatedClient.name?.trim();
     const pin = updatedClient.pin?.trim().toUpperCase();
-    const password = (updatedClient.iTaxPassword || updatedClient.password || '').trim();
 
-    if (!updatedClient.id || !name || !pin || !password) {
-      throw new Error('Client name, KRA PIN, and KRA password are required before saving.');
+    if (!updatedClient.id || !name || !pin) {
+      throw new Error('Client name and KRA PIN are required before saving.');
+    }
+
+    const payload: Record<string, any> = {
+      name,
+      pin,
+      obligations: updatedClient.obligations || '',
+      sector: updatedClient.sector || '',
+      email: updatedClient.email || '',
+      phone: updatedClient.phone || '',
+      defaultWorkScheduleId: updatedClient.defaultWorkScheduleId ?? null,
+      nssfNo: updatedClient.nssfNo || null,
+      nssfPassword: updatedClient.nssfPassword || null,
+      shaLogin: updatedClient.shaLogin || null,
+      shaPassword: updatedClient.shaPassword || null,
+      helbLogin: updatedClient.helbLogin || null,
+      helbPassword: updatedClient.helbPassword || null,
+    };
+
+    // Only send password if it was actually entered/updated
+    const password = (updatedClient.iTaxPassword || updatedClient.password || '').trim();
+    if (password) {
+      payload.password = password;
     }
 
     const res = await apiFetch(`/clients/${updatedClient.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        pin,
-        password,
-        obligations: updatedClient.obligations || '',
-        sector: updatedClient.sector || '',
-        email: updatedClient.email || '',
-        phone: updatedClient.phone || '',
-        defaultWorkScheduleId: updatedClient.defaultWorkScheduleId ?? null,
-      }),
+      body: JSON.stringify(payload),
     });
 
-    const payload = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
+    const responseData = await res.json().catch(async () => ({ message: await res.text().catch(() => '') }));
 
     if (!res.ok) {
-      throw new Error(payload.message || payload.error || 'Failed to save client details.');
+      throw new Error(responseData.message || responseData.error || 'Failed to save client details.');
     }
 
     await queryClient.invalidateQueries({ queryKey: ['clients'] });
-    setSelectedClient(payload);
+    setSelectedClient(responseData);
     setDashboardNotice({ tone: 'success', message: 'Client details saved successfully.' });
   };
 

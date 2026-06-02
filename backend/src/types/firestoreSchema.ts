@@ -73,6 +73,7 @@ export interface ClientDoc {
         vatPreparedZipUrl?: string;
         vatSourcePackageUrl?: string;
     };
+    nssfNo?: string;
     credentials: {
         kraPassword?: string;       // AES-256-GCM ciphertext (hex)
         kraPasswordIv?: string;
@@ -81,6 +82,8 @@ export interface ClientDoc {
         nssfPassword?: string;
         shaLogin?: string;
         shaPassword?: string;
+        helbLogin?: string;
+        helbPassword?: string;
     };
     masterFile?: { url: string; uploadedAt: Timestamp; label: string };
     payStructure: 'fixed' | 'prorated';

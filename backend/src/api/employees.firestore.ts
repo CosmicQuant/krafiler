@@ -641,27 +641,21 @@ function generateP9WithPdfKit(res: any, data: any) {
     const leftMargin = 25;
     let y = leftMargin;
 
-    // ── Logos Row (Company + KRA) ──
+    // ── Company Header (Logo + Name) ──
     if (companyLogoPath) {
         try {
-            doc.image(companyLogoPath, leftMargin, y, { width: 50 });
+            doc.image(companyLogoPath, leftMargin, y, { width: 60 });
+            y += 70;
         } catch { /* ignore */ }
     }
-    try {
-        const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
-        if (fs.existsSync(kraLogoPath)) {
-            doc.image(kraLogoPath, leftMargin + pageWidth - 60, y, { width: 55 });
-        }
-    } catch { /* ignore */ }
-    y += 60;
-
-    // ── KRA Header ──
-    doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
-    doc.text('KENYA REVENUE AUTHORITY', leftMargin, y, { align: 'center', width: pageWidth });
-    y += 11;
-    doc.fontSize(7).font('Helvetica').fillColor('#333');
-    doc.text('DOMESTIC TAXES DEPARTMENT  |  TAX DEDUCTION CARD YEAR ' + taxYear, leftMargin, y, { align: 'center', width: pageWidth });
-    y += 14;
+    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1e293b');
+    doc.text(companyName, leftMargin, y, { width: pageWidth });
+    y += 18;
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b');
+    doc.text(`KRA PIN: ${companyPin}  |  Tax Deduction Card  |  Year ${taxYear}`, leftMargin, y);
+    y += 16;
+    doc.moveTo(leftMargin, y).lineTo(leftMargin + pageWidth, y).stroke('#e2e8f0');
+    y += 10;
 
     // ── Employer / Employee Top Fields ──
     doc.fontSize(7).font('Helvetica-Bold').fillColor('#000');

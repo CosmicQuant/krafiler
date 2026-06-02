@@ -426,18 +426,18 @@ export function Step6Finalize({ clientId, runId, onContinue, onBack }: Step6Fina
                         <Receipt className="h-4 w-4 text-slate-500" /> Receipt & Output
                     </h4>
                     <div className="flex flex-wrap items-center gap-2">
-                        <a
-                            href={`/api/clients/${clientId}/payroll-runs/${runId}/payslips`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                        <button
+                            onClick={() => alert('Payslip downloads are available in Step 7 (Generate & File).')}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-400 cursor-not-allowed transition"
                         >
                             <FileText className="h-3.5 w-3.5" /> Payslips
-                        </a>
-                        <a
-                            href={`/api/clients/${clientId}/payroll-runs/${runId}/export`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                        </button>
+                        <button
+                            onClick={() => alert('Export is available in Step 7 (Generate & File).')}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-400 cursor-not-allowed transition"
                         >
                             <Download className="h-3.5 w-3.5" /> Export CSV
-                        </a>
+                        </button>
                     </div>
                     <p className="text-xs text-slate-400 mt-3">
                         Full compliance reports (P10, P9, SHA, NSSF) are available in Step 7.

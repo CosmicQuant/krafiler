@@ -1778,7 +1778,7 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
         let shaFileLabel: string | null = null;
 
         if (outputPaths.payeZipPath && fs.existsSync(outputPaths.payeZipPath)) {
-            const label = `${timestamp}_${config.employerPin}_PAYE.zip`;
+            const label = path.basename(outputPaths.payeZipPath);
             const gcsPath = `users/${uid}/clients/${clientId}/generated/${label}`;
             await uploadFile(outputPaths.payeZipPath, gcsPath);
             payeZipUrl = await getSignedDownloadUrl(gcsPath, 60);

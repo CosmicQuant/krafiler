@@ -232,7 +232,8 @@ export async function generateComplianceFromPayrollRun(
     }
 
     if (opts.generateNssf) {
-        const fileLabel = `${timestamp}_${employerPin}_NSSF.xlsx`;
+        const nssfEmployerNo = (client as any).nssfNo || client.nssfLogin || employerPin;
+        const fileLabel = `${timestamp}_${nssfEmployerNo}_NSSF.xlsx`;
         const filePath = path.join(workspaceDir, fileLabel);
 
         const templatePath = path.join(__dirname, '../../templates/GOLDENNSSF032026.xlsx');

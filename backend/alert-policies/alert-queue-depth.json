@@ -1,0 +1,25 @@
+{
+  "displayName": "zani Cloud Tasks Queue Depth > 10",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Queue depth exceeds 10 tasks",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_tasks_queue\" AND metric.type=\"cloudtasks.googleapis.com/queue/depth\" AND resource.labels.queue_id=\"krafiler-filing-queue\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 10,
+        "duration": "300s",
+        "trigger": {"count": 1}
+      }
+    }
+  ],
+  "alertStrategy": {"autoClose": "86400s"},
+  "severity": "WARNING"
+}

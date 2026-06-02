@@ -308,7 +308,7 @@ export class AxonDataExtractionEngine {
         const hh = String(now.getHours()).padStart(2, '0');
         const min = String(now.getMinutes()).padStart(2, '0');
         const ss = String(now.getSeconds()).padStart(2, '0');
-        const fileName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${this.config.employerPin}_NSSF.xlsx`;
+        const fileName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${this.config.nssfEmployerNo || this.config.employerPin}_NSSF.xlsx`;
         const filePath = path.join(this.outputDir, fileName);
 
         const templatePath = path.join(__dirname, '../../templates/GOLDENNSSF032026.xlsx');

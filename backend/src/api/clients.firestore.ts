@@ -118,7 +118,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
 router.post('/', async (req: AuthenticatedRequest, res) => {
     try {
         const uid = req.user!.uid;
-        const { name, pin, password, email, phone, sector, obligations, payStructure } = req.body;
+        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword } = req.body;
 
         if (!name || !pin || !password) {
             return res.status(400).json({ message: 'Name, PIN, and password are required' });
@@ -159,9 +159,15 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
             lastFiled: {} as any,
             generatedFiles: {} as any,
             credentials: {
-                // NOTE: In production, encrypt before storing. Phase 0 disabled this for speed.
                 kraPassword: password,
+                nssfLogin: nssfNo?.trim() || null,
+                nssfPassword: nssfPassword?.trim() || null,
+                shaLogin: shaLogin?.trim() || null,
+                shaPassword: shaPassword?.trim() || null,
+                helbLogin: helbLogin?.trim() || null,
+                helbPassword: helbPassword?.trim() || null,
             },
+            nssfNo: nssfNo?.trim() || null,
             masterFile: undefined,
             payStructure: payStructure || 'fixed',
             defaultWorkScheduleId: undefined,
@@ -194,7 +200,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
             return res.status(404).json({ message: 'Client not found' });
         }
 
-        const { name, pin, password, email, phone, sector, obligations, payStructure } = req.body;
+        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword, defaultWorkScheduleId } = req.body;
         const updateData: any = { updatedAt: Timestamp.now() };
 
         if (name !== undefined) updateData.name = name.trim();
@@ -203,9 +209,18 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
         if (phone !== undefined) updateData.phone = phone?.trim() || null;
         if (sector !== undefined) updateData.sector = sector?.trim() || null;
         if (payStructure !== undefined) updateData.payStructure = payStructure;
+        if (nssfNo !== undefined) updateData.nssfNo = nssfNo?.trim() || null;
+        if (defaultWorkScheduleId !== undefined) updateData.defaultWorkScheduleId = defaultWorkScheduleId || null;
 
-        if (password !== undefined) {
-            updateData.credentials = { ...doc.data()!.credentials, kraPassword: password };
+        const credUpdate: any = {};
+        if (password !== undefined) credUpdate.kraPassword = password;
+        if (nssfPassword !== undefined) credUpdate.nssfPassword = nssfPassword?.trim() || null;
+        if (shaLogin !== undefined) credUpdate.shaLogin = shaLogin?.trim() || null;
+        if (shaPassword !== undefined) credUpdate.shaPassword = shaPassword?.trim() || null;
+        if (helbLogin !== undefined) credUpdate.helbLogin = helbLogin?.trim() || null;
+        if (helbPassword !== undefined) credUpdate.helbPassword = helbPassword?.trim() || null;
+        if (Object.keys(credUpdate).length > 0) {
+            updateData.credentials = { ...doc.data()!.credentials, ...credUpdate };
         }
 
         if (obligations !== undefined) {

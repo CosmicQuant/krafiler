@@ -1,0 +1,8 @@
+- generic [ref=e645]:
+  - generic [ref=e646]:
+    - heading "zani" [level=1] [ref=e647]
+    - paragraph [ref=e648]: Tax filing & payroll automation for accountants
+  - button "Sign in with Google" [ref=e649] [cursor=pointer]:
+    - img [ref=e650]
+    - text: Sign in with Google
+  - paragraph [ref=e655]: By signing in, you agree to our Terms of Service and Privacy Policy.

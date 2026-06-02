@@ -29,6 +29,12 @@ export type VatPreparationSummary = {
 export type ClientObligation = {
     password?: string;
     iTaxPassword?: string;
+    nssfNo?: string;
+    nssfPassword?: string;
+    shaLogin?: string;
+    shaPassword?: string;
+    helbLogin?: string;
+    helbPassword?: string;
     sector?: string;
     obligations?: string;
     email?: string;
@@ -101,7 +107,7 @@ export type ClientObligation = {
     exciseDutyLastFiledDate?: string;
     exciseDutyReceiptUrl?: string;
     logoUrl?: string;
-    defaultWorkScheduleId?: number | null;
+    defaultWorkScheduleId?: string | null;
 };
 
 export type FilingJobState = 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'unknown' | 'cancelling' | 'cancelled';

@@ -1852,6 +1852,51 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
     }
 });
 
+// GET /api/clients/:clientId/payroll-runs/:id/compliance-status
+router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: AuthenticatedRequest, res) => {
+    try {
+        const id = req.params.id;
+        const clientId = req.params.clientId;
+        const uid = req.user!.uid;
+
+        const runDoc = await adminDb.collection('payrollRuns').doc(id).get();
+        if (!runDoc.exists || runDoc.data()?.ownerUid !== uid || runDoc.data()?.clientId !== clientId) {
+            return res.status(404).json({ message: 'Payroll run not found' });
+        }
+
+        const clientDoc = await adminDb.collection('clients').doc(clientId).get();
+        if (!clientDoc.exists || clientDoc.data()?.ownerUid !== uid) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+        const client = clientDoc.data() as any;
+
+        // Return persisted compliance file info from the client document
+        res.json({
+            payeZipUrl: client.generatedFiles?.payeZipUrl || null,
+            payeZipLabel: client.generatedFiles?.payeZipLabel || null,
+            nssfFileUrl: client.generatedFiles?.nssfFileUrl || null,
+            nssfFileLabel: client.generatedFiles?.nssfFileLabel || null,
+            shaFileUrl: client.generatedFiles?.shaFileUrl || null,
+            shaFileLabel: client.generatedFiles?.shaFileLabel || null,
+            statuses: {
+                paye: client.status?.paye || 'na',
+                nssf: client.status?.nssf || 'na',
+                sha: client.status?.sha || 'na',
+            },
+            amounts: {
+                payeAmount: client.amounts?.payeAmount || 0,
+                nitaAmount: client.amounts?.nitaAmount || 0,
+                housingLevyAmount: client.amounts?.housingLevyAmount || 0,
+                nssfAmount: client.amounts?.nssfAmount || 0,
+                shaAmount: client.amounts?.shaAmount || 0,
+            },
+        });
+    } catch (err: any) {
+        console.error('Error fetching compliance status:', err);
+        res.status(500).json({ message: err.message || 'Failed to fetch compliance status' });
+    }
+});
+
 // ─── Attendance Payroll Approval Workflow ─────────────────────────────────────
 
 // POST /api/clients/:clientId/attendance-payroll-preview

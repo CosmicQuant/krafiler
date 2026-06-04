@@ -59,4 +59,11 @@
             transform: translateX(0);
         }
     }
+
+    /* Fix calendar input picker icon visibility on light backgrounds */
+    input[type="month"]::-webkit-calendar-picker-indicator,
+    input[type="date"]::-webkit-calendar-picker-indicator {
+        filter: invert(0.4);
+        cursor: pointer;
+    }
 }

@@ -43,6 +43,23 @@ router.get('/:clientId/employees', async (req: AuthenticatedRequest, res) => {
     }
 });
 
+// GET /api/clients/:clientId/employees/:id
+router.get('/:clientId/employees/:id', async (req: AuthenticatedRequest, res) => {
+    try {
+        const uid = req.user!.uid;
+        const { clientId, id } = req.params;
+
+        const doc = await adminDb.collection(EMPLOYEES_COLLECTION).doc(id).get();
+        if (!doc.exists || doc.data()?.ownerUid !== uid || doc.data()?.clientId !== clientId) {
+            return res.status(404).json({ message: 'Employee not found' });
+        }
+        res.json({ id: doc.id, ...doc.data() });
+    } catch (err) {
+        console.error('Error fetching employee from Firestore:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 // POST /api/clients/:clientId/employees
 router.post('/:clientId/employees', async (req: AuthenticatedRequest, res) => {
     try {

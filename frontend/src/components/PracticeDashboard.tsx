@@ -10,12 +10,13 @@ import { useAuth } from '../contexts/AuthContext';
 import { Sidebar } from './dashboard/Sidebar';
 import { NewClientModal } from './dashboard/NewClientModal';
 import { OverviewView } from './dashboard/views/OverviewView';
-import { Desk9thView } from './dashboard/views/Desk9thView';
-import { Desk20thView } from './dashboard/views/Desk20thView';
-import { DeskNilView } from './dashboard/views/DeskNilView';
 import { ClientsView } from './dashboard/views/ClientsView';
-import { PayrollPipelineDashboard } from './payroll-pipeline/PayrollPipelineDashboard';
-import { PipelineWizard } from './payroll-pipeline/PipelineWizard';
+import { PayrollViewShell } from './dashboard/views/PayrollViewShell';
+import { VatClientView } from './dashboard/views/VatClientView';
+import { TotClientView } from './dashboard/views/TotClientView';
+import { MriClientView } from './dashboard/views/MriClientView';
+import { DstClientView } from './dashboard/views/DstClientView';
+import { NilClientView } from './dashboard/views/NilClientView';
 
 import { apiFetch } from '../services/api';
 
@@ -42,8 +43,6 @@ export default function PracticeDashboard() {
   const {
     view,
     setView,
-    monthlyReturnFilter,
-    setMonthlyReturnFilter,
     isSidebarOpen,
     setIsSidebarOpen,
     showNewClientModal,
@@ -69,17 +68,16 @@ export default function PracticeDashboard() {
   const hasObligation = (val?: string | null) => !!val && val !== 'na';
 
   const handleGoToPayrollView = (client: ClientObligation) => {
-    setSelectedClient(client);
     navigate(`/dashboard/client/${client.id}/payroll`);
   };
 
-  const [isGeneratingZips, setIsGeneratingZips] = useState(false);
-  const [isGlobalUploading, setIsGlobalUploading] = useState(false);
-  const [generatingClientIds, setGeneratingClientIds] = useState<Record<string, boolean>>({});
+  const [, setIsGeneratingZips] = useState(false);
+  const [, setIsGlobalUploading] = useState(false);
+  const [, setGeneratingClientIds] = useState<Record<string, boolean>>({});
   const [activeJobs, setActiveJobs] = useState<Record<string, ActiveDashboardJob>>({});
   const [nilSelections, setNilSelections] = useState<Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>>({});
-  const [cancellingClientIds, setCancellingClientIds] = useState<Record<string, boolean>>({});
-  const [uploadingClientIds, setUploadingClientIds] = useState<Record<string, boolean>>({});
+  const [, setCancellingClientIds] = useState<Record<string, boolean>>({});
+  const [, setUploadingClientIds] = useState<Record<string, boolean>>({});
   const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   // New Client Modal State
@@ -373,10 +371,10 @@ export default function PracticeDashboard() {
             {/* Payroll Pipeline Routes — explicit pathname matching */}
             {(() => {
               // Extract client ID from pathname (e.g. /dashboard/client/160/payroll)
-              const pathMatch = location.pathname.match(/\/dashboard\/client\/(\d+)/);
-              const pathClientId = pathMatch ? parseInt(pathMatch[1], 10) : null;
+              const pathMatch = location.pathname.match(/\/dashboard\/client\/([^/]+)/);
+              const pathClientId = pathMatch ? pathMatch[1] : null;
               const resolvedClient = pathClientId != null
-                ? clients.find((c) => String(c.id) === String(pathClientId)) || selectedClient || null
+                ? clients.find((c) => String(c.id) === pathClientId) || selectedClient || null
                 : selectedClient || null;
 
               if (!fetchedClients) {
@@ -393,34 +391,20 @@ export default function PracticeDashboard() {
 
               const p = location.pathname;
               const isPayroll = p.startsWith('/dashboard/client/') && p.includes('/payroll');
-              const isPayrollNew = p.endsWith('/payroll/new');
-              const isPayrollRun = p.includes('/payroll/run/');
 
               if (!isPayroll) return null;
 
               return (
                 <div className="mt-10">
-                  {isPayrollNew || isPayrollRun ? (
-                    <PipelineWizard
-                      client={resolvedClient}
-                      onBack={() => {
-                        navigate(`/dashboard/client/${resolvedClient.id}/payroll`);
-                      }}
-                    />
-                  ) : (
-                    <PayrollPipelineDashboard
-                      client={resolvedClient}
-                      onBack={() => {
-                        setSelectedClient(null);
-                        navigate('/dashboard');
-                      }}
-                    />
-                  )}
+                  <PayrollViewShell
+                    clients={clients}
+                    initialClient={resolvedClient}
+                  />
                 </div>
               );
             })()}
 
-            {selectedClient && !location.pathname.includes('/payroll') && (
+            {selectedClient && view !== 'payroll' && !location.pathname.includes('/payroll') && (
               <div className="mt-10">
                 <CompanyDetails
                   client={selectedClient}
@@ -442,57 +426,54 @@ export default function PracticeDashboard() {
               />
             )}
 
-            {!selectedClient && view === 'payroll' && !location.pathname.includes('/payroll') && (
-              <Desk9thView
+            {view === 'payroll' && !location.pathname.includes('/payroll') && (
+              <PayrollViewShell
                 clients={clients}
-                activeJobs={activeJobs}
-                generatingClientIds={generatingClientIds}
-                uploadingClientIds={uploadingClientIds}
-                cancellingClientIds={cancellingClientIds}
-                isGeneratingZips={isGeneratingZips}
-                isGlobalUploading={isGlobalUploading}
-                onGenerateClientZip={filingActions.generateClientZip}
-                onAutoFile={filingActions.autoFile}
-                onAutoFileNssf={filingActions.fileNssf}
-                onCancelJob={filingActions.cancelAutoFile}
-                onGenerateAllZips={() => filingActions.generateAllZips(payrollClients)}
-                onGeneratePrn={filingActions.generatePrn}
-                onUploadMasterCsv={filingActions.uploadMasterCsv}
-                onRemoveMasterCsv={filingActions.removeMasterCsv}
-                onUpdateStatus={filingActions.updateSingleStatus}
-                onOpenNewClientModal={openNewClientModal}
-                onGlobalMasterCsvUpload={filingActions.globalMasterCsvUpload}
-                onSelectClient={setSelectedClient}
-                onGoToPayrollView={handleGoToPayrollView}
+                initialClient={null}
               />
             )}
 
-            {!selectedClient && (view === 'vat' || view === 'tot' || view === 'mri' || view === 'dst') && (
-              <div className="mt-10">
-                <Desk20thView
-                  clients={clients}
-                  activeJobs={activeJobs}
-                  monthlyReturnFilter={monthlyReturnFilter}
-                  setMonthlyReturnFilter={setMonthlyReturnFilter}
-                  mriInputVals={mriInputVals}
-                  setMriInputVals={setMriInputVals}
-                  totInputVals={totInputVals}
-                  setTotInputVals={setTotInputVals}
-                  vatPreviousCreditVals={vatPreviousCreditVals}
-                  setVatPreviousCreditVals={setVatPreviousCreditVals}
-                  vatSectionBWithoutPinVals={vatSectionBWithoutPinVals}
-                  setVatSectionBWithoutPinVals={setVatSectionBWithoutPinVals}
-                  onPrepareVat={filingActions.prepareVat}
-                  onConfirmVatFiling={filingActions.confirmVatFiling}
-                  onGeneratePrn={filingActions.generatePrn}
-                  onFileMri={filingActions.fileMri}
-                  onFileTot={filingActions.fileTot}
-                  onAutoFile={filingActions.autoFile}
-                  onAutoFileNssf={filingActions.fileNssf}
-                  onGenerateTotZip={filingActions.generateTotZip}
-                  fixedType={view === 'vat' ? 'vat' : view === 'tot' ? 'tot' : view === 'mri' ? 'mri' : 'dst'}
-                />
-              </div>
+            {!selectedClient && view === 'vat' && (
+              <VatClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                vatPreviousCreditVals={vatPreviousCreditVals}
+                setVatPreviousCreditVals={setVatPreviousCreditVals}
+                vatSectionBWithoutPinVals={vatSectionBWithoutPinVals}
+                setVatSectionBWithoutPinVals={setVatSectionBWithoutPinVals}
+                onPrepareVat={filingActions.prepareVat}
+                onConfirmVatFiling={filingActions.confirmVatFiling}
+                onGeneratePrn={filingActions.generatePrn}
+              />
+            )}
+            {!selectedClient && view === 'tot' && (
+              <TotClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                totInputVals={totInputVals}
+                setTotInputVals={setTotInputVals}
+                onFileTot={filingActions.fileTot}
+                onGenerateTotZip={filingActions.generateTotZip}
+                onGeneratePrn={filingActions.generatePrn}
+              />
+            )}
+            {!selectedClient && view === 'mri' && (
+              <MriClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                mriInputVals={mriInputVals}
+                setMriInputVals={setMriInputVals}
+                onFileMri={filingActions.fileMri}
+                onGeneratePrn={filingActions.generatePrn}
+              />
+            )}
+            {!selectedClient && view === 'dst' && (
+              <DstClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                onAutoFile={filingActions.autoFile}
+                onGeneratePrn={filingActions.generatePrn}
+              />
             )}
 
             {view === 'clients' && !selectedClient && (
@@ -503,15 +484,33 @@ export default function PracticeDashboard() {
               />
             )}
 
-            {!selectedClient && (view === 'nil-filing' || view === 'income-tax-individual' || view === 'income-tax-company') && (
-              <DeskNilView
+            {!selectedClient && view === 'nil-filing' && (
+              <NilClientView
                 clients={clients}
                 activeJobs={activeJobs}
                 nilSelections={nilSelections}
                 setNilSelections={setNilSelections}
                 onFileNil={filingActions.fileNil}
-                onSelectClient={setSelectedClient}
-                filterType={view === 'income-tax-individual' ? 'income-tax-individual' : view === 'income-tax-company' ? 'income-tax-company' : null}
+              />
+            )}
+            {!selectedClient && view === 'income-tax-individual' && (
+              <NilClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                nilSelections={nilSelections}
+                setNilSelections={setNilSelections}
+                onFileNil={filingActions.fileNil}
+                filterType="income-tax-individual"
+              />
+            )}
+            {!selectedClient && view === 'income-tax-company' && (
+              <NilClientView
+                clients={clients}
+                activeJobs={activeJobs}
+                nilSelections={nilSelections}
+                setNilSelections={setNilSelections}
+                onFileNil={filingActions.fileNil}
+                filterType="income-tax-company"
               />
             )}
           </div>

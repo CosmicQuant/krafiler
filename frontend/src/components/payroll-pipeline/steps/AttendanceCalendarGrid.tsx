@@ -74,6 +74,7 @@ interface AttendanceSummary {
 
 interface AttendanceCalendarGridProps {
     clientId: string;
+    period?: string;
     onApproved?: () => void;
     onPeriodChange?: (period: string) => void;
     onRegisterApprove?: (trigger: () => Promise<boolean>) => void;
@@ -183,8 +184,9 @@ function isOnLeave(employeeId: number, dateStr: string, leaveRequests: LeaveRequ
     return null;
 }
 
-export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange, onRegisterApprove }: AttendanceCalendarGridProps) {
-    const [period, setPeriod] = useState(getCurrentFilingPeriod().period);
+export function AttendanceCalendarGrid({ clientId, period: propPeriod, onApproved, onPeriodChange: _onPeriodChange, onRegisterApprove }: AttendanceCalendarGridProps) {
+    const defaultPeriod = getCurrentFilingPeriod().period;
+    const period = propPeriod || defaultPeriod;
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [attendanceMap, setAttendanceMap] = useState<Map<string, AttendanceRecord>>(new Map());
     const [schedules, setSchedules] = useState<Map<number, WorkSchedule>>(new Map());
@@ -896,18 +898,6 @@ export function AttendanceCalendarGrid({ clientId, onApproved, onPeriodChange, o
                             Pro-rated
                         </button>
                     </div>
-                    <label className="text-xs font-semibold text-slate-500">Period:</label>
-                    <input
-                        type="month"
-                        value={period}
-                        onChange={(e) => {
-                            const newPeriod = e.target.value;
-                            setPeriod(newPeriod);
-                            setApproved(false);
-                            onPeriodChange?.(newPeriod);
-                        }}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400"
-                    />
                     <button
                         onClick={loadData}
                         disabled={loading}

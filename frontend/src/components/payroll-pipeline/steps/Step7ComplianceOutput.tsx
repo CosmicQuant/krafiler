@@ -224,7 +224,7 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                 const res = await apiFetch(`/api/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId: parseInt(clientId, 10), period: '' }),
+                    body: JSON.stringify({ clientId, period: '' }),
                 });
                 const data = await res.json();
                 if (res.ok) {
@@ -236,7 +236,7 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                 const res = await apiFetch(`/api/tax/file-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId: parseInt(clientId, 10), taxObligationType: 'paye', period: '', printPrnOnly }),
+                    body: JSON.stringify({ clientId, taxObligationType: 'paye', period: '', printPrnOnly }),
                 });
                 const data = await res.json();
                 if (res.ok) {

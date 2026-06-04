@@ -13,7 +13,6 @@ import {
   getFilingProgressTone,
   isPendingFilingJob,
   isTerminalFilingJob,
-  formatGeneratedDate,
 } from '../../../utils/dashboardUtils';
 import { ExcelIcon, ZipIcon } from '../Icons';
 import { StatusBadge, InteractiveStatusBadge } from '../StatusBadges';
@@ -44,14 +43,10 @@ interface Desk9thViewProps {
 export function Desk9thView({
   clients,
   activeJobs,
-  generatingClientIds,
   cancellingClientIds,
-  isGeneratingZips,
-  onGenerateClientZip,
   onAutoFile,
   onAutoFileNssf,
   onCancelJob,
-  onGenerateAllZips,
   onGeneratePrn,
   onUpdateStatus,
   onOpenNewClientModal,

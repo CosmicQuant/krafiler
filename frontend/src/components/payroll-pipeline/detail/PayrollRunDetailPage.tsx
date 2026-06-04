@@ -5,7 +5,7 @@ import { getCurrentFilingPeriod } from '../../../utils/taxPeriods';
 import { RunHeader } from './RunHeader';
 import { PayRegisterTable } from './PayRegisterTable';
 import { PayrollDetailDrawer } from './PayrollDetailDrawer';
-import { ComplianceLogoGrid } from './ComplianceLogoGrid';
+import { ComplianceTabs } from './ComplianceTabs';
 import { LoanManager } from '../steps/LoanManager';
 import { LeaveManager } from '../steps/LeaveManager';
 import { EmployeeEditModal, type Employee } from '../steps/EmployeeEditModal';
@@ -133,6 +133,16 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 method: 'POST',
             });
             if (res.ok) {
+                // Auto-generate compliance files after finalization
+                try {
+                    await apiFetch(`/clients/${client.id}/payroll-runs/${currentRun.id}/generate-compliance`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }),
+                    });
+                } catch {
+                    // Non-blocking: if generation fails, user can retry manually
+                }
                 setRefreshToken((t) => t + 1);
             } else {
                 const err = await res.json().catch(() => ({}));
@@ -186,32 +196,27 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 onClearError={() => setError(null)}
             />
 
-            {/* Main 2-column layout */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                {/* Left: Pay Register */}
-                <div className="xl:col-span-2 space-y-4">
-                    <PayRegisterTable
-                        clientId={client.id}
-                        runId={currentRun?.id}
-                        period={period}
-                        onSelectEntry={handleSelectEntry}
-                        onRefresh={() => setRefreshToken((t) => t + 1)}
-                        onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}
-                    />
-                    <LoanManager clientId={client.id} period={period} />
-                    <LeaveManager clientId={client.id} period={period} />
-                </div>
+            {/* Main layout: full width */}
+            <div className="space-y-4">
+                <PayRegisterTable
+                    clientId={client.id}
+                    runId={currentRun?.id}
+                    period={period}
+                    onSelectEntry={handleSelectEntry}
+                    onRefresh={() => setRefreshToken((t) => t + 1)}
+                    onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}
+                />
 
-                {/* Right: Compliance Logo Grid */}
-                <div className="space-y-4">
-                    <ComplianceLogoGrid
-                        client={client}
-                        runId={currentRun?.id}
-                        period={period}
-                        runStatus={runStatus}
-                        onRefresh={() => setRefreshToken((t) => t + 1)}
-                    />
-                </div>
+                <ComplianceTabs
+                    client={client}
+                    runId={currentRun?.id}
+                    period={period}
+                    runStatus={runStatus}
+                    onRefresh={() => setRefreshToken((t) => t + 1)}
+                />
+
+                <LoanManager clientId={client.id} period={period} />
+                <LeaveManager clientId={client.id} period={period} />
             </div>
 
             {/* Detail Drawer */}

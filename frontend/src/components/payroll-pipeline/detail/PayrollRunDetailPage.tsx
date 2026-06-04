@@ -6,8 +6,7 @@ import { RunHeader } from './RunHeader';
 import { PayRegisterTable } from './PayRegisterTable';
 import { PayrollDetailDrawer } from './PayrollDetailDrawer';
 import { ComplianceTabs } from './ComplianceTabs';
-import { LoanManager } from '../steps/LoanManager';
-import { LeaveManager } from '../steps/LeaveManager';
+import { RightSidebar } from './RightSidebar';
 import { EmployeeEditModal, type Employee } from '../steps/EmployeeEditModal';
 import type { ClientObligation } from '../../../types';
 
@@ -51,6 +50,7 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [employeeModalOpen, setEmployeeModalOpen] = useState(false);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+    const [entries, setEntries] = useState<any[]>([]);
 
     const fetchRuns = useCallback(async () => {
         try {
@@ -86,6 +86,23 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
     }, [fetchRuns, period, urlRunId, refreshToken]);
 
     const runStatus = deriveRunStatus(currentRun);
+
+    const fetchEntries = useCallback(async () => {
+        if (!currentRun?.id) {
+            setEntries([]);
+            return;
+        }
+        try {
+            const res = await apiFetch(`/clients/${client.id}/payroll-runs/${currentRun.id}/entries`);
+            if (res.ok) {
+                setEntries(await res.json());
+            }
+        } catch { /* ignore */ }
+    }, [client.id, currentRun?.id]);
+
+    useEffect(() => {
+        fetchEntries();
+    }, [fetchEntries]);
 
     const handleCreateRun = async () => {
         try {
@@ -196,28 +213,36 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 onClearError={() => setError(null)}
             />
 
-            {/* Main layout: full width */}
-            <div className="space-y-4">
-                <PayRegisterTable
-                    clientId={client.id}
-                    runId={currentRun?.id}
-                    period={period}
-                    onSelectEntry={handleSelectEntry}
-                    onRefresh={() => setRefreshToken((t) => t + 1)}
-                    onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}
-                />
-
-                <ComplianceTabs
-                    client={client}
-                    runId={currentRun?.id}
-                    period={period}
-                    runStatus={runStatus}
-                    onRefresh={() => setRefreshToken((t) => t + 1)}
-                />
-
-                <LoanManager clientId={client.id} period={period} />
-                <LeaveManager clientId={client.id} period={period} />
+            {/* Main layout: Pay Register left, Loans/Leaves right */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div className="xl:col-span-2">
+                    <PayRegisterTable
+                        clientId={client.id}
+                        runId={currentRun?.id}
+                        period={period}
+                        onSelectEntry={handleSelectEntry}
+                        onRefresh={() => setRefreshToken((t) => t + 1)}
+                        onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}
+                    />
+                </div>
+                <div>
+                    <RightSidebar
+                        clientId={client.id}
+                        period={period}
+                        onRefresh={() => setRefreshToken((t) => t + 1)}
+                    />
+                </div>
             </div>
+
+            {/* Compliance tabs below */}
+            <ComplianceTabs
+                client={client}
+                runId={currentRun?.id}
+                period={period}
+                runStatus={runStatus}
+                entries={entries}
+                onRefresh={() => setRefreshToken((t) => t + 1)}
+            />
 
             {/* Detail Drawer */}
             {drawerOpen && selectedEntry && (

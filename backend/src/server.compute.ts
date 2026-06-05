@@ -1,8 +1,18 @@
 /**
- * server.ts
+ * server.compute.ts
  *
- * Express application entry point.
- * Run with: npm run dev
+ * Thin Compute API for Cloud Run.
+ * Only mounts endpoints that need secrets, complex calculations, or rate limiting.
+ *
+ * Routes kept:
+ * - /api/auth/...             (employee portal auth)
+ * - /api/payroll/...          (calculate-preview, generate-unified)
+ * - /api/clients/...          (payroll-runs: finalize, rollback, adjustments)
+ * - /api/clients/.../email    (send-payslips)
+ * - /api/tax/...              (file-return, cancel, filing-status)
+ * - /api/subscriptions/webhook (Paystack webhook)
+ * - /api/receipts/...         (auth-protected receipt serving)
+ * - /health
  */
 
 import 'express-async-errors';
@@ -39,22 +49,9 @@ process.on('SIGINT', () => {
 import rateLimit from 'express-rate-limit';
 import taxRoutes from './api/tax.routes';
 import payrollFirestoreRoutes from './api/payroll.firestore';
-import clientFirestoreRoutes from './api/clients.firestore';
-import employeeFirestoreRoutes from './api/employees.firestore';
-import leaveFirestoreRoutes from './api/leave.firestore';
-import loansFirestoreRoutes from './api/loans.firestore';
-import attendanceFirestoreRoutes from './api/attendance.firestore';
-import reportsFirestoreRoutes from './api/reports.firestore';
+import payrollRunsFirestoreRoutes from './api/payroll-runs.firestore';
 import emailFirestoreRoutes from './api/email.firestore';
 import authFirestoreRoutes from './api/auth.firestore';
-import portalFirestoreRoutes from './api/portal.firestore';
-import payrollRunsFirestoreRoutes from './api/payroll-runs.firestore';
-import departmentsFirestoreRoutes from './api/departments.firestore';
-import documentsFirestoreRoutes from './api/documents.firestore';
-import auditFirestoreRoutes from './api/audit.firestore';
-import kpiFirestoreRoutes from './api/kpi.firestore';
-import workScheduleFirestoreRoutes from './api/work-schedules.firestore';
-import holidaysFirestoreRoutes from './api/holidays.firestore';
 import pinoHttp from 'pino-http';
 import { verifyAuth } from './middleware/verifyAuth';
 import { serveReceipt } from './middleware/receipts';
@@ -64,12 +61,10 @@ import { checkSubscriptionLimits } from './middleware/subscription';
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 
-// Trust proxy headers (required for Cloud Run / Firebase Hosting so express-rate-limit
-// can correctly identify client IPs via X-Forwarded-For). Cloud Run = 1 hop.
+// Trust proxy headers (required for Cloud Run / Firebase Hosting)
 app.set('trust proxy', 1);
 
 // ─── Security Middleware ──────────────────────────────────────────────────────
-
 app.use(pinoHttp({ logger }));
 app.use(helmet({ crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' } }));
 app.use(
@@ -82,7 +77,6 @@ app.use(
 );
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
-
 const filingLimiter = rateLimit({
     windowMs: 15 * 60 * 1_000,
     max: 10,
@@ -95,11 +89,9 @@ const filingLimiter = rateLimit({
 });
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
-
 app.use(express.json({ limit: '5mb' }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-
 app.use('/api/tax/file-return', filingLimiter);
 app.use('/api/tax/file-nil-return', filingLimiter);
 
@@ -112,39 +104,24 @@ app.use('/health', (_req, res) => {
 // Auth-protected receipt serving
 app.use('/api/receipts/*', verifyAuth, serveReceipt);
 
-// Public Paystack webhook (must be before protected routes so verifyAuth doesn't block it)
+// Public Paystack webhook
 app.use('/api/subscriptions/webhook', subscriptionRoutes);
 
-// Protected API routes — Firestore only
+// Protected compute routes
 app.use('/api/tax', verifyAuth, checkSubscriptionLimits, taxRoutes);
 app.use('/api/payroll', verifyAuth, checkSubscriptionLimits, payrollFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, clientFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, employeeFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, leaveFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, loansFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, attendanceFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, reportsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, emailFirestoreRoutes);
-app.use('/api/portal', verifyAuth, checkSubscriptionLimits, portalFirestoreRoutes);
 app.use('/api/clients', verifyAuth, checkSubscriptionLimits, payrollRunsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, departmentsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, documentsFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, auditFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, kpiFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, workScheduleFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, holidaysFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, emailFirestoreRoutes);
 
 // Subscription routes (protected, except webhook mounted above)
 app.use('/api/subscriptions', verifyAuth, subscriptionRoutes);
 
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
-
 app.use((_req, res) => {
     res.status(404).json({ message: 'Route not found.' });
 });
 
 // ─── Global Error Handler ────────────────────────────────────────────────────
-
 app.use(
     (
         err: Error,
@@ -158,11 +135,10 @@ app.use(
 );
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-
 const server = app.listen(PORT);
 
 server.on('listening', () => {
-    logger.info(`KRA Filing API running on http://localhost:${PORT}`);
+    logger.info(`KRAFILER Compute API running on http://localhost:${PORT}`);
     logger.info(`Environment: ${process.env.NODE_ENV ?? 'development'}`);
 });
 

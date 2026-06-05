@@ -76,9 +76,10 @@ const validateFilingRequest = [
         .withMessage('kraPin must be exactly 11 alphanumeric characters'),
 
     body('kraPassword')
+        .optional({ checkFalsy: true })
         .isString()
         .notEmpty()
-        .withMessage('kraPassword is required'),
+        .withMessage('kraPassword cannot be empty if provided'),
 
     body('periodFrom')
         .custom((value: string, { req }) => {
@@ -347,19 +348,45 @@ router.post(
 
             // Encrypt KRA password before it leaves the API handler.
             // The worker decrypts with the same ENCRYPTION_SECRET + ENCRYPTION_SALT.
+            // If no password is provided, fall back to the client's stored encrypted password.
             let encryptedPassword: string | undefined;
             let iv: string | undefined;
             let authTag: string | undefined;
-            try {
-                const encryptionResult = encrypt(kraPassword);
-                encryptedPassword = encryptionResult.encryptedData;
-                iv = encryptionResult.iv;
-                authTag = encryptionResult.authTag;
-            } catch (err) {
-                console.error('[API] Failed to encrypt KRA password:', err);
-                res.status(500).json({
+
+            if (kraPassword && typeof kraPassword === 'string' && kraPassword.trim().length > 0) {
+                try {
+                    const encryptionResult = encrypt(kraPassword);
+                    encryptedPassword = encryptionResult.encryptedData;
+                    iv = encryptionResult.iv;
+                    authTag = encryptionResult.authTag;
+                } catch (err) {
+                    console.error('[API] Failed to encrypt KRA password:', err);
+                    res.status(500).json({
+                        success: false,
+                        message: 'Credential encryption failed. Check ENCRYPTION_SECRET and ENCRYPTION_SALT env vars.',
+                    });
+                    return;
+                }
+            } else if (typeof clientId === 'string' && clientId.trim().length > 0) {
+                try {
+                    const clientDoc = await adminDb.collection('clients').doc(clientId.trim()).get();
+                    if (clientDoc.exists) {
+                        const cd = clientDoc.data() as any;
+                        if (cd.kraPassword && cd.kraPasswordIv && cd.kraPasswordAuthTag) {
+                            encryptedPassword = cd.kraPassword;
+                            iv = cd.kraPasswordIv;
+                            authTag = cd.kraPasswordAuthTag;
+                        }
+                    }
+                } catch (err) {
+                    console.error('[API] Failed to fetch client stored password:', err);
+                }
+            }
+
+            if (!encryptedPassword || !iv || !authTag) {
+                res.status(400).json({
                     success: false,
-                    message: 'Credential encryption failed. Check ENCRYPTION_SECRET and ENCRYPTION_SALT env vars.',
+                    message: 'kraPassword is required and no stored password was found for this client.',
                 });
                 return;
             }
@@ -636,13 +663,13 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             createdAt: new Date().toISOString(),
         };
 
-        const { taskName } = await queueNssfJob(filingJob, 'dev-user');
+        const { messageId } = await queueNssfJob(filingJob, 'dev-user');
 
         res.json({
             success: true,
             jobId,
             message: 'NSSF filing job queued.',
-            taskName: taskName || undefined,
+            messageId: messageId || undefined,
         });
     } catch (e: any) {
         console.error(e);

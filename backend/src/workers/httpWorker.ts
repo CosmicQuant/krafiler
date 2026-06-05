@@ -16,7 +16,23 @@ import { logger } from '../logger';
 const router = Router();
 
 router.post('/process-job', async (req: Request, res: Response): Promise<void> => {
-    const { jobId } = req.body as { jobId?: string };
+    // Support both direct JSON and Pub/Sub push envelope
+    let jobId: string | undefined;
+
+    if (req.body.message?.data) {
+        // Pub/Sub push format
+        try {
+            const decoded = Buffer.from(req.body.message.data, 'base64').toString('utf8');
+            const parsed = JSON.parse(decoded);
+            jobId = parsed.jobId;
+        } catch {
+            res.status(400).json({ error: 'Invalid Pub/Sub message format' });
+            return;
+        }
+    } else {
+        // Direct JSON (legacy Cloud Tasks or local dev)
+        jobId = req.body.jobId;
+    }
 
     if (!jobId || typeof jobId !== 'string') {
         res.status(400).json({ error: 'jobId is required' });

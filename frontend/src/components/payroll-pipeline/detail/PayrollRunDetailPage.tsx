@@ -150,7 +150,6 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 method: 'POST',
             });
             if (res.ok) {
-                // Auto-generate compliance files after finalization
                 try {
                     await apiFetch(`/clients/${client.id}/payroll-runs/${currentRun.id}/generate-compliance`, {
                         method: 'POST',
@@ -158,7 +157,7 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                         body: JSON.stringify({ generatePaye: true, generateNssf: true, generateSha: true }),
                     });
                 } catch {
-                    // Non-blocking: if generation fails, user can retry manually
+                    // Non-blocking
                 }
                 setRefreshToken((t) => t + 1);
             } else {
@@ -213,9 +212,9 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 onClearError={() => setError(null)}
             />
 
-            {/* Main layout: Pay Register left, Loans/Leaves right */}
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                <div className="xl:col-span-2">
+            {/* Main layout: Pay Register + Compliance left, Loans/Leaves sticky right */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+                <div className="xl:col-span-2 space-y-4">
                     <PayRegisterTable
                         clientId={client.id}
                         runId={currentRun?.id}
@@ -224,8 +223,16 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                         onRefresh={() => setRefreshToken((t) => t + 1)}
                         onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}
                     />
+                    <ComplianceTabs
+                        client={client}
+                        runId={currentRun?.id}
+                        period={period}
+                        runStatus={runStatus}
+                        entries={entries}
+                        onRefresh={() => setRefreshToken((t) => t + 1)}
+                    />
                 </div>
-                <div>
+                <div className="sticky top-4 self-start">
                     <RightSidebar
                         clientId={client.id}
                         period={period}
@@ -233,16 +240,6 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                     />
                 </div>
             </div>
-
-            {/* Compliance tabs below */}
-            <ComplianceTabs
-                client={client}
-                runId={currentRun?.id}
-                period={period}
-                runStatus={runStatus}
-                entries={entries}
-                onRefresh={() => setRefreshToken((t) => t + 1)}
-            />
 
             {/* Detail Drawer */}
             {drawerOpen && selectedEntry && (

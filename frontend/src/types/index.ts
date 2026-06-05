@@ -127,6 +127,7 @@ export type ActiveDashboardJob = {
     sourcePackageUrl?: string;
     sourcePackageLabel?: string;
     vatSummary?: VatPreparationSummary;
+    stepLogs?: FilingStepLog[];
 };
 
 export type TaxObligationType =

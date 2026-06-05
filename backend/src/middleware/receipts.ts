@@ -4,15 +4,13 @@
  * Auth-protected receipt serving endpoint.
  * Replaces the insecure `express.static('/api/receipts')` middleware.
  *
- * Phase 3: Falls back to Cloud Storage signed URLs when the receipt
- * is not found on local disk (Fire store mode).
+ * Looks up local disk first, then falls back to Cloud Storage signed URLs.
  */
 
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs/promises';
 import { logger } from '../logger';
-import { isFirestore } from '../db/dbRouter';
 import { getSignedDownloadUrl } from '../lib/cloudStorage';
 import { adminDb } from '../lib/firebaseAdmin';
 
@@ -29,7 +27,7 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
     }
 
     // Prevent directory traversal attacks
-    const sanitized = relativePath.replace(/\.{2}/g, '').replace(/\\/g, '/');
+    const sanitized = relativePath.replace(/\.\./g, '').replace(/\\/g, '/');
     const filePath = path.join(RECEIPTS_DIR, sanitized);
     const resolvedDir = path.resolve(RECEIPTS_DIR);
     const resolvedFile = path.resolve(filePath);
@@ -39,7 +37,7 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
         return;
     }
 
-    // 1. Try local disk first (SQLite mode or legacy receipts)
+    // 1. Try local disk first (legacy receipts)
     try {
         await fs.access(filePath);
         res.setHeader('Content-Disposition', 'inline');
@@ -56,24 +54,22 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
         // Not found locally — fall through to GCS lookup
     }
 
-    // 2. Firestore mode: look up job and redirect to signed GCS URL
-    if (isFirestore()) {
-        const parts = sanitized.split('/');
-        const jobId = parts[0]; // e.g. "receipts/<jobId>/receipt.pdf"
-        if (jobId) {
-            try {
-                const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
-                if (jobDoc.exists) {
-                    const jobData = jobDoc.data() as any;
-                    const gcsPath = jobData?.artifacts?.receiptGcsPath;
-                    if (gcsPath) {
-                        const signedUrl = await getSignedDownloadUrl(gcsPath, 15);
-                        return res.redirect(signedUrl);
-                    }
+    // 2. Look up job and redirect to signed GCS URL
+    const parts = sanitized.split('/');
+    const jobId = parts[0]; // e.g. "receipts/<jobId>/receipt.pdf"
+    if (jobId) {
+        try {
+            const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+            if (jobDoc.exists) {
+                const jobData = jobDoc.data() as any;
+                const gcsPath = jobData?.artifacts?.receiptGcsPath;
+                if (gcsPath) {
+                    const signedUrl = await getSignedDownloadUrl(gcsPath, 15);
+                    return res.redirect(signedUrl);
                 }
-            } catch (err) {
-                logger.error({ err, jobId }, 'Failed to resolve receipt from GCS');
             }
+        } catch (err) {
+            logger.error({ err, jobId }, 'Failed to resolve receipt from GCS');
         }
     }
 

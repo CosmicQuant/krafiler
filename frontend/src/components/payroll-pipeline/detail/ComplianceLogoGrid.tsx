@@ -178,7 +178,7 @@ export function ComplianceLogoGrid({ client, runId, period, runStatus, onRefresh
                     setFilingType(null);
                     return;
                 }
-                const res = await apiFetch(`/api/tax/file-nssf-return`, {
+                const res = await apiFetch(`/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, masterFileUrl: masterUrl, period: '' }),
@@ -192,12 +192,13 @@ export function ComplianceLogoGrid({ client, runId, period, runStatus, onRefresh
                 const lastDay = new Date(parseInt(yearStr), parseInt(monthStr), 0).getDate();
                 const periodFrom = `${yearStr}-${monthStr}-01`;
                 const periodTo = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
-                const res = await apiFetch(`/api/tax/file-return`, {
+                const res = await apiFetch(`/tax/file-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         clientId: client.id,
                         kraPin: client.pin,
+                        kraPassword: client.password || client.iTaxPassword || '',
                         taxObligationType: 'paye',
                         periodFrom,
                         periodTo,

@@ -1,23 +1,17 @@
-import { isFirestore } from '../db/dbRouter';
+import { adminDb } from '../lib/firebaseAdmin';
 
 export async function logAudit(params: {
-    clientId: number;
-    employeeId?: number;
+    clientId: number | string;
+    employeeId?: number | string;
     action: string;
     entityType: string;
-    entityId?: number;
+    entityId?: number | string;
     oldValues?: any;
     newValues?: any;
     performedBy: string;
 }): Promise<void> {
-    if (isFirestore()) {
-        // Audit logs not migrated to Firestore per user request
-        return;
-    }
-
     try {
-        const { db } = await import('../db/kysely');
-        await db.insertInto('audit_log').values({
+        await adminDb.collection('auditLogs').add({
             clientId: params.clientId,
             employeeId: params.employeeId || null,
             action: params.action,
@@ -27,7 +21,7 @@ export async function logAudit(params: {
             newValues: params.newValues ? JSON.stringify(params.newValues) : null,
             performedBy: params.performedBy || 'system',
             createdAt: new Date().toISOString(),
-        }).execute();
+        });
     } catch (err) {
         console.error('Audit log error:', err);
     }

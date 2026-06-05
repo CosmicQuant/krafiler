@@ -76,7 +76,7 @@ export default function PracticeDashboard() {
   const [, setGeneratingClientIds] = useState<Record<string, boolean>>({});
   const [activeJobs, setActiveJobs] = useState<Record<string, ActiveDashboardJob>>({});
   const [nilSelections, setNilSelections] = useState<Record<string, { type: string; periodFrom: string; periodTo: string; ownsRentalProperty?: boolean }>>({});
-  const [, setCancellingClientIds] = useState<Record<string, boolean>>({});
+  const [cancellingClientIds, setCancellingClientIds] = useState<Record<string, boolean>>({});
   const [, setUploadingClientIds] = useState<Record<string, boolean>>({});
   const [dashboardNotice, setDashboardNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -444,6 +444,8 @@ export default function PracticeDashboard() {
                 onPrepareVat={filingActions.prepareVat}
                 onConfirmVatFiling={filingActions.confirmVatFiling}
                 onGeneratePrn={filingActions.generatePrn}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
             {!selectedClient && view === 'tot' && (

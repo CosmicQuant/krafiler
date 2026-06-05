@@ -1,18 +1,16 @@
 /**
  * filingQueue.ts
  *
- * Queue abstraction layer. Bridges BullMQ and Cloud Tasks.
- * Use this module instead of accessing BullMQ/Cloud Tasks directly.
+ * Queue abstraction layer. Bridges BullMQ and Pub/Sub.
+ * Use this module instead of accessing BullMQ/Pub/Sub directly.
  */
 
-import { v4 as uuidv4 } from 'uuid';
-
-import { enqueueFilingJob, cancelTask, listQueueTasks } from '../lib/cloudTasks';
+import { publishFilingJob } from '../lib/pubsub';
+import { adminDb } from '../lib/firebaseAdmin';
 import * as jobStore from './jobStore';
 import { FilingJob, FilingStepLog } from '../types';
-import { logger } from '../logger';
 
-const USE_CLOUD_TASKS = process.env.USE_CLOUD_TASKS === 'true';
+const USE_PUBSUB = process.env.USE_PUBSUB === 'true';
 
 type PendingFilingState = 'waiting' | 'active' | 'delayed';
 
@@ -65,10 +63,10 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
 export async function findDuplicatePendingFiling(
     input: FilingGuardInput
 ): Promise<{ jobId: string; state: PendingFilingState } | null> {
-    if (!USE_CLOUD_TASKS) {
-        return findDuplicateInBullMQ(input);
+    if (USE_PUBSUB) {
+        return findDuplicateInFirestore(input);
     }
-    return findDuplicateInCloudTasks(input);
+    return findDuplicateInBullMQ(input);
 }
 
 async function findDuplicateInBullMQ(
@@ -115,21 +113,25 @@ async function findDuplicateInBullMQ(
     return null;
 }
 
-async function findDuplicateInCloudTasks(
+async function findDuplicateInFirestore(
     input: FilingGuardInput
 ): Promise<{ jobId: string; state: PendingFilingState } | null> {
     const requestedKey = buildPendingFilingKey(input);
-    const tasks = await listQueueTasks('status != COMPLETED AND status != CANCELLED');
 
-    for (const task of tasks) {
-        // Extract jobId from task name or body
-        const jobId = task.name.split('/').pop() || '';
-        if (!jobId) continue;
+    // Query Firestore for pending jobs by userId and kraPin
+    const snapshot = await adminDb
+        .collection('jobs')
+        .where('ownerUid', '==', input.userId)
+        .where('status', 'in', ['waiting', 'active', 'processing'])
+        .get();
 
-        const doc = await jobStore.getJob(jobId);
-        if (!doc) continue;
+    if (!snapshot) return null;
 
-        const pendingJobData = doc.payload;
+    for (const doc of snapshot.docs) {
+        const data = doc.data() as jobStore.JobStoreDoc;
+        const pendingJobData = data.payload;
+        if (!pendingJobData?.payload) continue;
+
         const pendingKey = buildPendingFilingKey({
             userId: pendingJobData.userId,
             kraPin: pendingJobData.payload.kraPin,
@@ -152,10 +154,10 @@ async function findDuplicateInCloudTasks(
         if (pendingKey !== requestedKey) continue;
 
         const state: PendingFilingState =
-            doc.status === 'active' || doc.status === 'processing' ? 'active' :
-            doc.status === 'waiting' ? 'waiting' : 'delayed';
+            data.status === 'active' || data.status === 'processing' ? 'active' :
+            data.status === 'waiting' ? 'waiting' : 'delayed';
 
-        return { jobId, state };
+        return { jobId: doc.id, state };
     }
 
     return null;
@@ -164,33 +166,31 @@ async function findDuplicateInCloudTasks(
 export async function queueFilingJob(
     filingJob: FilingJob,
     ownerUid: string
-): Promise<{ jobId: string; taskName?: string }> {
-    if (!USE_CLOUD_TASKS) {
-        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
-        await (kraFilingQueue.add as any)('file-return', filingJob, { jobId: filingJob.jobId });
-        return { jobId: filingJob.jobId };
+): Promise<{ jobId: string; messageId?: string }> {
+    if (USE_PUBSUB) {
+        await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
+        const messageId = await publishFilingJob(filingJob.jobId);
+        return { jobId: filingJob.jobId, messageId };
     }
 
-    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
-    const taskName = await enqueueFilingJob(filingJob.jobId);
-    await jobStore.updateJob(filingJob.jobId, { cloudTaskName: taskName });
-    return { jobId: filingJob.jobId, taskName };
+    const { kraFilingQueue } = await import('../queues/kraFilingQueue');
+    await (kraFilingQueue.add as any)('file-return', filingJob, { jobId: filingJob.jobId });
+    return { jobId: filingJob.jobId };
 }
 
 export async function queueNssfJob(
     filingJob: FilingJob,
     ownerUid: string
-): Promise<{ jobId: string; taskName?: string }> {
-    if (!USE_CLOUD_TASKS) {
-        const { kraFilingQueue } = await import('../queues/kraFilingQueue');
-        await (kraFilingQueue.add as any)('nssf-return', filingJob, { jobId: filingJob.jobId });
-        return { jobId: filingJob.jobId };
+): Promise<{ jobId: string; messageId?: string }> {
+    if (USE_PUBSUB) {
+        await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
+        const messageId = await publishFilingJob(filingJob.jobId);
+        return { jobId: filingJob.jobId, messageId };
     }
 
-    await jobStore.createJob(filingJob.jobId, ownerUid, filingJob, undefined, filingJob.payload.clientId);
-    const taskName = await enqueueFilingJob(filingJob.jobId);
-    await jobStore.updateJob(filingJob.jobId, { cloudTaskName: taskName });
-    return { jobId: filingJob.jobId, taskName };
+    const { kraFilingQueue } = await import('../queues/kraFilingQueue');
+    await (kraFilingQueue.add as any)('nssf-return', filingJob, { jobId: filingJob.jobId });
+    return { jobId: filingJob.jobId };
 }
 
 export async function cancelFilingJob(jobId: string): Promise<{
@@ -198,7 +198,7 @@ export async function cancelFilingJob(jobId: string): Promise<{
     state: string;
     message: string;
 }> {
-    if (!USE_CLOUD_TASKS) {
+    if (!USE_PUBSUB) {
         const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         const job = await kraFilingQueue.getJob(jobId);
         if (!job) {
@@ -241,9 +241,6 @@ export async function cancelFilingJob(jobId: string): Promise<{
     }
 
     if (doc.status === 'waiting') {
-        if (doc.cloudTaskName) {
-            await cancelTask(doc.cloudTaskName);
-        }
         await jobStore.updateJob(jobId, {
             status: 'cancelled',
             cancelledAt: new Date().toISOString(),
@@ -273,7 +270,7 @@ export interface JobStatusResult {
 }
 
 export async function getFilingJobStatus(jobId: string): Promise<JobStatusResult | null> {
-    if (!USE_CLOUD_TASKS) {
+    if (!USE_PUBSUB) {
         const { kraFilingQueue } = await import('../queues/kraFilingQueue');
         const job = await kraFilingQueue.getJob(jobId);
         if (!job) return null;

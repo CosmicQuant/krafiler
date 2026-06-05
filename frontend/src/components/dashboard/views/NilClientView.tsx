@@ -11,6 +11,7 @@ import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { getPreviousYearIsoRange } from '../../../utils/taxPeriods';
 import { isTerminalFilingJob } from '../../../utils/dashboardUtils';
 import { ActiveDashboardJob } from '../../../types';
+import JobStatusInline from '../JobStatusInline';
 
 const TAX_OPTIONS = [
     { value: 'income_tax_resident_individual', label: 'Income Tax - Resident Individual (Nil)' },
@@ -33,6 +34,8 @@ interface NilClientViewProps {
         >
     >;
     onFileNil: (client: ClientObligation) => Promise<void>;
+    onCancelJob?: (client: ClientObligation) => Promise<void>;
+    cancellingClientIds?: Record<string, boolean>;
     filterType?: 'income-tax-individual' | 'income-tax-company' | null;
 }
 
@@ -42,6 +45,8 @@ export function NilClientView({
     nilSelections,
     setNilSelections,
     onFileNil,
+    onCancelJob,
+    cancellingClientIds,
     filterType,
 }: NilClientViewProps) {
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(clients[0] || null);
@@ -197,25 +202,12 @@ export function NilClientView({
 
                 {/* Job status */}
                 {displayJob && (
-                    <div className="w-full bg-white border border-slate-100 rounded-lg p-3">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">
-                                {displayJob.state}
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                                {displayJob.progress}%
-                            </span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
-                            <div
-                                className="h-1.5 rounded-full bg-[#ff0613] transition-all duration-500"
-                                style={{ width: `${Math.max(displayJob.progress, 5)}%` }}
-                            />
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
-                            {displayJob.message}
-                        </div>
-                    </div>
+                    <JobStatusInline
+                        job={displayJob}
+                        clientName={client.name}
+                        onCancel={onCancelJob ? () => void onCancelJob(client) : undefined}
+                        cancelling={Boolean(cancellingClientIds?.[client.id])}
+                    />
                 )}
             </div>
         </div>

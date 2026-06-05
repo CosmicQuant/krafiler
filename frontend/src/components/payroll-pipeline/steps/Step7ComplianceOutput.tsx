@@ -221,7 +221,7 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
         setSuccess(null);
         try {
             if (type === 'nssf') {
-                const res = await apiFetch(`/api/tax/file-nssf-return`, {
+                const res = await apiFetch(`/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ clientId, period: '' }),
@@ -233,7 +233,7 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                     setError(data.message || 'Failed to queue NSSF filing');
                 }
             } else if (type === 'paye') {
-                const res = await apiFetch(`/api/tax/file-return`, {
+                const res = await apiFetch(`/tax/file-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ clientId, taxObligationType: 'paye', period: '', printPrnOnly }),

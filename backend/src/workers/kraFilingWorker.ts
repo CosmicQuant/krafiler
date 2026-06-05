@@ -26,7 +26,7 @@ import { Worker, Job } from 'bullmq';
 import { JobContext } from '../types';
 import { redisConnection, KRA_QUEUE_NAME, kraFilingQueue } from '../queues/kraFilingQueue';
 import { BullMQJobAdapter } from './jobAdapter';
-import { openDb } from '../db/database';
+import { adminDb } from '../lib/firebaseAdmin';
 import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
@@ -1609,7 +1609,7 @@ export async function processFilingJob(job: JobContext): Promise<{
     try {
         // ── Step 2: Launch browser with stealth configuration ────────────────────
         await setJobStep(job, 5, 'Launching browser session');
-        const isHeadless = false;
+        const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
         const launchOptions = {
             headless: isHeadless,
             slowMo: isHeadless ? 0 : PLAYWRIGHT_SLOW_MO,
@@ -2392,12 +2392,11 @@ export async function processFilingJob(job: JobContext): Promise<{
             else if (taxObligationType === 'paye') obligationCol = 'paye';
             else if (taxObligationType === 'excise_duty') obligationCol = 'exciseDuty';
 
-            if (obligationCol) {
-                const db = await openDb();
-                await db.run(
-                    `UPDATE clients SET ${obligationCol}LastFiledDate = ?, ${obligationCol}ReceiptUrl = ? WHERE pin = ?`,
-                    [new Date().toISOString(), `/api/receipts/${receiptRelativePath.replace(/^receipts\//, '')}`, kraPin]
-                );
+            if (obligationCol && payload.clientId) {
+                await adminDb.collection('clients').doc(payload.clientId).update({
+                    [`lastFiled.${obligationCol}`]: new Date().toISOString(),
+                    [`status.${obligationCol}`]: 'filed',
+                });
                 await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
             }
         } catch (e) {
@@ -2517,4 +2516,17 @@ if (!USE_CLOUD_TASKS) {
     console.log(`[Worker] Listening on queue "${KRA_QUEUE_NAME}" (concurrency: 1)`);
 } else {
     console.log(`[Worker] Cloud Tasks mode enabled. BullMQ worker NOT started.`);
+}
+
+// Minimal HTTP server for Cloud Run health checks — only when this file is the entry point
+if (require.main === module) {
+    import('http').then((http) => {
+        const healthPort = Number(process.env.PORT || 8080);
+        http.createServer((_req: any, res: any) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', service: 'krafiler-worker' }));
+        }).listen(healthPort, () => {
+            console.log(`[Worker] Health check server listening on port ${healthPort}`);
+        });
+    });
 }

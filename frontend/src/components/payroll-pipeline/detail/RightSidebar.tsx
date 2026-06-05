@@ -107,7 +107,12 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
           <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
             <Banknote className="h-3.5 w-3.5 text-slate-500" /> Loans
           </h3>
-          <span className="text-[10px] text-slate-400">{loans.length} total</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400">{loans.length} total</span>
+            <button onClick={() => setShowLoanModal(true)} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition" title="Add loan">
+              <Plus className="h-3 w-3" />
+            </button>
+          </div>
         </div>
 
         {loadingLoans ? (
@@ -152,7 +157,12 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
           <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
             <Calendar className="h-3.5 w-3.5 text-slate-500" /> Leave
           </h3>
-          <span className="text-[10px] text-slate-400">{leaves.length} total</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400">{leaves.length} total</span>
+            <button onClick={() => setShowLeaveModal(true)} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition" title="Add leave">
+              <Plus className="h-3 w-3" />
+            </button>
+          </div>
         </div>
 
         {loadingLeaves ? (

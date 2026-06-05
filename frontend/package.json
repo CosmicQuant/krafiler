@@ -15,7 +15,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.2",
     "clsx": "^2.1.1",
-    "firebase": "^11.0.0",
+    "firebase": "^12.14.0",
     "framer-motion": "^12.38.0",
     "krafiler": "file:..",
     "lucide-react": "^0.511.0",

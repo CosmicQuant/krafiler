@@ -63,6 +63,11 @@ service cloud.firestore {
       allow write: if isAuthenticated() && get(/databases/$(database)/documents/payrollRuns/$(runId)).data.ownerUid == request.auth.uid;
     }
 
+    match /payrollAdjustments/{adjId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+    }
+
     match /jobs/{jobId} {
       allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
       allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
@@ -73,12 +78,58 @@ service cloud.firestore {
     match /jobs/{jobId}/logs/{logId} {
       allow read: if isAuthenticated() &&
         get(/databases/$(database)/documents/jobs/$(jobId)).data.ownerUid == request.auth.uid;
-      allow write: if false;  // Only worker writes logs
+      allow write: if false;  // Only worker writes logs via Admin SDK
     }
 
     match /subscriptions/{subId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow write: if false;  // Only Cloud Functions write
+    }
+
+    match /attendanceRecords/{recordId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /leaveRequests/{requestId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /loans/{loanId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /loanTransactions/{txId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /documents/{docId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /departments/{deptId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /workSchedules/{scheduleId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /holidays/{holidayId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create, update, delete: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
     }
   }
 }

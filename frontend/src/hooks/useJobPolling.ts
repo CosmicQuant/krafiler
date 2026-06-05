@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { apiFetch } from '../services/api';
-import { ActiveDashboardJob, ClientObligation, FilingJobState, VatPreparationSummary } from '../types';
+import { ActiveDashboardJob, ClientObligation, FilingJobState, FilingStepLog, VatPreparationSummary } from '../types';
 import { buildStoredArtifactUrl, isTerminalFilingJob } from '../utils/dashboardUtils';
 
 export function useJobPolling(
@@ -32,6 +32,9 @@ export function useJobPolling(
             data.result?.vatSummary && typeof data.result.vatSummary === 'object'
               ? (data.result.vatSummary as VatPreparationSummary)
               : undefined;
+          const nextStepLogs: FilingStepLog[] | undefined = Array.isArray(data.stepLogs) && data.stepLogs.length > 0
+            ? data.stepLogs
+            : currentJobs[clientId].stepLogs;
 
           if (
             currentJobs[clientId].state !== data.state ||
@@ -43,7 +46,8 @@ export function useJobPolling(
             currentJobs[clientId].sourcePackageUrl !== resultSourcePackageUrl ||
             currentJobs[clientId].generatedZipLabel !== data.result?.generatedZipLabel ||
             currentJobs[clientId].sourcePackageLabel !== data.result?.sourcePackageLabel ||
-            JSON.stringify(currentJobs[clientId].vatSummary ?? null) !== JSON.stringify(resultVatSummary ?? null)
+            JSON.stringify(currentJobs[clientId].vatSummary ?? null) !== JSON.stringify(resultVatSummary ?? null) ||
+            JSON.stringify(currentJobs[clientId].stepLogs ?? null) !== JSON.stringify(nextStepLogs ?? null)
           ) {
             currentJobs[clientId] = {
               ...currentJobs[clientId],
@@ -59,6 +63,7 @@ export function useJobPolling(
               sourcePackageUrl: resultSourcePackageUrl,
               sourcePackageLabel: data.result?.sourcePackageLabel,
               vatSummary: resultVatSummary,
+              stepLogs: nextStepLogs,
             };
             hasChanges = true;
           }

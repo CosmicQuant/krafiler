@@ -383,17 +383,35 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     { key: 'dateJoined', label: 'Date Joined' },
   ];
 
+  const downloadBlob = async (url: string, filename: string) => {
+    try {
+      const res = await apiFetch(url);
+      if (!res.ok) { setError('Download failed'); return; }
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch { setError('Download error'); }
+  };
+
   const handleDownloadPayslip = () => {
     if (!employee?.kraPin) return;
     const [y, m] = (period || '').split('-');
     const periodParam = m && y ? `${m}${y}` : '';
-    window.open(`/api/clients/${clientId}/payslip/${employee.kraPin}${periodParam ? `?period=${periodParam}` : ''}`, '_blank');
+    const url = `/api/clients/${clientId}/payslip/${employee.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
+    downloadBlob(url, `payslip-${employee.kraPin}.pdf`);
   };
 
   const handleDownloadP9 = () => {
     if (!employee?.kraPin) return;
     const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
-    window.open(`/api/clients/${clientId}/p9/${employee.kraPin}?year=${yearStr}`, '_blank');
+    const url = `/api/clients/${clientId}/p9/${employee.kraPin}?year=${yearStr}`;
+    downloadBlob(url, `P9-${employee.kraPin}-${yearStr}.pdf`);
   };
 
   const handleEmailPayslip = async () => {

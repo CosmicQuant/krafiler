@@ -11,11 +11,10 @@ import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { StatusBadge } from '../StatusBadges';
 import {
     getReceiptUrlForObligation,
-    getFilingStatusLabel,
-    getFilingProgressTone,
     isPendingFilingJob,
     isTerminalFilingJob,
 } from '../../../utils/dashboardUtils';
+import JobStatusInline from '../JobStatusInline';
 import { ActiveDashboardJob } from '../../../types';
 
 interface MriClientViewProps {
@@ -25,6 +24,8 @@ interface MriClientViewProps {
     setMriInputVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     onFileMri: (client: ClientObligation) => Promise<void>;
     onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
+    onCancelJob?: (client: ClientObligation) => Promise<void>;
+    cancellingClientIds?: Record<string, boolean>;
 }
 
 export function MriClientView({
@@ -34,6 +35,8 @@ export function MriClientView({
     setMriInputVals,
     onFileMri,
     onGeneratePrn,
+    onCancelJob,
+    cancellingClientIds,
 }: MriClientViewProps) {
     const mriClients = useMemo(() => clients.filter((c) => c.mri !== 'na'), [clients]);
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(mriClients[0] || null);
@@ -103,18 +106,12 @@ export function MriClientView({
 
                 {/* Job status */}
                 {relevantJob && (
-                    <div className="w-full bg-white border border-slate-100 rounded-lg p-3">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[10px] text-slate-600 font-medium font-mono uppercase tracking-wider truncate">{getFilingStatusLabel(relevantJob as any)}</span>
-                            <span className="text-[10px] text-slate-500 font-mono">{relevantJob.progress}%</span>
-                        </div>
-                        <div className="w-full bg-slate-100 rounded-full h-1.5 mb-1 overflow-hidden">
-                            <div className={`h-1.5 rounded-full transition-all duration-500 ${getFilingProgressTone(relevantJob as any)}`} style={{ width: `${Math.max(relevantJob.progress, 5)}%` }} />
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
-                            {relevantJob.state === 'failed' ? <span className="text-red-600">{relevantJob.failedReason || 'An error occurred.'}</span> : relevantJob.message}
-                        </div>
-                    </div>
+                    <JobStatusInline
+                        job={relevantJob}
+                        clientName={client.name}
+                        onCancel={onCancelJob ? () => void onCancelJob(client) : undefined}
+                        cancelling={Boolean(cancellingClientIds?.[client.id])}
+                    />
                 )}
 
                 {isTerminalFilingJob(relevantJob as any) && (latestReceiptUrl || latestPrnUrl) && (

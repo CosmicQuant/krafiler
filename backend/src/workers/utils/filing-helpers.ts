@@ -390,6 +390,18 @@ export async function fillMonthlyRentalIncomeAmount(
         throw new Error('MRI filing requires a positive rental income amount');
     }
 
+    // Try the exact known KRA MRI field ID first (reliable in both headless and headed)
+    const exactLoc = page.locator('input#mriRentAmount_0, input[name="mriRentAmount_0"]').first();
+    const exactCount = await exactLoc.count().catch(() => 0);
+    if (exactCount > 0) {
+        await exactLoc.fill(String(rentalIncomeAmount));
+        await exactLoc.blur();
+        await page.locator('body').click({ position: { x: 10, y: 10 } });
+        await appendJobLog(job, `Entered MRI amount ${rentalIncomeAmount} into mriRentAmount_0`, { progress: 70 });
+        return;
+    }
+
+    // Fallback: heuristic scan for visible inputs
     type VisibleInputCandidate = {
         tag: string;
         id: string;
@@ -594,13 +606,15 @@ export async function prepareForMriPage(
     }
 
     if (Number.isFinite(rentalIncomeAmount) && rentalIncomeAmount > 0) {
-        await setPortalDateField(page, '#txtPeriodFrom, #periodFrom, input[name="txtPeriodFrom"], input[name*="periodFrom" i]', periodFrom);
-        await setPortalDateField(page, '#txtPeriodTo, #periodTo, input[name="txtPeriodTo"], input[name*="periodTo" i]', periodTo);
+        // KRA pre-fills MRI period dates — we just verify and click Next.
+        const fromValue = await page.locator('#txtPeriodFrom').first().inputValue().catch(() => '');
+        const toValue = await page.locator('#txtPeriodTo').first().inputValue().catch(() => '');
+        await appendJobLog(job, `MRI period pre-filled: ${fromValue} to ${toValue}`, { progress: 68 });
 
-        await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').first().click();
+        await page.locator('#nextBtn:visible, input[value="Next"]:visible, button:has-text("Next"):visible, a:has-text("Next"):visible').first().click();
         await page.waitForTimeout(4000);
         await fillMonthlyRentalIncomeAmount(page, job, rentalIncomeAmount);
-        await page.locator('input[value="Next"], button:has-text("Next"), a:has-text("Next")').first().click();
+        await page.locator('#nextBtn:visible, input[value="Next"]:visible, button:has-text("Next"):visible, a:has-text("Next"):visible').first().click();
         await page.waitForTimeout(4000);
     } else {
         throw new Error('MRI filing requires a positive rental income amount');

@@ -5,7 +5,7 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 ## Architecture
 
 - **Monorepo** (`npm workspaces`): `frontend/` (React 18 + Vite + Tailwind) and `backend/` (Express 4 + TypeScript).
-- **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → BullMQ on Redis → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
+- **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → Pub/Sub → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
 - **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker. The DB file is gitignored and created on first API startup by `initDb()`.
 - **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
 - **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`, `excise_duty`.
@@ -16,24 +16,23 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 | Component | File | Start Command |
 |---|---|---|
 | Express API | `backend/src/server.ts` | `cd backend && npm run dev` |
-| BullMQ Worker | `backend/src/workers/kraFilingWorker.ts` | `cd backend && npm run worker` |
+| Pub/Sub Worker | `backend/src/server.worker.ts` | `cd backend && npm run start:worker-service` |
 | React Frontend | `frontend/src/main.tsx` | `cd frontend && npm run dev` |
-| Redis | — | `redis-server` (or `./redis/redis-server.exe ./redis/redis.windows.conf`) |
 
 Root-level shortcuts:
-- `npm run dev:backend` / `npm run dev:frontend` / `npm run worker`
+- `npm run dev:backend` / `npm run dev:frontend`
 
 Utility scripts (backend):
 - `npm run tot` — one-off ToT filing script (`src/scripts/file-kra-tot-return.ts`)
 - `npm run generate:tot` — ToT ZIP generator (`src/scripts/kra-tot-generator.ts`)
-- `npm run start` / `npm run start:worker` / `npm run start:tot` — production runs from compiled `dist/`
+- `npm run start` / `npm run start:compute` / `npm run start:worker-service` / `npm run start:tot` — production runs from compiled `dist/`
 
 ## Critical Setup
 
 1. `npm install` in both `frontend/` and `backend/`.
 2. `cd backend && npx playwright install chromium`
-3. `cp backend/.env.example backend/.env` — fill `GEMINI_API_KEY`, Redis credentials, `JWT_SECRET` (employee portal), and `SMTP_*` for payslip emailing.
-4. Start Redis → API → Worker → Frontend (four terminals).
+3. `cp backend/.env.example backend/.env` — fill `GEMINI_API_KEY`, `JWT_SECRET` (employee portal), and `SMTP_*` for payslip emailing.
+4. Start API → Worker → Frontend (three terminals).
 
 Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http://localhost:3001`.
 
@@ -66,7 +65,8 @@ From `.env.example` and additional code-read vars:
 |---|---|
 | `JWT_SECRET` | Secret for signing employee portal JWT tokens |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Captcha solving via Gemini Vision API |
-| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | BullMQ backing store |
+| `USE_PUBSUB=true` | Enable Pub/Sub mode (always true in current builds) |
+| `PUBSUB_TOPIC` | Pub/Sub topic name for filing jobs (default: `filing-jobs`) |
 | `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
 | `NODE_ENV` | `development` or `production` (changes Playwright headless behavior in some scripts) |
 | `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
@@ -168,7 +168,7 @@ Located at `backend/src/workers/services/`:
 
 ## Important Constraints
 
-- **Do not add retries to BullMQ jobs** — KRA errors must fail fast and surface to the user.
+- **Do not add retries to filing jobs** — KRA errors must fail fast and surface to the user.
 - **Do not log passwords** — plaintext `kraPassword` exists in job payloads; never log it or persist outside the payload.
 - **Worker concurrency must stay at 1** — increasing it risks KRA IP bans.
 - **No CI, no tests, no lint rules** — verify by manual type-checking (`tsc --noEmit`) and local worker runs.

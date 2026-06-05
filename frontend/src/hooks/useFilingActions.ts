@@ -199,7 +199,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const payload = {
                 clientId: activeClient.id,
                 kraPin: activeClient.pin,
-                kraPassword: activeClient.password || activeClient.iTaxPassword || "1234",
+                kraPassword: activeClient.password || activeClient.iTaxPassword || '',
                 periodFrom,
                 periodTo,
                 taxObligationType: "paye",
@@ -246,7 +246,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                     clientId: client.id,
                     clientName: client.name,
                     kraPin: client.pin,
-                    kraPassword: client.password || client.iTaxPassword || client.pin,
+                    kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: 'vat',
@@ -305,7 +305,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                     clientId: client.id,
                     clientName: client.name,
                     kraPin: client.pin,
-                    kraPassword: client.password || client.iTaxPassword || client.pin,
+                    kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: 'vat',
@@ -349,7 +349,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 body: JSON.stringify({
                     clientId: client.id,
                     kraPin: client.pin,
-                    kraPassword: client.password || client.iTaxPassword || "1234",
+                    kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: taxObligationMap[type],
@@ -410,7 +410,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const payload = {
                 clientId: client.id,
                 kraPin: client.pin,
-                kraPassword: client.password || client.iTaxPassword || client.pin,
+                kraPassword: client.password || client.iTaxPassword || '',
                 periodFrom: sel.periodFrom,
                 periodTo: sel.periodTo,
                 taxObligationType: sel.type,
@@ -454,7 +454,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 body: JSON.stringify({
                     clientId: client.id,
                     kraPin: client.pin,
-                    kraPassword: client.password || client.iTaxPassword || client.pin,
+                    kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: "monthly_rental_income",
@@ -500,7 +500,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 body: JSON.stringify({
                     clientId: client.id,
                     kraPin: client.pin,
-                    kraPassword: client.password || client.iTaxPassword || client.pin,
+                    kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: "turnover_tax",

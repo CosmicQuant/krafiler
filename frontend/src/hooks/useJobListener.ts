@@ -155,12 +155,11 @@ export function useJobListener(
                 }
             });
 
-            // Merge with existing activeJobs so we don't drop jobs that transitioned
-            // to terminal state between snapshots (Firestore query excludes them,
-            // but the UI may still want to show completed/failed briefly).
+            // Merge with existing activeJobs so we don't drop fields like stepLogs or isNil
+            // that were set during job creation but aren't present in the Firestore document.
             const merged: Record<string, ActiveDashboardJob> = { ...activeJobsRef.current };
             Object.entries(nextJobs).forEach(([clientId, job]) => {
-                merged[clientId] = job;
+                merged[clientId] = { ...merged[clientId], ...job };
             });
 
             // Remove any jobs that were in the previous snapshot but are no longer

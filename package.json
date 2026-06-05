@@ -7,7 +7,6 @@
     "backend"
   ],
   "scripts": {
-    "worker": "npm --prefix backend run worker",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev"
   },

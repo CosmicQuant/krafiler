@@ -29,14 +29,72 @@ export async function selectOptionByTextPatterns(
     return match.text;
 }
 
+function formatPortalDate(isoDate: string): string {
+    const [year, month, day] = isoDate.split('-');
+    if (!year || !month || !day) {
+        throw new Error(`Invalid ISO date provided: "${isoDate}"`);
+    }
+    return `${day}/${month}/${year}`;
+}
+
+/**
+ * Fills a KRA portal date field.
+ * Handles readonly/disabled fields and converts ISO dates (YYYY-MM-DD)
+ * to the portal format (DD/MM/YYYY).
+ *
+ * Overload 1: (page, selector, isoDate)
+ * Overload 2: (locator, isoDate, label)
+ */
 export async function setPortalDateField(
-    page: any,
-    selector: string,
-    dateString: string // Expects format like "01/10/2023"
+    pageOrLocator: any,
+    selectorOrIsoDate: string,
+    isoDateOrLabel: string
 ): Promise<void> {
-    await page.locator(selector).fill('');
-    await page.locator(selector).fill(dateString);
-    await page.keyboard.press('Tab'); // Trigger any attached blur/change handlers
+    let locator: any;
+    let isoDate: string;
+    let label: string;
+
+    // Detect overload: if pageOrLocator has .locator() method, it's a page
+    if (typeof pageOrLocator.locator === 'function') {
+        locator = pageOrLocator.locator(selectorOrIsoDate).first();
+        isoDate = isoDateOrLabel;
+        label = selectorOrIsoDate;
+    } else {
+        locator = pageOrLocator;
+        isoDate = selectorOrIsoDate;
+        label = isoDateOrLabel;
+    }
+
+    const portalDate = formatPortalDate(isoDate);
+    const fieldState = await locator.evaluate((input: HTMLInputElement) => ({
+        value: String(input.value ?? '').trim(),
+        readOnly: Boolean(input.readOnly),
+        disabled: Boolean(input.disabled),
+    }));
+
+    if (fieldState.disabled) {
+        throw new Error(`${label} field is disabled on the KRA form`);
+    }
+
+    // Already correct — nothing to do
+    if (fieldState.value === portalDate || fieldState.value === isoDate) {
+        return;
+    }
+
+    if (fieldState.readOnly) {
+        await locator.evaluate((input: HTMLInputElement, value: string) => {
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('blur', { bubbles: true }));
+        }, portalDate);
+        return;
+    }
+
+    await locator.fill(portalDate);
+    await locator.evaluate((input: HTMLInputElement) => {
+        input.dispatchEvent(new Event('blur', { bubbles: true }));
+    });
 }
 
 export async function selectRentalPropertyAnswer(

@@ -4,7 +4,7 @@
  * Job lifecycle utilities: logging, progress tracking,
  * cancellation checks, and phase measurement.
  *
- * Works with both BullMQ (via BullMQJobAdapter) and Firestore (via FirestoreJobAdapter).
+ * Works with Firestore-backed job adapters.
  */
 
 import { JobContext, FilingJob, FilingStepLog } from '../../types';
@@ -69,6 +69,7 @@ export async function appendJobLog(
 export async function setJobStep(job: JobContext, progress: number, message: string): Promise<void> {
     await assertJobNotCancelled(job, message, progress);
     await job.updateProgress(progress);
+    await job.updateMessage(message);
     await appendJobLog(job, message, { progress });
     logger.info({ jobId: job.id ?? job.data.jobId, progress }, message);
 }

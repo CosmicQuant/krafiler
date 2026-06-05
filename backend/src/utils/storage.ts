@@ -35,7 +35,10 @@ export async function storeReceiptLocally(
     const targetPath = path.join(targetDir, fileName);
 
     await fs.mkdir(targetDir, { recursive: true });
-    await fs.rename(localFilePath, targetPath);
+    // copyFile+unlink instead of rename because temp and receipts may be on
+    // different filesystems (e.g. Cloud Run mounts /tmp and /data separately).
+    await fs.copyFile(localFilePath, targetPath);
+    await fs.unlink(localFilePath).catch(() => undefined);
 
     console.log(`[Storage] Stored receipt locally: ${localFilePath} -> ${targetPath}`);
 

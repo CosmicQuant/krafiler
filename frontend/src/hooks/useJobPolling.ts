@@ -22,7 +22,7 @@ export function useJobPolling(
           if (!res.ok) continue;
           const data = await res.json();
 
-          const newMessage = data.lastStep?.message ?? currentJobs[clientId].message ?? 'Processing...';
+          const newMessage = data.lastStep?.message ?? data.message ?? currentJobs[clientId].message ?? 'Processing...';
           const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
           const resultReceiptUrl = buildStoredArtifactUrl(data.result?.receiptPath);
           const resultPrnUrl = buildStoredArtifactUrl(data.result?.prnPath);

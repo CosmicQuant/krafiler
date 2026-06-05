@@ -9,8 +9,8 @@ REGION="${2:-us-central1}"
 
 API_SERVICE="krafiler-api"
 WORKER_SERVICE="krafiler-worker"
-API_IMAGE="gcr.io/${PROJECT_ID}/krafiler-api"
-WORKER_IMAGE="gcr.io/${PROJECT_ID}/krafiler-worker"
+API_IMAGE="us-central1-docker.pkg.dev/${PROJECT_ID}/krafiler-repo/krafiler-api"
+WORKER_IMAGE="us-central1-docker.pkg.dev/${PROJECT_ID}/krafiler-repo/krafiler-worker"
 
 echo "============================================"
 echo " KRA Filer Deployment"
@@ -26,14 +26,14 @@ command -v firebase >/dev/null 2>&1 || { echo "Firebase CLI required. Install: n
 echo ""
 echo "[1/7] Building Compute API Docker image..."
 cd backend
-gcloud builds submit --tag "${API_IMAGE}:latest" -f Dockerfile.compute .
+gcloud builds submit --config cloudbuild.compute.yaml .
 cd ..
 
 # ── 2. Build & push Worker image ────────────────────────────────────
 echo ""
 echo "[2/7] Building Worker Docker image..."
 cd backend
-gcloud builds submit --tag "${WORKER_IMAGE}:latest" -f Dockerfile .
+gcloud builds submit --config cloudbuild.worker.yaml .
 cd ..
 
 # ── 3. Deploy Compute API to Cloud Run ──────────────────────────────

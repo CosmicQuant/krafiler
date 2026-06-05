@@ -423,6 +423,8 @@ export default function PracticeDashboard() {
                 onNavigateToView={(v) => setView(v)}
                 onBulkCsvUpload={filingActions.bulkCsvUpload(() => queryClient.invalidateQueries({ queryKey: ['clients'] }))}
                 onSelectClient={setSelectedClient}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
 
@@ -457,6 +459,8 @@ export default function PracticeDashboard() {
                 onFileTot={filingActions.fileTot}
                 onGenerateTotZip={filingActions.generateTotZip}
                 onGeneratePrn={filingActions.generatePrn}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
             {!selectedClient && view === 'mri' && (
@@ -467,6 +471,8 @@ export default function PracticeDashboard() {
                 setMriInputVals={setMriInputVals}
                 onFileMri={filingActions.fileMri}
                 onGeneratePrn={filingActions.generatePrn}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
             {!selectedClient && view === 'dst' && (
@@ -475,6 +481,8 @@ export default function PracticeDashboard() {
                 activeJobs={activeJobs}
                 onAutoFile={filingActions.autoFile}
                 onGeneratePrn={filingActions.generatePrn}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
 
@@ -493,6 +501,8 @@ export default function PracticeDashboard() {
                 nilSelections={nilSelections}
                 setNilSelections={setNilSelections}
                 onFileNil={filingActions.fileNil}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
               />
             )}
             {!selectedClient && view === 'income-tax-individual' && (
@@ -502,6 +512,8 @@ export default function PracticeDashboard() {
                 nilSelections={nilSelections}
                 setNilSelections={setNilSelections}
                 onFileNil={filingActions.fileNil}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
                 filterType="income-tax-individual"
               />
             )}
@@ -512,6 +524,8 @@ export default function PracticeDashboard() {
                 nilSelections={nilSelections}
                 setNilSelections={setNilSelections}
                 onFileNil={filingActions.fileNil}
+                onCancelJob={filingActions.cancelAutoFile}
+                cancellingClientIds={cancellingClientIds}
                 filterType="income-tax-company"
               />
             )}

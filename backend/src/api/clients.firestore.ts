@@ -60,7 +60,19 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
         const clients = await Promise.all(
             snapshot.docs.map(async (doc) => {
                 const data = doc.data() as any;
-                const client: any = { id: doc.id, ...data };
+                const client: any = {
+                    id: doc.id,
+                    ...data,
+                    // Flatten credentials for frontend compatibility
+                    password: data.credentials?.kraPassword || null,
+                    iTaxPassword: data.credentials?.kraPassword || null,
+                    nssfNo: data.credentials?.nssfLogin || data.nssfNo || null,
+                    nssfPassword: data.credentials?.nssfPassword || null,
+                    shaLogin: data.credentials?.shaLogin || null,
+                    shaPassword: data.credentials?.shaPassword || null,
+                    helbLogin: data.credentials?.helbLogin || null,
+                    helbPassword: data.credentials?.helbPassword || null,
+                };
                 if (data.masterFile?.gcsPath) {
                     try {
                         client.masterFileUrl = await getSignedDownloadUrl(data.masterFile.gcsPath, 60);
@@ -91,7 +103,19 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
         }
 
         const data = doc.data() as any;
-        const result: any = { id: doc.id, ...data };
+        const result: any = {
+            id: doc.id,
+            ...data,
+            // Flatten credentials for frontend compatibility
+            password: data.credentials?.kraPassword || null,
+            iTaxPassword: data.credentials?.kraPassword || null,
+            nssfNo: data.credentials?.nssfLogin || data.nssfNo || null,
+            nssfPassword: data.credentials?.nssfPassword || null,
+            shaLogin: data.credentials?.shaLogin || null,
+            shaPassword: data.credentials?.shaPassword || null,
+            helbLogin: data.credentials?.helbLogin || null,
+            helbPassword: data.credentials?.helbPassword || null,
+        };
 
         // Generate fresh signed URL for master file so the frontend "View" link works
         if (data.masterFile?.gcsPath) {

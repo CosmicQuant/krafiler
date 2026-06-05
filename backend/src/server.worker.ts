@@ -9,13 +9,15 @@
  * - GET  /health
  */
 
-import 'express-async-errors';
 import dotenv from 'dotenv';
-import express from 'express';
 import path from 'path';
-import helmet from 'helmet';
 
+// Load env vars before any module that reads process.env at import time
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+import 'express-async-errors';
+import express from 'express';
+import helmet from 'helmet';
 import { logger } from './logger';
 
 // ─── Crash Handlers ────────────────────────────────────────────────────────────

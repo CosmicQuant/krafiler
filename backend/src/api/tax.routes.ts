@@ -12,7 +12,8 @@ import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import { v4 as uuidv4 } from 'uuid';
-import { encrypt } from '../utils/encryption';
+// Encryption disabled for testing — passwords flow plaintext through the queue
+// import { encrypt } from '../utils/encryption';
 import {
     FilingJob,
     FileNilReturnRequest,
@@ -299,7 +300,7 @@ router.post(
             // In a real application, extract userId from the verified JWT / session.
             // req.user would be populated by an auth middleware.
             const userId =
-                (req as Request & { user?: { id: string } }).user?.id ?? 'anonymous';
+                (req as Request & { user?: { uid: string } }).user?.uid ?? 'anonymous';
 
             const duplicatePendingJob = await findDuplicatePendingFiling({
                 userId,
@@ -346,44 +347,21 @@ router.post(
 
             const jobId = uuidv4();
 
-            // Encrypt KRA password before it leaves the API handler.
-            // The worker decrypts with the same ENCRYPTION_SECRET + ENCRYPTION_SALT.
-            // If no password is provided, fall back to the client's stored encrypted password.
-            let encryptedPassword: string | undefined;
-            let iv: string | undefined;
-            let authTag: string | undefined;
-
-            if (kraPassword && typeof kraPassword === 'string' && kraPassword.trim().length > 0) {
-                try {
-                    const encryptionResult = encrypt(kraPassword);
-                    encryptedPassword = encryptionResult.encryptedData;
-                    iv = encryptionResult.iv;
-                    authTag = encryptionResult.authTag;
-                } catch (err) {
-                    console.error('[API] Failed to encrypt KRA password:', err);
-                    res.status(500).json({
-                        success: false,
-                        message: 'Credential encryption failed. Check ENCRYPTION_SECRET and ENCRYPTION_SALT env vars.',
-                    });
-                    return;
-                }
-            } else if (typeof clientId === 'string' && clientId.trim().length > 0) {
+            // Passwords flow plaintext through the queue (encryption disabled for testing).
+            let activePassword = kraPassword;
+            if (!activePassword && typeof clientId === 'string' && clientId.trim().length > 0) {
                 try {
                     const clientDoc = await adminDb.collection('clients').doc(clientId.trim()).get();
                     if (clientDoc.exists) {
                         const cd = clientDoc.data() as any;
-                        if (cd.kraPassword && cd.kraPasswordIv && cd.kraPasswordAuthTag) {
-                            encryptedPassword = cd.kraPassword;
-                            iv = cd.kraPasswordIv;
-                            authTag = cd.kraPasswordAuthTag;
-                        }
+                        activePassword = cd.credentials?.kraPassword || cd.password || cd.iTaxPassword || null;
                     }
                 } catch (err) {
                     console.error('[API] Failed to fetch client stored password:', err);
                 }
             }
 
-            if (!encryptedPassword || !iv || !authTag) {
+            if (!activePassword || typeof activePassword !== 'string' || activePassword.trim().length === 0) {
                 res.status(400).json({
                     success: false,
                     message: 'kraPassword is required and no stored password was found for this client.',
@@ -396,13 +374,11 @@ router.post(
                 userId,
                 payload: {
                     kraPin,
+                    kraPassword: activePassword,
                     clientId: typeof clientId === 'string' && clientId.trim().length > 0 ? clientId.trim() : undefined,
                     clientName: typeof clientName === 'string' && clientName.trim().length > 0
                         ? clientName.trim()
                         : undefined,
-                    encryptedPassword,
-                    iv,
-                    authTag,
                     periodFrom: effectivePeriod.periodFrom,
                     periodTo: effectivePeriod.periodTo,
                     taxObligationType,
@@ -628,25 +604,10 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             return `${String(month).padStart(2, '0')}/${year}`;
         })();
 
-        // Encrypt NSSF credentials before queueing
-        let nssfEncryptedPassword: string | undefined;
-        let nssfIv: string | undefined;
-        let nssfAuthTag: string | undefined;
-        try {
-            const encryptionResult = encrypt(nssfPassword);
-            nssfEncryptedPassword = encryptionResult.encryptedData;
-            nssfIv = encryptionResult.iv;
-            nssfAuthTag = encryptionResult.authTag;
-        } catch (err) {
-            res.status(500).json({ success: false, message: 'Credential encryption failed.' });
-            return;
-        }
-
+        // NSSF credentials flow plaintext (encryption disabled for testing).
         const payload: NilReturnPayload = {
             kraPin: nssfUsername,
-            encryptedPassword: nssfEncryptedPassword,
-            iv: nssfIv,
-            authTag: nssfAuthTag,
+            kraPassword: nssfPassword,
             periodFrom: new Date().toISOString(),
             periodTo: new Date().toISOString(),
             taxObligationType: 'nssf',

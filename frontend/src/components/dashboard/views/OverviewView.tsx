@@ -31,14 +31,18 @@ import {
   User,
 } from 'lucide-react';
 import { useDeleteClient } from '../../../hooks/useClients';
+import { ActiveJobsPanel } from '../ActiveJobsPanel';
+import type { ClientObligation, ActiveDashboardJob } from '../../../types';
 
 interface OverviewViewProps {
-  clients: any[];
-  activeJobs: Record<string, any>;
+  clients: ClientObligation[];
+  activeJobs: Record<string, ActiveDashboardJob>;
   onOpenNewClientModal: () => void;
   onNavigateToView: (view: DashboardView) => void;
   onBulkCsvUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  onSelectClient?: (client: any) => void;
+  onSelectClient?: (client: ClientObligation) => void;
+  onCancelJob?: (client: ClientObligation) => void;
+  cancellingClientIds?: Record<string, boolean>;
 }
 
 export function OverviewView({
@@ -48,6 +52,8 @@ export function OverviewView({
   onNavigateToView,
   onBulkCsvUpload,
   onSelectClient,
+  onCancelJob,
+  cancellingClientIds,
 }: OverviewViewProps) {
   const deleteClientMutation = useDeleteClient();
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -276,9 +282,9 @@ export function OverviewView({
                             </div>
                           </div>
                         </td>
-                        {['paye', 'nssf', 'sha', 'vat', 'tot', 'mri'].map((obs) => (
+                        {(['paye', 'nssf', 'sha', 'vat', 'tot', 'mri'] as const).map((obs) => (
                           <td key={obs} className="py-2.5 px-1 text-center">
-                            {getStatusDot(client[obs])}
+                            {getStatusDot((client as any)[obs])}
                           </td>
                         ))}
                         <td className="py-2.5 pl-2">
@@ -360,6 +366,16 @@ export function OverviewView({
 
         {/* Right Column */}
         <div className="space-y-6">
+          {/* Active Jobs Panel */}
+          {onCancelJob && (
+            <ActiveJobsPanel
+              clients={clients}
+              activeJobs={activeJobs}
+              onCancelJob={onCancelJob}
+              cancellingClientIds={cancellingClientIds}
+            />
+          )}
+
           {/* Quick Actions */}
           <h3 className="text-lg font-bold text-slate-900">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-3">

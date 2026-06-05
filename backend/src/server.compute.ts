@@ -1,28 +1,21 @@
 /**
  * server.compute.ts
  *
- * Thin Compute API for Cloud Run.
- * Only mounts endpoints that need secrets, complex calculations, or rate limiting.
- *
- * Routes kept:
- * - /api/auth/...             (employee portal auth)
- * - /api/payroll/...          (calculate-preview, generate-unified)
- * - /api/clients/...          (payroll-runs: finalize, rollback, adjustments)
- * - /api/clients/.../email    (send-payslips)
- * - /api/tax/...              (file-return, cancel, filing-status)
- * - /api/subscriptions/webhook (Paystack webhook)
- * - /api/receipts/...         (auth-protected receipt serving)
- * - /health
+ * Compute API for Cloud Run.
+ * Mounts all Firestore-backed REST routes the frontend still calls,
+ * plus compute-heavy endpoints (tax, payroll, auth) that need secrets.
  */
 
-import 'express-async-errors';
 import dotenv from 'dotenv';
-import express from 'express';
 import path from 'path';
+
+// Load env vars BEFORE any module that reads process.env at import time
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+import 'express-async-errors';
+import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import { logger } from './logger';
 
 // ─── Crash Handlers ────────────────────────────────────────────────────────────
@@ -52,10 +45,23 @@ import payrollFirestoreRoutes from './api/payroll.firestore';
 import payrollRunsFirestoreRoutes from './api/payroll-runs.firestore';
 import emailFirestoreRoutes from './api/email.firestore';
 import authFirestoreRoutes from './api/auth.firestore';
+import clientFirestoreRoutes from './api/clients.firestore';
+import employeeFirestoreRoutes from './api/employees.firestore';
+import leaveFirestoreRoutes from './api/leave.firestore';
+import loansFirestoreRoutes from './api/loans.firestore';
+import attendanceFirestoreRoutes from './api/attendance.firestore';
+import reportsFirestoreRoutes from './api/reports.firestore';
+import departmentsFirestoreRoutes from './api/departments.firestore';
+import documentsFirestoreRoutes from './api/documents.firestore';
+import auditFirestoreRoutes from './api/audit.firestore';
+import kpiFirestoreRoutes from './api/kpi.firestore';
+import workScheduleFirestoreRoutes from './api/work-schedules.firestore';
+import holidaysFirestoreRoutes from './api/holidays.firestore';
+import portalFirestoreRoutes from './api/portal.firestore';
+import subscriptionRoutes from './api/subscriptions.firestore';
 import pinoHttp from 'pino-http';
 import { verifyAuth } from './middleware/verifyAuth';
 import { serveReceipt } from './middleware/receipts';
-import subscriptionRoutes from './api/subscriptions.firestore';
 import { checkSubscriptionLimits } from './middleware/subscription';
 
 const app = express();
@@ -107,11 +113,24 @@ app.use('/api/receipts/*', verifyAuth, serveReceipt);
 // Public Paystack webhook
 app.use('/api/subscriptions/webhook', subscriptionRoutes);
 
-// Protected compute routes
+// Protected API routes
 app.use('/api/tax', verifyAuth, checkSubscriptionLimits, taxRoutes);
 app.use('/api/payroll', verifyAuth, checkSubscriptionLimits, payrollFirestoreRoutes);
-app.use('/api/clients', verifyAuth, checkSubscriptionLimits, payrollRunsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, clientFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, employeeFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, leaveFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, loansFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, attendanceFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, reportsFirestoreRoutes);
 app.use('/api/clients', verifyAuth, checkSubscriptionLimits, emailFirestoreRoutes);
+app.use('/api/portal', verifyAuth, checkSubscriptionLimits, portalFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, payrollRunsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, departmentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, documentsFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, auditFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, kpiFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, workScheduleFirestoreRoutes);
+app.use('/api/clients', verifyAuth, checkSubscriptionLimits, holidaysFirestoreRoutes);
 
 // Subscription routes (protected, except webhook mounted above)
 app.use('/api/subscriptions', verifyAuth, subscriptionRoutes);

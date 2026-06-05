@@ -1,16 +1,17 @@
-/**
+﻿/**
  * kraFilingWorker.ts
  *
- * BullMQ worker that processes KRA nil return filing jobs one at a time.
+ * KRA filing processor â€” handles Playwright automation for tax return filing.
  *
- * Run with:  npm run worker
+ * This module is imported by the HTTP worker (server.worker.ts) which receives
+ * Pub/Sub push messages and delegates to processFilingJob().
  *
  * Architecture notes:
- *  - concurrency: 1  — sequential processing prevents KRA portal rate-limits.
+ *  - concurrency: 1  â€” sequential processing prevents KRA portal rate-limits.
  *  - Playwright launches a fresh browser process per job. A dedicated optional
  *    profile directory can be reused so static KRA assets stay cached across
  *    jobs while cookies and web storage are cleared before each run.
- *  - The submitted KRA password is decrypted in-memory and is NEVER logged.
+ *  - The submitted KRA password flows plaintext (encryption disabled for testing).
  *  - If KRA forces a password reset, the generated replacement password is
  *    returned through job status so the operator can recover the credential.
  *  - The stealth plugin is applied once at module load (not per job).
@@ -22,14 +23,13 @@ import path from 'path';
 import fs from 'fs/promises';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { Worker, Job } from 'bullmq';
 import { JobContext } from '../types';
-import { redisConnection, KRA_QUEUE_NAME, kraFilingQueue } from '../queues/kraFilingQueue';
-import { BullMQJobAdapter } from './jobAdapter';
 import { adminDb } from '../lib/firebaseAdmin';
-import { decrypt } from '../utils/encryption';
+import * as jobStore from '../services/jobStore';
+// import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
+import { uploadFile, receiptPath as gcsReceiptPath } from '../lib/cloudStorage';
 import type { PrnConfig } from '../utils/kra-prn-generator';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { PayeFilingService } from './services/PayeFilingService';
@@ -38,8 +38,7 @@ import { TotFilingService } from './services/TotFilingService';
 import { MriFilingService } from './services/MriFilingService';
 import { PrnService } from './services/PrnService';
 import { NssfService } from './services/NssfService';
-import sharp from 'sharp';
-import Tesseract from 'tesseract.js';
+import { setPortalDateField } from './utils/form-helpers';
 
 // Apply stealth plugin once at module load
 chromium.use(StealthPlugin());
@@ -56,6 +55,8 @@ const KRA_DEBUG_ARTIFACTS = process.env.KRA_DEBUG_ARTIFACTS === 'true';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
+const OPENCODE_API_KEY = process.env.OPENCODE_API_KEY ?? '';
+const OPENCODE_MODEL = process.env.OPENCODE_MODEL ?? 'kimi-k2.6';
 const PLAYWRIGHT_SLOW_MO = Math.max(0, Number.parseInt(process.env.PLAYWRIGHT_SLOW_MO ?? '0', 10) || 0);
 const KRA_BROWSER_CHANNEL = (process.env.KRA_BROWSER_CHANNEL ?? 'chrome').trim().toLowerCase();
 const KRA_BROWSER_EXECUTABLE_PATH = process.env.KRA_BROWSER_EXECUTABLE_PATH?.trim() ?? '';
@@ -343,8 +344,8 @@ async function assertJobNotCancelled(
     context: string,
     progress?: number
 ): Promise<void> {
-    const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId));
-    const latestJobData = (latestJob?.data ?? job.data) as FilingJob;
+    await job.refresh();
+    const latestJobData = job.data as FilingJob;
     if (!hasCancellationRequest(latestJobData)) {
         return;
     }
@@ -690,109 +691,86 @@ function extractGeminiText(payload: any): string {
         .trim();
 }
 
-async function solveCaptchaWithTesseract(screenshotPath: string, jobId: string): Promise<{ expression: string; answer: string }> {
-    const processedPath = screenshotPath.replace('.png', '-processed.png');
-    
-    // Pre-process KRA image: grayscale, normalize to boost contrast
-    await sharp(screenshotPath)
-        .greyscale()
-        .normalize()
-        .threshold(160)
-        .toFile(processedPath);
-
-    const { data: { text } } = await Tesseract.recognize(processedPath, 'eng');
-    
-    const rawText = text.replace(/[^0-9+\-*/= ]/g, '').trim();
-    const match = rawText.match(/(\d+)\s*([\+\-\*\/])\s*(\d+)/i);
-
-    if (!match) {
-        throw new Error(`Tesseract failed to extract captcha format. Raw text: "${text}", Cleaned: "${rawText}"`);
-    }
-
-    const expression = `${match[1]} ${match[2]} ${match[3]}`;
-    const expectedAnswer = String(solveCaptcha(expression));
-
-    return { expression, answer: expectedAnswer };
-}
-
-async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
-    if (!GEMINI_API_KEY) {
-        throw new Error('GEMINI_API_KEY is required for Gemini captcha extraction');
+async function solveCaptchaWithOpenCodeGo(screenshotPath: string): Promise<string> {
+    if (!OPENCODE_API_KEY) {
+        throw new Error('OPENCODE_API_KEY is required for captcha extraction');
     }
 
     const imageBuffer = await fs.readFile(screenshotPath);
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const endpoint = 'https://opencode.ai/zen/go/v1/chat/completions';
 
     const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${OPENCODE_API_KEY}`,
         },
         body: JSON.stringify({
-            systemInstruction: {
-                parts: [
-                    {
-                        text: 'Extract the KRA Security Stamp arithmetic captcha from screenshots and respond in the exact requested format only.',
-                    },
-                ],
-            },
-            contents: [
+            model: OPENCODE_MODEL,
+            messages: [
                 {
-                    parts: [
+                    role: 'system',
+                    content: 'You solve math captchas. Give only the final number.',
+                },
+                {
+                    role: 'user',
+                    content: [
                         {
-                            inline_data: {
-                                mime_type: 'image/png',
-                                data: imageBuffer.toString('base64'),
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:image/png;base64,${imageBuffer.toString('base64')}`,
                             },
                         },
                         {
-                            text: [
-                                'Read the Kenya Revenue Authority login page screenshot.',
-                                'Find the Security Stamp arithmetic captcha only.',
-                                'Return exactly one line and nothing else in this format:',
-                                'expression=<left><operator><right>;answer=<integer>',
-                                'Example: expression=78+9;answer=87',
-                                'Do not include words, markdown, or explanations.',
-                            ].join(' '),
+                            type: 'text',
+                            text: 'What is the answer to the math problem in this image? Output ONLY the final number.',
                         },
                     ],
                 },
             ],
-            generationConfig: {
-                responseMimeType: 'text/plain',
-                temperature: 0,
-                topP: 0.1,
-                candidateCount: 1,
-                maxOutputTokens: 32,
-                mediaResolution: 'MEDIA_RESOLUTION_HIGH',
-                thinkingConfig: {
-                    thinkingBudget: 0,
-                },
-            },
+            temperature: 0,
+            max_tokens: 128,
         }),
     });
 
     if (!response.ok) {
-        throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
+        throw new Error(`OpenCode Go request failed (${response.status}): ${await response.text()}`);
     }
 
     const payload = await response.json();
-    const rawText = extractGeminiText(payload);
-    const match = rawText.match(/expression\s*=\s*(\d+)\s*([\+\-\*\/])\s*(\d+)\s*;\s*answer\s*=\s*(-?\d+)/i);
+    const rawText = payload.choices?.[0]?.message?.content ?? '';
 
-    if (!match) {
-        throw new Error(`Gemini returned an unexpected captcha format: "${rawText}"`);
+    // Reasoning models put the answer at the END. Try last occurrence first.
+    const allNumbers = rawText.match(/\b\d+\b/g);
+    if (allNumbers && allNumbers.length > 0) {
+        // If there's an expression, compute it; otherwise return last number
+        const lastNumber = allNumbers[allNumbers.length - 1];
+
+        // Check if there's an arithmetic expression near the end
+        const tailText = rawText.slice(-100);
+        const exprMatch = tailText.match(/(\d+)\s*([+\-×x*])\s*(\d+)/);
+        if (exprMatch) {
+            const a = parseInt(exprMatch[1], 10);
+            const op = exprMatch[2];
+            const b = parseInt(exprMatch[3], 10);
+            if (op === '+' || op === '×' || op === 'x' || op === '*') {
+                return String(a + b);
+            } else if (op === '-') {
+                return String(a - b);
+            }
+        }
+
+        // Single-number captcha fallback
+        if (allNumbers.length === 1) {
+            return lastNumber;
+        }
+
+        // If multiple numbers and no expression found, return the last one
+        // (reasoning models often end with the computed answer)
+        return lastNumber;
     }
 
-    const expression = `${match[1]} ${match[2]} ${match[3]}`;
-    const answer = match[4].trim();
-    const expectedAnswer = String(solveCaptcha(expression));
-
-    if (answer !== expectedAnswer) {
-        throw new Error(`Gemini answer mismatch: expression ${expression}, expected ${expectedAnswer}, got ${answer}`);
-    }
-
-    return answer;
+    throw new Error(`OpenCode Go returned an unexpected captcha format: "${rawText}"`);
 }
 
 async function selectOptionByTextPatterns(
@@ -1071,48 +1049,6 @@ async function fillSecurityAnswerFields(page: any, answer: string): Promise<bool
     return false;
 }
 
-function formatPortalDate(isoDate: string): string {
-    const [year, month, day] = isoDate.split('-');
-    if (!year || !month || !day) {
-        throw new Error(`Invalid ISO date provided: "${isoDate}"`);
-    }
-
-    return `${day}/${month}/${year}`;
-}
-
-async function setPortalDateField(
-    locator: any,
-    isoDate: string,
-    label: string
-): Promise<void> {
-    const portalDate = formatPortalDate(isoDate);
-    const fieldState = await locator.evaluate((input: HTMLInputElement) => ({
-        value: String(input.value ?? '').trim(),
-        readOnly: Boolean(input.readOnly),
-        disabled: Boolean(input.disabled),
-    }));
-
-    if (fieldState.disabled) {
-        throw new Error(`${label} field is disabled on the KRA form`);
-    }
-
-    if (fieldState.value === portalDate || fieldState.value === isoDate) {
-        return;
-    }
-
-    if (fieldState.readOnly) {
-        await locator.evaluate((input: HTMLInputElement, value: string) => {
-            input.value = value;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            input.dispatchEvent(new Event('blur', { bubbles: true }));
-        }, portalDate);
-        return;
-    }
-
-    await locator.fill(portalDate);
-}
-
 async function selectRentalPropertyAnswer(page: any, ownsRentalProperty: boolean): Promise<boolean> {
     const rentalRow = page.locator('tr:has-text("rental")').first();
     if (await rentalRow.count() > 0) {
@@ -1236,47 +1172,76 @@ async function performKraLogin(
     await page.waitForSelector('input[name="captcahText"]', { timeout: 10_000 });
 
     let captchaAnswer = '';
-    const captchaSelectors = [
-        '#loginCaptcha',
-        '#captchaImg',
-        '#captcha_img',
-        'img[id*="captcha"]',
-        'img[src*="GenerateCaptcha"]',
-        'img[src*="captcha"]',
-    ];
     const screenPath = path.join(TMP_DIR, `captcha-element-${jobId}.png`);
-    let usedElementScreenshot = false;
 
-    for (const selector of captchaSelectors) {
-        const captchaElement = await page.$(selector);
-        if (!captchaElement) {
-            continue;
-        }
-
-        const box = await captchaElement.boundingBox();
-        if (!box || box.width < 10 || box.height < 10) {
-            continue;
-        }
-
-        await captchaElement.screenshot({ path: screenPath, type: 'png' });
-        usedElementScreenshot = true;
-        console.log(`[Worker][${jobId}] Lossless captcha element screenshot saved via ${selector}: ${screenPath}`);
-        break;
-    }
-
-    if (!usedElementScreenshot) {
-        await page.screenshot({ path: screenPath, fullPage: false, type: 'png' });
-        console.log(`[Worker][${jobId}] Captcha element not found; fell back to viewport screenshot: ${screenPath}`);
-    }
-
+    // ── Strategy 1: Read security stamp text directly from DOM (most reliable) ──
     try {
-        captchaAnswer = await solveCaptchaWithGemini(screenPath);
-        console.log(`[Worker][${jobId}] Gemini solved captcha: ${captchaAnswer}`);
-        await page.fill('input[name="captcahText"]', captchaAnswer);
-    } catch (e) {
-        console.warn(`[Worker][${jobId}] Gemini captcha solving failed:`, (e as Error).message);
-        throw new Error(`Captcha solving failed: ${(e as Error).message}`);
+        const stampText = await page.$eval(
+            '#securityStamp, .security-stamp, [id*="stamp"], img[src*="SecurityStamp"]',
+            (el: any) => el.textContent?.trim() ?? ''
+        );
+        if (stampText) {
+            const match = stampText.match(/(\d+)\s*([+\-×x*])\s*(\d+)/);
+            if (match) {
+                const a = parseInt(match[1], 10);
+                const op = match[2];
+                const b = parseInt(match[3], 10);
+                if (op === '+' || op === '×' || op === 'x' || op === '*') {
+                    captchaAnswer = String(a + b);
+                } else if (op === '-') {
+                    captchaAnswer = String(a - b);
+                }
+                console.log(`[Worker][${jobId}] DOM arithmetic captcha: ${a} ${op} ${b} = ${captchaAnswer}`);
+            }
+        }
+    } catch {
+        // DOM text not available, continue to screenshot strategy
     }
+
+    // ── Strategy 2: Screenshot + AI vision fallback ──
+    if (!captchaAnswer) {
+        const captchaSelectors = [
+            '#loginCaptcha',
+            '#captchaImg',
+            '#captcha_img',
+            'img[id*="captcha"]',
+            'img[src*="GenerateCaptcha"]',
+            'img[src*="captcha"]',
+        ];
+        let usedElementScreenshot = false;
+
+        for (const selector of captchaSelectors) {
+            const captchaElement = await page.$(selector);
+            if (!captchaElement) {
+                continue;
+            }
+
+            const box = await captchaElement.boundingBox();
+            if (!box || box.width < 10 || box.height < 10) {
+                continue;
+            }
+
+            await captchaElement.screenshot({ path: screenPath, type: 'png' });
+            usedElementScreenshot = true;
+            console.log(`[Worker][${jobId}] Lossless captcha element screenshot saved via ${selector}: ${screenPath}`);
+            break;
+        }
+
+        if (!usedElementScreenshot) {
+            await page.screenshot({ path: screenPath, fullPage: false, type: 'png' });
+            console.log(`[Worker][${jobId}] Captcha element not found; fell back to viewport screenshot: ${screenPath}`);
+        }
+
+        try {
+            captchaAnswer = await solveCaptchaWithOpenCodeGo(screenPath);
+            console.log(`[Worker][${jobId}] OpenCode Go solved captcha: ${captchaAnswer}`);
+        } catch (e) {
+            console.warn(`[Worker][${jobId}] OpenCode Go captcha solving failed:`, (e as Error).message);
+            throw new Error(`Captcha solving failed: ${(e as Error).message}`);
+        }
+    }
+
+    await page.fill('input[name="captcahText"]', captchaAnswer);
 
     await setJobStep(job, options.submitProgress, options.submitMessage);
     await page.click('#loginButton');
@@ -1421,9 +1386,9 @@ async function handleExpiredPasswordReset(
     };
 
     await appendJobLog(job, 'Password updated successfully. Returning to login with the generated credential.', { progress: 46 });
-    const latestJob = await kraFilingQueue.getJob(String(job.id ?? job.data.jobId));
+    await job.refresh();
     await job.updateData({
-        ...((latestJob?.data ?? job.data) as FilingJob),
+        ...(job.data as FilingJob),
         credentialUpdate,
     });
 
@@ -1589,7 +1554,8 @@ export async function processFilingJob(job: JobContext): Promise<{
     console.log(`[Worker] Starting job ${jobId} for identifier ${kraPin}`);
     await appendJobLog(job, 'Job accepted by worker');
 
-    let activePassword = payload.kraPassword || decrypt(encryptedPassword!, iv!, authTag!);
+    // Plaintext password (encryption disabled for testing)
+    let activePassword = payload.kraPassword || (payload as any).nssfPassword || '';
     let credentialUpdate: CredentialUpdate | null = job.data.credentialUpdate ?? null;
 
     if (isNssfReturn) {
@@ -1995,7 +1961,7 @@ export async function processFilingJob(job: JobContext): Promise<{
         await appendJobLog(job, `Selected tax obligation: ${obligationChoice.text}`, { progress: 60 });
 
         const nextDialogPromise = waitForDialogMessage(page, 10_000);
-        await page.locator('#nextBtn, input[value="Next"], button:has-text("Next"), a:has-text("Next")').first().click();
+        await page.locator('#nextBtn:visible, input[value="Next"]:visible, button:has-text("Next"):visible, a:has-text("Next"):visible').first().click();
         const nextDialogMessage = await nextDialogPromise;
         if (nextDialogMessage) {
             console.log(`[Worker][${jobId}] KRA dialog: "${nextDialogMessage}"`);
@@ -2157,15 +2123,46 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         let submitDialogMessage: string | null = null;
         let postSubmitPortalMessage: string | null = null;
-        let receiptPageLinks: Array<{ id: string; href: string; onclick: string; text: string; className: string }> = [];
+        let receiptPageLinks: Array<{ id: string; href: string; onclick: string; text: string; className: string; tagName?: string }> = [];
         let downloadMeta: { id: string; href: string; onclick: string; text: string; className: string } | undefined;
         const confirmationOnlyDialogPattern = /do\s+you\s+want\s+to\s+upload\s+the\s+form/i;
 
         for (let submitAttempt = 1; submitAttempt <= (isPayeUpload ? 2 : 1); submitAttempt++) {
-            const submitDialogPromise = waitForDialogMessage(page, 10_000);
+            // Set up dialog handler BEFORE clicking submit (KRA shows JS confirm dialogs)
+            let dialogAccepted = false;
+            const dialogHandler = async (dialog: any) => {
+                if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+                    await dialog.accept();
+                    dialogAccepted = true;
+                } else {
+                    await dialog.dismiss();
+                }
+            };
+            page.on('dialog', dialogHandler);
 
-            await page.locator('#submitBtn, input[value="Submit"], button:has-text("Submit"), a:has-text("Submit")').first().click();
-            submitDialogMessage = await submitDialogPromise;
+            // KRA MRI uses tabview_switch — inactive tabs keep buttons in DOM but hidden.
+            // Playwright .click() fails on "not visible" elements. Use JS click to bypass.
+            let submitClicked = false;
+            for (let attempt = 0; attempt < 8; attempt++) {
+                submitClicked = await page.evaluate(() => {
+                    const btn = document.querySelector('#btnSubmit') as HTMLElement;
+                    if (btn) { btn.click(); return true; }
+                    const alt = document.querySelector('input[value="Submit"], button[type="submit"]') as HTMLElement;
+                    if (alt) { alt.click(); return true; }
+                    return false;
+                });
+                if (submitClicked) break;
+                await page.waitForTimeout(1000);
+            }
+            if (!submitClicked) {
+                page.off('dialog', dialogHandler);
+                const html = await page.content().catch(() => '');
+                await appendJobLog(job, `Submit button not found. Page HTML length: ${html.length}`, { progress: 80, level: 'error' });
+                throw new Error('Submit button not found on the return form');
+            }
+
+            // Also try the old promise-based dialog capture as backup
+            submitDialogMessage = await waitForDialogMessage(page, 10_000).catch(() => null);
             if (submitDialogMessage) {
                 console.log(`[Worker][${jobId}] KRA dialog: "${submitDialogMessage}"`);
                 await appendJobLog(job, `KRA submit dialog: ${submitDialogMessage}`, { progress: 80 });
@@ -2184,6 +2181,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                 && PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS.some((pattern) => pattern.test(postSubmitPortalMessage ?? ''));
 
             if (shouldRetryPayeSubmit) {
+                page.off('dialog', dialogHandler);
                 await appendJobLog(job, `KRA reported the PAYE form was not attached. Re-uploading once before retrying submit.`, {
                     progress: 80,
                     level: 'error',
@@ -2201,6 +2199,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                     && PAYE_RETRYABLE_UPLOAD_ERROR_PATTERNS.some((pattern) => pattern.test(postSubmitPortalMessage ?? ''));
 
                 if (shouldRetryImmediately) {
+                    page.off('dialog', dialogHandler);
                     await appendJobLog(job, 'KRA reported the PAYE form was not attached. Returning to the upload form and retrying once.', {
                         progress: 80,
                         level: 'error',
@@ -2211,8 +2210,34 @@ export async function processFilingJob(job: JobContext): Promise<{
                     continue;
                 }
 
+                page.off('dialog', dialogHandler);
                 throw new Error(postSubmitPortalMessage);
             }
+
+            // ── Handle declaration checkbox + Accept (test-script pattern) ──────────
+            const declarationCheckbox = page.locator('input[type="checkbox"]').filter({ visible: true }).first();
+            const acceptBtn = page.locator('input[value="Accept"], button:has-text("Accept")').filter({ visible: true }).first();
+            if (await declarationCheckbox.count() > 0 && await acceptBtn.count() > 0) {
+                await appendJobLog(job, 'Declaration checkbox detected — checking and clicking Accept', { progress: 82 });
+                await declarationCheckbox.check();
+                await humanDelay(200, 400);
+                await acceptBtn.click();
+                await page.waitForTimeout(4000);
+            } else if (await acceptBtn.count() > 0) {
+                await appendJobLog(job, 'Accept button detected — clicking', { progress: 82 });
+                await acceptBtn.click();
+                await page.waitForTimeout(4000);
+            }
+
+            // ── Handle post-submit confirmation pages (e.g., MRI "Yes" button) ───────
+            const yesConfirm = page.locator('a:has-text("Yes"), a.btn:has-text("Yes"), a[onclick*="accepted"]').filter({ visible: true }).first();
+            if (await yesConfirm.count() > 0) {
+                await appendJobLog(job, 'Post-submit confirmation (Yes) detected — clicking', { progress: 82 });
+                await yesConfirm.click();
+                await page.waitForTimeout(4000);
+            }
+
+            page.off('dialog', dialogHandler);
 
             // Do NOT reload after submit — same re-submit issue as the "Next" button.
             await waitForPortalReadyWithReload(page, job, {
@@ -2267,19 +2292,45 @@ export async function processFilingJob(job: JobContext): Promise<{
                     onclick: el.getAttribute('onclick') ?? '',
                     text: (el.textContent ?? '').trim(),
                     className: el.className ?? '',
+                    tagName: 'a',
                 })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
             );
             if (KRA_DEBUG_ARTIFACTS) {
                 console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
             }
 
-            // Find the download link by its onclick/href attribute (the actual handler KRA uses)
+            // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
             downloadMeta = receiptPageLinks.find(
                 (link) =>
                     link.onclick.toLowerCase().includes('download') ||
                     link.href.toLowerCase().includes('download') ||
-                    link.id.toLowerCase().includes('download')
+                    link.id.toLowerCase().includes('download') ||
+                    link.text.toLowerCase().includes('download') ||
+                    link.text.toLowerCase().includes('receipt')
             );
+
+            // Fallback: scan buttons and inputs if no anchor matched
+            if (!downloadMeta) {
+                const buttonMeta = await page.$$eval(
+                    'button, input[type="button"], input[type="submit"]',
+                    (els: (HTMLButtonElement | HTMLInputElement)[]) =>
+                        els
+                            .filter((el) => {
+                                const text = (el.textContent ?? el.getAttribute('value') ?? '').trim().toLowerCase();
+                                return text.includes('download') || text.includes('receipt');
+                            })
+                            .map((el) => ({
+                                id: el.id ?? '',
+                                onclick: el.getAttribute('onclick') ?? '',
+                                text: (el.textContent ?? el.getAttribute('value') ?? '').trim(),
+                                tagName: el.tagName.toLowerCase(),
+                            }))[0]
+                ).catch(() => undefined);
+
+                if (buttonMeta) {
+                    downloadMeta = buttonMeta as any;
+                }
+            }
 
             break;
         }
@@ -2315,14 +2366,19 @@ export async function processFilingJob(job: JobContext): Promise<{
         const receiptFileName = `${receiptDateStr}_${kraPin}_${taxObligationType}_Receipt.pdf`;
         const receiptPath = path.join(TMP_DIR, receiptFileName);
 
-        // Build a precise selector from the actual element attributes
+        // Build a precise selector from the actual element attributes or visible text
         let downloadSelector: string;
         if (downloadMeta.id) {
             downloadSelector = `#${downloadMeta.id}`;
         } else if (downloadMeta.onclick) {
             downloadSelector = `a[onclick*="${downloadMeta.onclick.slice(0, 40).replace(/"/g, '\\"')}"]`;
-        } else {
+        } else if (downloadMeta.href) {
             downloadSelector = `a[href*="${downloadMeta.href.slice(0, 40).replace(/"/g, '\\"')}"]`;
+        } else if (downloadMeta.text) {
+            const tag = (downloadMeta as any).tagName || 'a';
+            downloadSelector = `${tag}:has-text("${downloadMeta.text.slice(0, 40).replace(/"/g, '\\"')}")`;
+        } else {
+            downloadSelector = 'a, button, input[type="button"]';
         }
         console.log(`[Worker][${jobId}] Using download selector: ${downloadSelector}`);
 
@@ -2383,6 +2439,19 @@ export async function processFilingJob(job: JobContext): Promise<{
         const { receiptPath: storedReceiptPath, relativePath } = await storeReceiptLocally(receiptPath, jobId);
         const receiptRelativePath = relativePath.replace(/\\/g, '/');
         await appendJobLog(job, `Receipt stored locally at ${relativePath}`, { progress: 94 });
+
+        // Upload receipt to Cloud Storage so the API can serve it
+        try {
+            const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(storedReceiptPath));
+            await uploadFile(storedReceiptPath, receiptGcsPath, { contentType: 'application/pdf' });
+            await jobStore.updateJob(jobId, {
+                'artifacts.receiptGcsPath': receiptGcsPath,
+            } as any);
+            await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
+        } catch (uploadErr: any) {
+            console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
+            await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+        }
 
         try {
             let obligationCol = '';
@@ -2465,60 +2534,18 @@ export async function processFilingJob(job: JobContext): Promise<{
                     await browser.close();
                 }
             } catch (_) {
-                // Ignore close failures so BullMQ still receives the original error.
+                // Ignore close failures so caller still receives the original error.
             }
         }
-        throw err; // Re-throw so BullMQ marks the job as failed
+        throw err; // Re-throw so caller handles the failure
     }
 }
 
 // ─── Worker Registration ──────────────────────────────────────────────────────
 
-const USE_CLOUD_TASKS = process.env.USE_CLOUD_TASKS === 'true';
 
-export let kraFilingWorker: Worker<FilingJob> | null = null;
 
-if (!USE_CLOUD_TASKS) {
-    kraFilingWorker = new Worker<FilingJob>(
-        KRA_QUEUE_NAME,
-        (job: Job<FilingJob>) => processFilingJob(new BullMQJobAdapter(job)),
-        {
-            connection: redisConnection as any,
-            /**
-             * concurrency: 1 — jobs run sequentially.
-             * Running multiple Playwright sessions simultaneously risks IP bans and
-             * corrupted KRA portal session state.
-             */
-            concurrency: 1,
-        }
-    );
-
-    kraFilingWorker.on('active', (job) => {
-        console.log(`[Worker] Job ${job.id} started`);
-    });
-
-    kraFilingWorker.on('completed', (job) => {
-        console.log(`[Worker] Job ${job.id} completed`);
-    });
-
-    kraFilingWorker.on('failed', (job, err: Error) => {
-        console.error(`[Worker] Job ${job?.id} failed (attempt ${job?.attemptsMade}):`, err.message);
-    });
-
-    kraFilingWorker.on('progress', (job, progress) => {
-        console.log(`[Worker] Job ${job.id} progress: ${progress}%`);
-    });
-
-    kraFilingWorker.on('error', (err: Error) => {
-        console.error('[Worker] Worker error:', err.message);
-    });
-
-    console.log(`[Worker] Listening on queue "${KRA_QUEUE_NAME}" (concurrency: 1)`);
-} else {
-    console.log(`[Worker] Cloud Tasks mode enabled. BullMQ worker NOT started.`);
-}
-
-// Minimal HTTP server for Cloud Run health checks — only when this file is the entry point
+// Minimal HTTP server for Cloud Run health checks â€” only when this file is the entry point
 if (require.main === module) {
     import('http').then((http) => {
         const healthPort = Number(process.env.PORT || 8080);
@@ -2530,3 +2557,4 @@ if (require.main === module) {
         });
     });
 }
+

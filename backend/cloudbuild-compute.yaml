@@ -1,0 +1,7 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/taxpulse-498006/krafiler-repo/krafiler-backend:latest', '-f', 'Dockerfile.compute', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/taxpulse-498006/krafiler-repo/krafiler-backend:latest']
+images:
+  - 'us-central1-docker.pkg.dev/taxpulse-498006/krafiler-repo/krafiler-backend:latest'

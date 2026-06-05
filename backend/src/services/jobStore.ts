@@ -84,6 +84,16 @@ export async function appendJobLog(
     });
 }
 
+export async function getPendingJobsByUser(ownerUid: string): Promise<{ id: string; doc: JobStoreDoc }[]> {
+    const snapshot = await adminDb
+        .collection(JOBS_COLLECTION)
+        .where('ownerUid', '==', ownerUid)
+        .where('status', 'in', ['waiting', 'active', 'processing'])
+        .get();
+
+    return snapshot.docs.map((d) => ({ id: d.id, doc: d.data() as JobStoreDoc }));
+}
+
 export async function getJobLogs(jobId: string, limit = 200): Promise<FilingStepLog[]> {
     const snapshot = await adminDb
         .collection(JOBS_COLLECTION)

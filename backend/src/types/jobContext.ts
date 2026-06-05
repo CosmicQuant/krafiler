@@ -1,7 +1,7 @@
 /**
  * jobContext.ts
  *
- * Abstraction over BullMQ Job and Firestore job adapters.
+ * Abstraction over Firestore job adapters.
  * All filing services and helpers operate against this interface.
  */
 
@@ -14,6 +14,7 @@ export interface JobContext {
 
     log(entry: string): Promise<void>;
     updateProgress(progress: number): Promise<void>;
+    updateMessage(message: string): Promise<void>;
     updateData(data: Partial<FilingJob>): Promise<void>;
     refresh(): Promise<void>;
 }

@@ -7,6 +7,7 @@
  */
 
 import fs from 'fs/promises';
+import { tmpdir } from 'os';
 
 import path from 'path';
 import { Router, Request, Response } from 'express';
@@ -540,6 +541,28 @@ router.get(
     }
 );
 
+async function resolveFileFromUrl(fileUrl: string): Promise<string> {
+    if (path.isAbsolute(fileUrl) && !fileUrl.startsWith('http')) {
+        return fileUrl;
+    }
+
+    const url = fileUrl.startsWith('http') ? fileUrl : `http://localhost:3000${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    let ext = '.xlsx';
+    try {
+        ext = path.extname(new URL(fileUrl).pathname) || '.xlsx';
+    } catch {
+        ext = path.extname(fileUrl.split('?')[0]) || '.xlsx';
+    }
+    const tmpPath = path.join(tmpdir(), `krafiler-${Date.now()}${ext}`);
+    await fs.writeFile(tmpPath, buffer);
+    return tmpPath;
+}
 
 // ─── POST /api/tax/file-nssf-return ─────────────────────────────
 router.post('/file-nssf-return', async (req: Request, res: Response): Promise<void> => {
@@ -550,25 +573,8 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             return;
         }
 
-        const relativeNssfPath = typeof nssfFileUrl === 'string' ? decodeURIComponent(nssfFileUrl).replace(/^\/?clients\//, 'clients/') : '';
-        const localNssfPath = path.join(__dirname, '../../../frontend/public', relativeNssfPath);
-        
-        try {
-            await fs.access(localNssfPath);
-        } catch {
-            res.status(404).json({ success: false, message: 'NSSF Excel file not found on disk: ' + localNssfPath });
-            return;
-        }
-
-        const relativeMasterPath = typeof masterFileUrl === 'string' ? decodeURIComponent(masterFileUrl).replace(/^\/?clients\//, 'clients/') : '';
-        const localMasterPath = path.join(__dirname, '../../../frontend/public', relativeMasterPath);
-
-        try {
-            await fs.access(localMasterPath);
-        } catch {
-            res.status(404).json({ success: false, message: 'Master CSV file not found on disk: ' + localMasterPath });
-            return;
-        }
+        const localNssfPath = await resolveFileFromUrl(nssfFileUrl);
+        const localMasterPath = await resolveFileFromUrl(masterFileUrl);
 
         let nssfUsername = '';
         let nssfPassword = '';

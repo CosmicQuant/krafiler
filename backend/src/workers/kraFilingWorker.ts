@@ -2486,12 +2486,16 @@ export async function processFilingJob(job: JobContext): Promise<{
                 const clientUpdate: Record<string, any> = {
                     [`lastFiled.${obligationCol}`]: new Date().toISOString(),
                     [`status.${obligationCol}`]: 'filed',
+                    // Top-level field that the frontend checks for status badges
+                    [obligationCol]: 'filed',
                     [`${obligationCol}LastFiledDate`]: new Date().toISOString(),
                 };
 
                 // Persist receipt URL so the dashboard can show a download link
+                // Convert local relative path to a frontend API path that apiFetch can resolve
                 if (receiptRelativePath) {
-                    clientUpdate[`${obligationCol}ReceiptUrl`] = receiptRelativePath;
+                    const apiReceiptUrl = receiptRelativePath.replace(/^data\/receipts\//, '/api/receipts/');
+                    clientUpdate[`${obligationCol}ReceiptUrl`] = apiReceiptUrl;
                 }
 
                 // Persist PRN URL

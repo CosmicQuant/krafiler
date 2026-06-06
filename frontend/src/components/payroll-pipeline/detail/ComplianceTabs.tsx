@@ -79,6 +79,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [activeJobs, setActiveJobs] = useState<Record<string, { jobId: string; status: string; progress: number; message: string }>>({});
 
   const fetchStatus = useCallback(async () => {
     if (!runId) return;
@@ -90,6 +91,47 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
   }, [client.id]);
 
   useEffect(() => { fetchStatus(); fetchEmployees(); }, [fetchStatus, fetchEmployees]);
+
+  // Poll active filing jobs for real-time progress in the payroll pipeline
+  useEffect(() => {
+    const jobIds = Object.values(activeJobs).filter(j => j.status === 'waiting' || j.status === 'active' || j.status === 'processing').map(j => j.jobId);
+    if (jobIds.length === 0) return;
+
+    const interval = setInterval(async () => {
+      let hasUpdate = false;
+      const next: Record<string, typeof activeJobs[string]> = {};
+
+      await Promise.all(Object.entries(activeJobs).map(async ([type, job]) => {
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          next[type] = job;
+          return;
+        }
+        try {
+          const res = await apiFetch(`/tax/filing-status/${job.jobId}`);
+          if (res.ok) {
+            const data = await res.json();
+            next[type] = { jobId: job.jobId, status: data.status || job.status, progress: typeof data.progress === 'number' ? data.progress : job.progress, message: data.message || job.message };
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+              hasUpdate = true;
+            }
+          } else {
+            next[type] = job;
+          }
+        } catch {
+          next[type] = job;
+        }
+      }));
+
+      setActiveJobs(next);
+      if (hasUpdate) {
+        // Refresh client data so receipt buttons appear
+        onRefresh();
+        fetchStatus();
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [activeJobs, onRefresh, fetchStatus]);
 
   const handleGenerate = async () => {
     if (!runId) return; setGenerating(true); setError(null); setSuccess(null);
@@ -111,11 +153,11 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
         const nssfUrl = state?.nssfFileUrl; const masterUrl = client.masterFileUrl;
         if (!nssfUrl || !masterUrl) { setError('NSSF file or Master CSV not available'); setFilingType(null); return; }
         const res = await apiFetch(`/tax/file-nssf-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, masterFileUrl: masterUrl, period: '' }) });
-        const data = await res.json(); if (res.ok) setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`); else setError(data.message || 'NSSF filing failed');
+         const data = await res.json(); if (res.ok) { setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, nssf: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'NSSF filing failed');
       } else if (type === 'paye') {
         const payeUrl = state?.payeZipUrl; const [ys, ms] = period.split('-'); const lastDay = new Date(parseInt(ys), parseInt(ms), 0).getDate();
         const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: 'paye', periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(lastDay).padStart(2, '0')}`, payeZipUrl: payeUrl, printPrnOnly: false }) });
-        const data = await res.json(); if (res.ok) setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); else setError(data.message || 'PAYE filing failed');
+         const data = await res.json(); if (res.ok) { setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, paye: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PAYE filing failed');
       }
     } catch { setError('Network error'); } finally { setFilingType(null); }
   };
@@ -190,6 +232,23 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
       </div>
       {error && <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"><AlertCircle className="h-3.5 w-3.5" /> {error}</div>}
       {success && <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> {success}</div>}
+
+      {/* Active filing job status */}
+      {(() => {
+        const job = activeJobs[activeTab];
+        if (!job || job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') return null;
+        const isError = job.status === 'failed' || job.status === 'cancelled';
+        return (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: isError ? '#fca5a5' : '#bfdbfe', backgroundColor: isError ? '#fef2f2' : '#eff6ff', color: isError ? '#b91c1c' : '#1d4ed8' }}>
+            <Clock className="h-3.5 w-3.5 animate-spin" />
+            <span className="font-semibold">{activeTab.toUpperCase()} filing:</span>
+            <span>{job.message || 'Processing...'}</span>
+            {typeof job.progress === 'number' && job.progress > 0 && (
+              <span className="ml-auto font-mono">{job.progress}%</span>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="flex border-b border-slate-100 overflow-x-auto">
         {tabs.map((tab) => {

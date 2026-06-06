@@ -110,7 +110,7 @@ app.use('/health', (_req, res) => {
 });
 
 // Auth-protected receipt serving
-app.use('/api/receipts/*', verifyAuth, serveReceipt);
+app.use('/api/receipts', verifyAuth, serveReceipt);
 
 // Public Paystack webhook (must be before protected routes so verifyAuth doesn't block it)
 app.use('/api/subscriptions/webhook', subscriptionRoutes);

@@ -281,7 +281,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     <button
                       onClick={async () => {
                         try {
-                          const res = await apiFetch(receiptUrl);
+                          const res = await apiFetch(receiptUrl.replace(/^\/api/, ''));
                           if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
                           const blob = await res.blob();
                           const objectUrl = window.URL.createObjectURL(blob);

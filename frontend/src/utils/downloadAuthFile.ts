@@ -12,7 +12,9 @@ export async function downloadAuthFile(url: string, fallbackFilename = 'receipt.
         return;
     }
     try {
-        const res = await apiFetch(url);
+        // apiFetch already prepends /api, so strip it if the URL already has it
+        const apiUrl = url.replace(/^\/api/, '');
+        const res = await apiFetch(apiUrl);
         if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
         const blob = await res.blob();
         const objectUrl = window.URL.createObjectURL(blob);

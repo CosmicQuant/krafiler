@@ -15,7 +15,7 @@ export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: 
         const handleDownload = async () => {
             if (!receiptUrl) return;
             try {
-                const res = await apiFetch(receiptUrl);
+                const res = await apiFetch(receiptUrl.replace(/^\/api/, ''));
                 if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
                 const blob = await res.blob();
                 const objectUrl = window.URL.createObjectURL(blob);

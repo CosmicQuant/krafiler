@@ -567,41 +567,54 @@ async function resolveFileFromUrl(fileUrl: string): Promise<string> {
 // ─── POST /api/tax/file-nssf-return ─────────────────────────────
 router.post('/file-nssf-return', async (req: Request, res: Response): Promise<void> => {
     try {
-        const { nssfFileUrl, masterFileUrl, period } = req.body;
-        if (!nssfFileUrl || !masterFileUrl) {
-            res.status(400).json({ success: false, message: 'Missing NSSF file URL or Master CSV URL.' });
+        const { nssfFileUrl, masterFileUrl, period, clientId } = req.body;
+        if (!nssfFileUrl) {
+            res.status(400).json({ success: false, message: 'Missing NSSF file URL.' });
             return;
         }
 
         const localNssfPath = await resolveFileFromUrl(nssfFileUrl);
-        const localMasterPath = await resolveFileFromUrl(masterFileUrl);
 
+        // ── Resolve NSSF credentials ──────────────────────────────────
+        // Primary source: client record in Firestore. Fallback: legacy Master CSV parsing.
         let nssfUsername = '';
         let nssfPassword = '';
-        
-        const csvParser = require('csv-parser');
-        await new Promise((resolve, reject) => {
-            let rowCount = 0;
-            // Since we imported `fs from 'fs/promises'`, we need normal `fs` for streams, so use `require('fs')` here.
-            require('fs').createReadStream(localMasterPath)
-                .pipe(csvParser({ headers: false, skipLines: 0 }))
-                .on('data', (row: any) => {
-                    const values = Object.values(row);
-                    if (rowCount === 2) nssfUsername = values[1] ? String(values[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
-                    if (rowCount === 3) nssfPassword = values[1] ? String(values[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
-                    rowCount++;
-                })
-                .on('end', resolve)
-                .on('error', reject);
-        });
+
+        if (clientId) {
+            const clientDoc = await adminDb.collection('clients').doc(String(clientId).trim()).get();
+            if (clientDoc.exists) {
+                const clientData = clientDoc.data() as any;
+                nssfUsername = clientData.nssfNo?.trim() || '';
+                nssfPassword = clientData.nssfPassword?.trim() || '';
+            }
+        }
+
+        // Fallback to Master CSV only if Firestore credentials are missing
+        if ((!nssfUsername || !nssfPassword) && masterFileUrl) {
+            const localMasterPath = await resolveFileFromUrl(masterFileUrl);
+            const csvParser = require('csv-parser');
+            await new Promise((resolve, reject) => {
+                let rowCount = 0;
+                require('fs').createReadStream(localMasterPath)
+                    .pipe(csvParser({ headers: false, skipLines: 0 }))
+                    .on('data', (row: any) => {
+                        const values = Object.values(row);
+                        if (rowCount === 2) nssfUsername = values[1] ? String(values[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                        if (rowCount === 3) nssfPassword = values[1] ? String(values[1]).replace(/^\uFEFF/, '').replace(/\u0000/g, '').replace(/^'/, '').trim() : '';
+                        rowCount++;
+                    })
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+        }
 
         if (!nssfUsername || !nssfPassword) {
-            res.status(400).json({ success: false, message: 'Could not extract NSSF Username or Password from the Master CSV. Please ensure they are on rows 3 and 4.' });
+            res.status(400).json({ success: false, message: 'NSSF Username (nssfNo) or Password not found. Please ensure they are saved in the client settings.' });
             return;
         }
 
         const jobId = uuidv4();
-        
+
         const effectivePeriod = typeof period === 'string' ? period : (() => {
             const now = new Date();
             const year = now.getFullYear();
@@ -619,7 +632,6 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             taxObligationType: 'nssf',
             ownsRentalProperty: false,
             nssfFileUrl: localNssfPath,
-            masterFileUrl: localMasterPath,
             nssfPeriod: effectivePeriod,
         } as any;
 

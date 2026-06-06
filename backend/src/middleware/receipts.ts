@@ -4,19 +4,22 @@
  * Auth-protected receipt serving endpoint.
  * Replaces the insecure `express.static('/api/receipts')` middleware.
  *
- * Looks up local disk first, then falls back to Cloud Storage signed URLs.
+ * Looks up local disk first, then streams the file directly from Cloud Storage.
  */
 
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs/promises';
 import { logger } from '../logger';
-import { getSignedDownloadUrl } from '../lib/cloudStorage';
 import { adminDb } from '../lib/firebaseAdmin';
+import { Storage } from '@google-cloud/storage';
 
 const RECEIPTS_DIR = process.env.RECEIPTS_DIR
     ? path.resolve(process.env.RECEIPTS_DIR)
     : path.resolve(__dirname, '..', '..', '..', 'receipts');
+
+const BUCKET_NAME = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
+const storage = new Storage();
 
 export async function serveReceipt(req: Request, res: Response): Promise<void> {
     const relativePath = req.params[0];
@@ -54,7 +57,7 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
         // Not found locally — fall through to GCS lookup
     }
 
-    // 2. Look up job and redirect to signed GCS URL
+    // 2. Look up job and stream directly from GCS (avoids signed-URL IAM issues)
     const parts = sanitized.split('/');
     const possibleJobIds: string[] = [parts[0]]; // Legacy: first segment is jobId
 
@@ -72,12 +75,20 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
                 const jobData = jobDoc.data() as any;
                 const gcsPath = jobData?.artifacts?.receiptGcsPath;
                 if (gcsPath) {
-                    const signedUrl = await getSignedDownloadUrl(gcsPath, 15);
-                    return res.redirect(signedUrl);
+                    const file = storage.bucket(BUCKET_NAME).file(gcsPath);
+                    const [exists] = await file.exists();
+                    if (!exists) {
+                        logger.warn({ gcsPath, jobId: id }, 'Receipt GCS path does not exist');
+                        continue;
+                    }
+                    res.setHeader('Content-Type', 'application/pdf');
+                    res.setHeader('Content-Disposition', `inline; filename="${path.basename(gcsPath)}"`);
+                    file.createReadStream().pipe(res);
+                    return;
                 }
             }
         } catch (err) {
-            logger.error({ err, jobId: id }, 'Failed to resolve receipt from GCS');
+            logger.error({ err, jobId: id }, 'Failed to stream receipt from GCS');
         }
     }
 

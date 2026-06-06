@@ -48,11 +48,6 @@ export function buildStoredArtifactUrl(resultPath?: string) {
         return `/api/receipts/${normalized.slice('data/receipts/'.length)}`;
     }
 
-    return `/api/${normalized.replace(/^\/+, '')}`;
-}
-        return undefined;
-    }
-
     return `/api/${normalized.replace(/^\/+/, '')}`;
 }
 

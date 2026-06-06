@@ -1713,11 +1713,11 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
         csvLines.push('');
         csvLines.push(headers.join(','));
 
-        for (const entry of entries) {
-            const e = entry as any;
+        for (let i = 0; i < entries.length; i++) {
+            const e = entries[i] as any;
             const emp = empMap.get(String(e.employeeId)) as any;
             const row: (string | number)[] = [];
-            row.push(e.payrollNumber || emp?.payrollNumber || '');
+            row.push(e.payrollNumber || emp?.payrollNumber || String(i + 1));
             row.push(e.kraPin || emp?.kraPin || '');
             row.push(emp?.idNumber || '');
             row.push(emp?.identityType || 'National ID');

@@ -2300,13 +2300,16 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
 
             // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
+            // Skip mainMenu/nav links that are hidden in submenus — they match "receipt" text but are not visible.
             downloadMeta = receiptPageLinks.find(
                 (link) =>
-                    link.onclick.toLowerCase().includes('download') ||
-                    link.href.toLowerCase().includes('download') ||
-                    link.id.toLowerCase().includes('download') ||
-                    link.text.toLowerCase().includes('download') ||
-                    link.text.toLowerCase().includes('receipt')
+                    !link.className.toLowerCase().includes('mainmenu') &&
+                    !link.className.toLowerCase().includes('nav') &&
+                    (link.onclick.toLowerCase().includes('download') ||
+                     link.href.toLowerCase().includes('download') ||
+                     link.id.toLowerCase().includes('download') ||
+                     link.text.toLowerCase().includes('download') ||
+                     link.text.toLowerCase().includes('receipt'))
             );
 
             // Fallback: scan buttons and inputs if no anchor matched
@@ -2382,13 +2385,24 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
         console.log(`[Worker][${jobId}] Using download selector: ${downloadSelector}`);
 
-        const [download] = await Promise.all([
-            page.waitForEvent('download', { timeout: 60_000 }),
-            page.click(downloadSelector),
-        ]);
-
-        await download.saveAs(receiptPath);
-        console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
+        let receiptDownloaded = false;
+        try {
+            const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 60_000 }),
+                // Use JS click to bypass visibility checks on hidden tab/menu links
+                page.evaluate((sel) => {
+                    const el = document.querySelector(sel) as HTMLElement;
+                    if (el) { el.click(); return true; }
+                    return false;
+                }, downloadSelector),
+            ]);
+            await download.saveAs(receiptPath);
+            receiptDownloaded = true;
+            console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
+        } catch (downloadErr: any) {
+            console.warn(`[Worker][${jobId}] Receipt download failed (continuing without receipt):`, downloadErr.message);
+            await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'warn' });
+        }
 
         // -- Step 13: Generate Payment Slip (PRN) ----------------------------------
         let storedPrnPath: string | null = null;
@@ -2435,22 +2449,29 @@ export async function processFilingJob(job: JobContext): Promise<{
         browser = undefined;
 
         // ── Step 13: Store receipt in the workspace ───────────────────────────────
-        await setJobStep(job, 94, 'Storing the receipt in the workspace');
-        const { receiptPath: storedReceiptPath, relativePath } = await storeReceiptLocally(receiptPath, jobId);
-        const receiptRelativePath = relativePath.replace(/\\/g, '/');
-        await appendJobLog(job, `Receipt stored locally at ${relativePath}`, { progress: 94 });
+        let storedReceiptPath: string | null = null;
+        let receiptRelativePath: string | null = null;
+        if (receiptDownloaded) {
+            await setJobStep(job, 94, 'Storing the receipt in the workspace');
+            const result = await storeReceiptLocally(receiptPath, jobId);
+            storedReceiptPath = result.receiptPath;
+            receiptRelativePath = result.relativePath.replace(/\\/g, '/');
+            await appendJobLog(job, `Receipt stored locally at ${result.relativePath}`, { progress: 94 });
 
-        // Upload receipt to Cloud Storage so the API can serve it
-        try {
-            const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(storedReceiptPath));
-            await uploadFile(storedReceiptPath, receiptGcsPath, { contentType: 'application/pdf' });
-            await jobStore.updateJob(jobId, {
-                'artifacts.receiptGcsPath': receiptGcsPath,
-            } as any);
-            await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
-        } catch (uploadErr: any) {
-            console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
-            await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+            // Upload receipt to Cloud Storage so the API can serve it
+            try {
+                const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(storedReceiptPath));
+                await uploadFile(storedReceiptPath, receiptGcsPath, { contentType: 'application/pdf' });
+                await jobStore.updateJob(jobId, {
+                    'artifacts.receiptGcsPath': receiptGcsPath,
+                } as any);
+                await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
+            } catch (uploadErr: any) {
+                console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
+                await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+            }
+        } else {
+            await appendJobLog(job, 'No receipt was downloaded — skipping local storage and Cloud Storage upload', { progress: 94, level: 'info' });
         }
 
         try {

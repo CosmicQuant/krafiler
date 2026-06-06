@@ -78,7 +78,7 @@ export function useJobListener(
         const q = query(
             collection(db, 'jobs'),
             where('ownerUid', '==', user.uid),
-            where('status', 'in', ['waiting', 'active', 'processing'])
+            where('status', 'in', ['waiting', 'active', 'processing', 'completed', 'failed', 'cancelled'])
         );
 
         const handleSnapshot = (snapshot: QuerySnapshot<DocumentData>) => {

@@ -109,8 +109,8 @@ app.use('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Auth-protected receipt serving
-app.use('/api/receipts', verifyAuth, serveReceipt);
+// Auth-protected receipt serving — explicit wildcard route
+app.get('/api/receipts/*', verifyAuth, serveReceipt);
 
 // Public Paystack webhook (must be before protected routes so verifyAuth doesn't block it)
 app.use('/api/subscriptions/webhook', subscriptionRoutes);

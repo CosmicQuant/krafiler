@@ -22,9 +22,9 @@ const BUCKET_NAME = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
 const storage = new Storage();
 
 export async function serveReceipt(req: Request, res: Response): Promise<void> {
-    // With app.use('/api/receipts', ...), Express strips the mount point from req.url
-    const relativePath = req.url.replace(/^\/+/, '');
-    logger.info({ relativePath, originalUrl: req.originalUrl, url: req.url }, 'serveReceipt called');
+    // With app.get('/api/receipts/*', ...), Express puts the wildcard in req.params[0]
+    const relativePath = (req.params[0] || '').replace(/^\/+/, '');
+    logger.info({ relativePath, originalUrl: req.originalUrl, url: req.url, params: req.params }, 'serveReceipt called');
 
     if (!relativePath) {
         logger.warn('serveReceipt: no relativePath');

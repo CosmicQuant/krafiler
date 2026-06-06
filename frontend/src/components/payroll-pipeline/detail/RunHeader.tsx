@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
-    Calendar, Plus, Play, Lock, RotateCcw, ChevronDown,
+    Calendar, Plus, Play, Lock, RotateCcw, ChevronDown, Trash2,
     Users, Banknote, Wallet, AlertCircle, X
 } from 'lucide-react';
 import { cn } from '../../../utils/cn';
@@ -34,6 +34,7 @@ interface RunHeaderProps {
     onGenerateEntries: () => void;
     onFinalize: () => void;
     onRollback: () => void;
+    onDelete: () => void;
     loading: boolean;
     error: string | null;
     onClearError: () => void;
@@ -58,6 +59,7 @@ export function RunHeader({
     onGenerateEntries,
     onFinalize,
     onRollback,
+    onDelete,
     loading,
     error,
     onClearError,
@@ -223,6 +225,18 @@ export function RunHeader({
                                         className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
                                     >
                                         <RotateCcw className="h-3.5 w-3.5" /> Rollback
+                                    </button>
+                                )}
+
+                                {/* Delete run button (available for draft or finalized) */}
+                                {(runStatus === 'draft' || runStatus === 'finalized') && (
+                                    <button
+                                        onClick={onDelete}
+                                        disabled={loading}
+                                        className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-40"
+                                        title="Delete this payroll run"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" /> Delete
                                     </button>
                                 )}
                             </>

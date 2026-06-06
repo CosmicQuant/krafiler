@@ -187,6 +187,25 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
         }
     };
 
+    const handleDelete = async () => {
+        if (!currentRun) return;
+        if (!window.confirm('Delete this payroll run? This cannot be undone.')) return;
+        try {
+            const res = await apiFetch(`/clients/${client.id}/payroll-runs/${currentRun.id}`, {
+                method: 'DELETE',
+            });
+            if (res.ok) {
+                setCurrentRun(null);
+                setRefreshToken((t) => t + 1);
+            } else {
+                const err = await res.json().catch(() => ({}));
+                setError(err.message || 'Failed to delete run');
+            }
+        } catch {
+            setError('Network error deleting run');
+        }
+    };
+
     const handleSelectEntry = (entry: any) => {
         setSelectedEntry(entry);
         setDrawerOpen(true);
@@ -207,6 +226,7 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                 onGenerateEntries={handleGenerateEntries}
                 onFinalize={handleFinalize}
                 onRollback={handleRollback}
+                onDelete={handleDelete}
                 loading={loading}
                 error={error}
                 onClearError={() => setError(null)}

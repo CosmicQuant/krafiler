@@ -546,13 +546,6 @@ async function resolveFileFromUrl(fileUrl: string): Promise<string> {
         return fileUrl;
     }
 
-    const url = fileUrl.startsWith('http') ? fileUrl : `http://localhost:3000${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
     let ext = '.xlsx';
     try {
         ext = path.extname(new URL(fileUrl).pathname) || '.xlsx';
@@ -560,6 +553,35 @@ async function resolveFileFromUrl(fileUrl: string): Promise<string> {
         ext = path.extname(fileUrl.split('?')[0]) || '.xlsx';
     }
     const tmpPath = path.join(tmpdir(), `krafiler-${Date.now()}${ext}`);
+
+    // If it's a GCS signed URL, use the SDK directly (more reliable than fetch)
+    if (fileUrl.includes('storage.googleapis.com')) {
+        try {
+            const url = new URL(fileUrl);
+            // pathname is like /BUCKET_NAME/object/path
+            const parts = url.pathname.split('/').filter(Boolean);
+            // Remove bucket name from the path
+            parts.shift();
+            const gcsPath = parts.join('/');
+            if (!gcsPath) {
+                throw new Error('Could not parse GCS path from URL');
+            }
+            const { downloadToTemp } = await import('../lib/cloudStorage');
+            return await downloadToTemp(gcsPath, tmpdir());
+        } catch (e: any) {
+            console.error('[resolveFileFromUrl] GCS download failed:', e.message, 'URL:', fileUrl.substring(0, 200));
+            throw new Error(`Failed to download from GCS: ${e.message}`);
+        }
+    }
+
+    // Fallback: fetch via HTTP
+    const url = fileUrl.startsWith('http') ? fileUrl : `http://localhost:3000${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.status} ${response.statusText} (url: ${url.substring(0, 200)})`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
     await fs.writeFile(tmpPath, buffer);
     return tmpPath;
 }
@@ -567,7 +589,17 @@ async function resolveFileFromUrl(fileUrl: string): Promise<string> {
 // ─── POST /api/tax/file-nssf-return ─────────────────────────────
 router.post('/file-nssf-return', async (req: Request, res: Response): Promise<void> => {
     try {
-        const { nssfFileUrl, masterFileUrl, period, clientId } = req.body;
+        let { nssfFileUrl, masterFileUrl, period, clientId } = req.body;
+
+        // ── Look up NSSF file URL from client document if not provided ─
+        if (!nssfFileUrl && clientId) {
+            const clientDoc = await adminDb.collection('clients').doc(String(clientId).trim()).get();
+            if (clientDoc.exists) {
+                const clientData = clientDoc.data() as any;
+                nssfFileUrl = clientData.generatedFiles?.nssfFileUrl || null;
+            }
+        }
+
         if (!nssfFileUrl) {
             res.status(400).json({ success: false, message: 'Missing NSSF file URL.' });
             return;
@@ -584,8 +616,13 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             const clientDoc = await adminDb.collection('clients').doc(String(clientId).trim()).get();
             if (clientDoc.exists) {
                 const clientData = clientDoc.data() as any;
-                nssfUsername = clientData.nssfNo?.trim() || '';
-                nssfPassword = clientData.nssfPassword?.trim() || '';
+                // Support both top-level fields (nssfNo / nssfPassword) and nested credentials
+                nssfUsername = clientData.nssfNo?.trim()
+                    || clientData.credentials?.nssfLogin?.trim()
+                    || '';
+                nssfPassword = clientData.nssfPassword?.trim()
+                    || clientData.credentials?.nssfPassword?.trim()
+                    || '';
             }
         }
 

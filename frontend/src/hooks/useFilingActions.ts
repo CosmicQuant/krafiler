@@ -368,8 +368,8 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const fileNssf = useCallback(async (client: ClientObligation) => {
         const d = getD();
-        if (!client.nssfFileUrl || !client.masterFileUrl) {
-            d.setDashboardNotice({ tone: 'error', message: `No NSSF File or Master CSV available for ${client.name}. Please generate ZIP first.` });
+        if (!client.nssfFileUrl) {
+            d.setDashboardNotice({ tone: 'error', message: `No NSSF File available for ${client.name}. Please generate compliance files first.` });
             return;
         }
         console.log(`Starting NSSF Auto-filing for ${client.name}...`);
@@ -377,7 +377,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const res = await apiFetch('/tax/file-nssf-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nssfFileUrl: client.nssfFileUrl, masterFileUrl: client.masterFileUrl, period: getCurrentFilingPeriod('nssf').mmSlashYYYY }),
+                body: JSON.stringify({ clientId: client.id, nssfFileUrl: client.nssfFileUrl, period: getCurrentFilingPeriod('nssf').mmSlashYYYY }),
             });
             const dataResp = await res.json().catch(() => ({}));
             if (!res.ok) {

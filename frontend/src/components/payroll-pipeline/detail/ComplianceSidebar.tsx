@@ -125,16 +125,15 @@ export function ComplianceSidebar({ client, runId, period, runStatus, onRefresh 
         try {
             if (type === 'nssf') {
                 const nssfUrl = state?.nssfFileUrl;
-                const masterUrl = client.masterFileUrl;
-                if (!nssfUrl || !masterUrl) {
-                    setError('NSSF file or Master CSV not available. Generate compliance files first.');
+                if (!nssfUrl) {
+                    setError('NSSF file not available. Generate compliance files first.');
                     setFilingType(null);
                     return;
                 }
                 const res = await apiFetch(`/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, masterFileUrl: masterUrl, period: '' }),
+                    body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: '' }),
                 });
                 const data = await res.json();
                 if (res.ok) {

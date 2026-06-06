@@ -42,6 +42,17 @@ export function buildStoredArtifactUrl(resultPath?: string) {
         return undefined;
     }
 
+    // Worker stores receipt paths as "data/receipts/<jobId>/receipt.pdf" relative to RECEIPTS_DIR.
+    // Strip the "data/" prefix so the URL maps to /api/receipts/... which matches the middleware route.
+    if (normalized.startsWith('data/receipts/')) {
+        return `/api/receipts/${normalized.slice('data/receipts/'.length)}`;
+    }
+
+    return `/api/${normalized.replace(/^\/+, '')}`;
+}
+        return undefined;
+    }
+
     return `/api/${normalized.replace(/^\/+/, '')}`;
 }
 

@@ -56,10 +56,18 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
 
     // 2. Look up job and redirect to signed GCS URL
     const parts = sanitized.split('/');
-    const jobId = parts[0]; // e.g. "receipts/<jobId>/receipt.pdf"
-    if (jobId) {
+    const possibleJobIds: string[] = [parts[0]]; // Legacy: first segment is jobId
+
+    // For GCS paths like "users/<uid>/clients/<id>/receipts/<jobId>/receipt.pdf"
+    const receiptsIdx = parts.indexOf('receipts');
+    if (receiptsIdx >= 0 && parts[receiptsIdx + 1]) {
+        possibleJobIds.push(parts[receiptsIdx + 1]);
+    }
+
+    for (const id of possibleJobIds) {
+        if (!id) continue;
         try {
-            const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+            const jobDoc = await adminDb.collection('jobs').doc(id).get();
             if (jobDoc.exists) {
                 const jobData = jobDoc.data() as any;
                 const gcsPath = jobData?.artifacts?.receiptGcsPath;
@@ -69,7 +77,7 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
                 }
             }
         } catch (err) {
-            logger.error({ err, jobId }, 'Failed to resolve receipt from GCS');
+            logger.error({ err, jobId: id }, 'Failed to resolve receipt from GCS');
         }
     }
 

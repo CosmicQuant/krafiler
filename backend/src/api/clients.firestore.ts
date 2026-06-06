@@ -83,6 +83,9 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
                 return client;
             })
         );
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.json(clients);
     } catch (err) {
         console.error('Error fetching clients from Firestore:', err);

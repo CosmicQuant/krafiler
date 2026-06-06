@@ -7,7 +7,7 @@
  */
 
 import fs from 'fs/promises';
-import { copyFileSync } from 'fs';
+
 import path from 'path';
 import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
@@ -665,16 +665,19 @@ router.post('/generate-tot-zip', async (req: Request, res: Response): Promise<vo
         const min = String(now.getMinutes()).padStart(2, '0');
         const ss = String(now.getSeconds()).padStart(2, '0');
         const friendlyName = `${dd}-${mm}-${yyyy}_${hh}-${min}-${ss}_${kraPin.toUpperCase()}_TOT.zip`;
-        const safeClientName = (req.body.clientName || 'Generated_Client').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim();
-        const clientWorkspaceDir = path.join(__dirname, '../../../frontend/public/clients', safeClientName);
-        await ensureDir(clientWorkspaceDir);
-        const destPath = path.join(clientWorkspaceDir, friendlyName);
-        copyFileSync(zipFile, destPath);
-        
+        const safeClientName = (req.body.clientName || 'Generated_Client').replace(/[<>:"\/\\|?*\x00-\x1F]/g, '').trim();
+
+        // Upload to Cloud Storage so the file is accessible in production
+        const { uploadFile, getSignedDownloadUrl } = await import('../lib/cloudStorage');
+        const uid = (req as any).user?.uid || 'unknown';
+        const gcsPath = `users/${uid}/clients/tot/${friendlyName}`;
+        await uploadFile(zipFile, gcsPath, { contentType: 'application/zip' });
+        const signedUrl = await getSignedDownloadUrl(gcsPath, 60);
+
         res.json({
             success: true,
             totInfo: {
-                url: `/clients/${encodeURIComponent(safeClientName)}/${friendlyName}`,
+                url: signedUrl,
                 label: friendlyName
             }
         });

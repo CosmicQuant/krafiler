@@ -1,7 +1,30 @@
 import { chromium } from 'playwright-extra';
 import * as path from 'path';
+import * as fs from 'fs/promises';
+import { tmpdir } from 'os';
+
+async function resolveNssfFile(filePath: string): Promise<string> {
+    // If it's already a local absolute path, use it directly
+    if (path.isAbsolute(filePath) && !filePath.startsWith('http')) {
+        return filePath;
+    }
+
+    // If it's a URL (signed GCS URL or local path starting with /clients/)
+    const url = filePath.startsWith('http') ? filePath : `http://localhost:3000${filePath.startsWith('/') ? '' : '/'}${filePath}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to download NSSF file: ${response.status} ${response.statusText}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const ext = path.extname(filePath.split('?')[0]) || '.xlsx';
+    const tmpPath = path.join(tmpdir(), `nssf-upload-${Date.now()}${ext}`);
+    await fs.writeFile(tmpPath, buffer);
+    return tmpPath;
+}
 
 export async function fileNssfReturn(job: any, username: string, password: string, filePath: string, submissionPeriod: string) {
+    const resolvedFilePath = await resolveNssfFile(filePath);
   const browser = await chromium.launch({ headless: false }); // Set to false to see the actions
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -143,7 +166,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
     // In JSF, file inputs might be tricky. Usually clicking the Choose button opens OS dialog.
     // With Playwright, we set the input[type="file"] directly.
     const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(path.resolve(filePath));
+    await fileInput.setInputFiles(path.resolve(resolvedFilePath));
 
     // Wait for the file to be "chosen"
     await page.waitForTimeout(2000);

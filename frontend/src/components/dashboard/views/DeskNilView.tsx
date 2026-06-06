@@ -1,4 +1,5 @@
 import { Download, RefreshCw } from 'lucide-react';
+import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, ActiveDashboardJob } from '../../../types';
 import { isTerminalFilingJob } from '../../../utils/dashboardUtils';
 import { getPreviousYearIsoRange } from '../../../utils/taxPeriods';
@@ -202,14 +203,12 @@ export function DeskNilView({
                         </button>
 
                         {isCompleted && displayJob.receiptUrl && (
-                          <a
-                            href={displayJob.receiptUrl}
-                            download
-                            rel="noreferrer"
+                          <button
+                            onClick={() => downloadAuthFile(displayJob.receiptUrl!)}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-600 hover:bg-emerald-100 transition"
                           >
                             <Download className="h-3 w-3" /> Download Receipt
-                          </a>
+                          </button>
                         )}
 
                         {isFailed && displayJob.failedReason && (

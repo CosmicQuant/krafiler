@@ -7,6 +7,7 @@
 
 import { useState, useMemo } from 'react';
 import { Download, RefreshCw, FileText } from 'lucide-react';
+import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, VatPreparationSummary } from '../../../types';
 import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { VatSummaryCard } from '../VatSummaryCard';
@@ -361,26 +362,22 @@ export function VatClientView({
                 {isTerminalFilingJob(relevantJob as any) && (latestReceiptUrl || latestPrnUrl) && (
                     <div className="flex flex-wrap items-center gap-2 pt-2">
                         {latestReceiptUrl && !unifiedPrnUrl && latestReceiptUrl !== latestPrnUrl && (
-                            <a
-                                href={latestReceiptUrl}
-                                download
-                                rel="noopener noreferrer"
+                            <button
+                                onClick={() => downloadAuthFile(latestReceiptUrl)}
                                 className="inline-flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-600 hover:bg-blue-100 transition"
                             >
                                 <Download className="h-3.5 w-3.5" />
                                 Download Receipt
-                            </a>
+                            </button>
                         )}
                         {(latestPrnUrl || unifiedPrnUrl) && (
-                            <a
-                                href={unifiedPrnUrl ?? latestPrnUrl}
-                                download
-                                rel="noopener noreferrer"
+                                <button
+                                onClick={() => downloadAuthFile((unifiedPrnUrl ?? latestPrnUrl)!)}
                                 className="inline-flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 transition"
                             >
                                 <Download className="h-3.5 w-3.5" />
                                 Download PRN
-                            </a>
+                            </button>
                         )}
                     </div>
                 )}

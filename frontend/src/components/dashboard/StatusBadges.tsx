@@ -1,5 +1,6 @@
-import { CheckCircle2, Clock, FileArchive } from 'lucide-react';
+import { CheckCircle2, Clock, FileArchive, Download } from 'lucide-react';
 import { TaxStatus } from '../../types';
+import { apiFetch } from '../../services/api';
 
 export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: { status: TaxStatus; generatedAt?: string; lastFiledDate?: string; receiptUrl?: string }) {
     if (status === 'na') return <span className="text-slate-600">-</span>;
@@ -10,18 +11,42 @@ export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: 
             {generatedAt && <span className="mt-1 text-[9px] font-medium text-slate-500 opacity-80">{generatedAt}</span>}
         </span>
     );
-    if (status === 'filed') return (
-        <span className="inline-flex flex-col items-center">
-            {receiptUrl ? (
-                <a href={receiptUrl} download rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Download Returns Receipt">
-                    <CheckCircle2 className="h-3 w-3" /> Filed
-                </a>
-            ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400"><CheckCircle2 className="h-3 w-3" /> Filed</span>
-            )}
-            {lastFiledDate && <span className="mt-1 text-[10px] font-medium text-slate-400">{lastFiledDate}</span>}
-        </span>
-    );
+    if (status === 'filed') {
+        const handleDownload = async () => {
+            if (!receiptUrl) return;
+            try {
+                const res = await apiFetch(receiptUrl);
+                if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+                const blob = await res.blob();
+                const objectUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = receiptUrl.split('/').pop() || 'receipt.pdf';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(objectUrl);
+            } catch (e: any) {
+                alert('Failed to download receipt: ' + e.message);
+            }
+        };
+        return (
+            <span className="inline-flex flex-col items-center">
+                {receiptUrl ? (
+                    <button
+                        onClick={handleDownload}
+                        className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/30 transition-colors cursor-pointer"
+                        title="Download Returns Receipt"
+                    >
+                        <CheckCircle2 className="h-3 w-3" /> Filed
+                    </button>
+                ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400"><CheckCircle2 className="h-3 w-3" /> Filed</span>
+                )}
+                {lastFiledDate && <span className="mt-1 text-[10px] font-medium text-slate-400">{lastFiledDate}</span>}
+            </span>
+        );
+    }
     if (status === 'paid') return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Paid</span>;
     return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-xs font-semibold text-amber-400"><Clock className="h-3 w-3" /> Due</span>;
 }

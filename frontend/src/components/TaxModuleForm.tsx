@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UploadCloud, CheckCircle, FileText, Loader2, ArrowRight } from 'lucide-react';
+import { downloadAuthFile } from '../utils/downloadAuthFile';
 
 export default function TaxModuleForm({ taxType }: { taxType: string }) {
   const [inputType, setInputType] = useState<'manual' | 'upload'>('manual');
@@ -31,13 +32,12 @@ export default function TaxModuleForm({ taxType }: { taxType: string }) {
           <CheckCircle size={64} className="mx-auto text-green-500 mb-6" />
           <h3 className="text-2xl font-bold mb-4">Filing Successful!</h3>
           <p className="text-gray-600 mb-8">Your {taxType.toUpperCase()} return has been mocked and successfully generated.</p>
-          <a
-            href={receiptUrl!}
-            download={`mock_receipt_${taxType}.txt`}
+          <button
+            onClick={() => downloadAuthFile(receiptUrl!)}
             className="inline-flex items-center gap-2 bg-blue-600 text-white font-medium px-6 py-3 rounded-lg hover:bg-blue-700 transition"
           >
             <FileText size={20} /> Download Receipt
-          </a>
+          </button>
         </div>
       ) : (
         <div className="p-8">

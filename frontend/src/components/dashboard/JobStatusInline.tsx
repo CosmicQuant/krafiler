@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ActiveDashboardJob } from '../../types';
 import { isPendingFilingJob, isTerminalFilingJob } from '../../utils/dashboardUtils';
+import { downloadAuthFile } from '../../utils/downloadAuthFile';
 
 interface JobStatusInlineProps {
     job: ActiveDashboardJob;
@@ -220,34 +221,28 @@ export default function JobStatusInline({
                 {terminal && (
                     <>
                         {job.receiptUrl && (
-                            <a
-                                href={job.receiptUrl}
-                                download
-                                rel="noopener noreferrer"
+                            <button
+                                onClick={() => downloadAuthFile(job.receiptUrl!)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-bold text-blue-600 transition hover:bg-blue-50"
                             >
                                 <Receipt className="h-3 w-3" /> Receipt
-                            </a>
+                            </button>
                         )}
                         {job.prnUrl && (
-                            <a
-                                href={job.prnUrl}
-                                download
-                                rel="noopener noreferrer"
+                            <button
+                                onClick={() => downloadAuthFile(job.prnUrl!)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-bold text-red-600 transition hover:bg-red-50"
                             >
                                 <FileDown className="h-3 w-3" /> PRN
-                            </a>
+                            </button>
                         )}
                         {job.generatedZipUrl && (
-                            <a
-                                href={job.generatedZipUrl}
-                                download
-                                rel="noopener noreferrer"
+                            <button
+                                onClick={() => downloadAuthFile(job.generatedZipUrl!)}
                                 className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-600 transition hover:bg-emerald-50"
                             >
                                 <Package className="h-3 w-3" /> ZIP
-                            </a>
+                            </button>
                         )}
                     </>
                 )}

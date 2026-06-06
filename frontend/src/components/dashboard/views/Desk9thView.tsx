@@ -6,6 +6,7 @@ import {
   Cloud,
   Download,
 } from 'lucide-react';
+import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, ActiveDashboardJob, TaxStatus } from '../../../types';
 import {
   getAutoFileLabel,
@@ -636,24 +637,20 @@ export function Desk9thView({
                               <div className="mt-2 flex flex-col gap-1.5">
                                 {displayJob.receiptUrl &&
                                   displayJob.receiptUrl !== displayJob.prnUrl && (
-                                    <a
-                                      href={displayJob.receiptUrl}
-                                      download
-                                      rel="noopener noreferrer"
+                                    <button
+                                      onClick={() => downloadAuthFile(displayJob.receiptUrl!)}
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-500/30 bg-blue-50 px-3 py-1.5 text-[10px] font-bold text-blue-500 transition hover:bg-blue-600 hover:text-slate-950"
                                     >
                                       <Download className="h-3 w-3" /> Download Receipt
-                                    </a>
+                                    </button>
                                   )}
                                 {displayJob.prnUrl && (
-                                  <a
-                                    href={displayJob.prnUrl}
-                                    download
-                                    rel="noopener noreferrer"
+                                  <button
+                                    onClick={() => downloadAuthFile(displayJob.prnUrl!)}
                                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-[#d80000] transition hover:bg-[#d80000] hover:text-slate-950"
                                   >
                                     <Download className="h-3 w-3" /> Download PRN
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             )}

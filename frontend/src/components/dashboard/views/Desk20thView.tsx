@@ -5,6 +5,7 @@ import {
   Download,
   RefreshCw,
 } from 'lucide-react';
+import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, TaxStatus, VatPreparationSummary } from '../../../types';
 import { VatSummaryCard } from '../VatSummaryCard';
 import {
@@ -559,24 +560,20 @@ export function Desk20thView({
                           (latestReceiptUrl || latestPrnUrl) && (
                             <>
                               {latestReceiptUrl && !unifiedPrnUrl && latestReceiptUrl !== latestPrnUrl && (
-                                <a
-                                  href={latestReceiptUrl}
-                                  download
-                                  rel="noopener noreferrer"
+                                <button
+                                  onClick={() => downloadAuthFile(latestReceiptUrl)}
                                   className="flex w-full justify-center items-center gap-2 rounded-xl bg-blue-50 border border-blue-500/20 px-4 py-2 text-xs font-bold text-blue-600 hover:bg-blue-100 hover:text-blue-500 transition shadow-sm"
                                 >
                                   Download Receipt
-                                </a>
+                                </button>
                               )}
                               {(latestPrnUrl || unifiedPrnUrl) && (
-                                <a
-                                  href={unifiedPrnUrl ?? latestPrnUrl}
-                                  download
-                                  rel="noopener noreferrer"
+                                <button
+                                  onClick={() => downloadAuthFile((unifiedPrnUrl ?? latestPrnUrl)!)}
                                   className="flex w-full justify-center items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-2 text-xs font-bold text-[#ff0613] hover:bg-red-100 hover:text-[#d80000] transition shadow-sm"
                                 >
                                   Download PRN
-                                </a>
+                                </button>
                               )}
                             </>
                           )}

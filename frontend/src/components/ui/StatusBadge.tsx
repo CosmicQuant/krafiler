@@ -1,5 +1,6 @@
 import { CheckCircle2, Clock, FileArchive } from 'lucide-react';
 import { TaxStatus } from '../../types';
+import { downloadAuthFile } from '../../utils/downloadAuthFile';
 
 export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: { status: TaxStatus; generatedAt?: string; lastFiledDate?: string; receiptUrl?: string }) {
     if (status === 'na') return <span className="text-slate-500 font-medium">-</span>;
@@ -15,9 +16,13 @@ export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: 
     if (status === 'filed') return (
         <span className="inline-flex flex-col items-center">
             {receiptUrl ? (
-                <a href={receiptUrl} download rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/20 hover:shadow-[0_0_15px_rgba(99,102,241,0.2)] transition-all" title="Download Returns Receipt">
+                <button
+                    onClick={() => downloadAuthFile(receiptUrl)}
+                    className="inline-flex items-center gap-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 hover:bg-indigo-500/20 hover:shadow-[0_0_15px_rgba(99,102,241,0.2)] transition-all cursor-pointer"
+                    title="Download Returns Receipt"
+                >
                     <CheckCircle2 className="h-3 w-3" /> Filed
-                </a>
+                </button>
             ) : (
                 <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400 backdrop-blur-md shadow-[0_0_10px_rgba(99,102,241,0.1)]"><CheckCircle2 className="h-3 w-3" /> Filed</span>
             )}

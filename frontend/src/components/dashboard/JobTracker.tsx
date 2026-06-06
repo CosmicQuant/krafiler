@@ -18,6 +18,9 @@ import {
     Zap,
     Receipt,
     CreditCard,
+} from 'lucide-react';
+import { downloadAuthFile } from '../../utils/downloadAuthFile';
+import {
     ChevronDown,
     ChevronUp,
     Ban,
@@ -260,37 +263,31 @@ export default function JobTracker({
                         </div>
                         <div className="flex flex-wrap gap-2">
                             {receiptUrl && (
-                                <a
-                                    href={receiptUrl}
-                                    download
-                                    rel="noopener noreferrer"
+                                <button
+                                    onClick={() => downloadAuthFile(receiptUrl)}
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500/20"
                                 >
                                     <Receipt className="h-3.5 w-3.5" />
                                     Download Receipt
-                                </a>
+                                </button>
                             )}
                             {prnUrl && (
-                                <a
-                                    href={prnUrl}
-                                    download
-                                    rel="noopener noreferrer"
+                                <button
+                                    onClick={() => downloadAuthFile(prnUrl)}
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs font-bold text-amber-400 transition hover:bg-amber-500/20"
                                 >
                                     <CreditCard className="h-3.5 w-3.5" />
                                     Download PRN
-                                </a>
+                                </button>
                             )}
                             {generatedZipUrl && (
-                                <a
-                                    href={generatedZipUrl}
-                                    download
-                                    rel="noopener noreferrer"
+                                <button
+                                    onClick={() => downloadAuthFile(generatedZipUrl)}
                                     className="inline-flex items-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs font-bold text-blue-400 transition hover:bg-blue-500/20"
                                 >
                                     <Download className="h-3.5 w-3.5" />
                                     Download ZIP
-                                </a>
+                                </button>
                             )}
                         </div>
                     </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   FileSpreadsheet, Send, Play, AlertCircle, CheckCircle2,
-  RefreshCw, Clock,
+  RefreshCw, Clock, Download,
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
@@ -258,6 +258,48 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                       <a href={url} download className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition w-full"><FileSpreadsheet className="h-3.5 w-3.5" /> Download</a>
                       {isFinalized && activeConfig.key !== 'helb' && <button onClick={() => handleFile(activeConfig.key)} disabled={filingType === activeConfig.key} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 w-full">{filingType === activeConfig.key ? <Clock className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} File / Send</button>}
                     </>
+                  );
+                })()}
+                {/* Receipt download link after filing is completed */}
+                {(() => {
+                  const receiptUrl = activeConfig.key === 'paye' ? client.payeReceiptUrl
+                    : activeConfig.key === 'nssf' ? client.nssfReceiptUrl
+                    : activeConfig.key === 'sha' ? client.shaReceiptUrl
+                    : activeConfig.key === 'tot' ? client.totReceiptUrl
+                    : activeConfig.key === 'mri' ? client.mriReceiptUrl
+                    : activeConfig.key === 'vat' ? client.vatReceiptUrl
+                    : null;
+                  const isFiled = activeConfig.key === 'paye' ? client.paye === 'filed'
+                    : activeConfig.key === 'nssf' ? client.nssf === 'filed'
+                    : activeConfig.key === 'sha' ? client.sha === 'filed'
+                    : activeConfig.key === 'tot' ? client.tot === 'filed'
+                    : activeConfig.key === 'mri' ? client.mri === 'filed'
+                    : activeConfig.key === 'vat' ? client.vat === 'filed'
+                    : false;
+                  if (!isFiled || !receiptUrl) return null;
+                  return (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await apiFetch(receiptUrl);
+                          if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+                          const blob = await res.blob();
+                          const objectUrl = window.URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = objectUrl;
+                          a.download = receiptUrl.split('/').pop() || 'receipt.pdf';
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          window.URL.revokeObjectURL(objectUrl);
+                        } catch (e: any) {
+                          alert('Failed to download receipt: ' + e.message);
+                        }
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition w-full mt-1"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Download Receipt
+                    </button>
                   );
                 })()}
               </div>

@@ -605,8 +605,6 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             return;
         }
 
-        const localNssfPath = await resolveFileFromUrl(nssfFileUrl);
-
         // ── Resolve NSSF credentials ──────────────────────────────────
         // Primary source: client record in Firestore. Fallback: legacy Master CSV parsing.
         let nssfUsername = '';
@@ -668,7 +666,7 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             periodTo: new Date().toISOString(),
             taxObligationType: 'nssf',
             ownsRentalProperty: false,
-            nssfFileUrl: localNssfPath,
+            nssfFileUrl: nssfFileUrl,
             nssfPeriod: effectivePeriod,
         } as any;
 

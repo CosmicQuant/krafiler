@@ -9,7 +9,33 @@ async function resolveNssfFile(filePath: string): Promise<string> {
         return filePath;
     }
 
-    // If it's a URL (signed GCS URL or local path starting with /clients/)
+    let ext = '.xlsx';
+    try {
+        ext = path.extname(new URL(filePath).pathname) || '.xlsx';
+    } catch {
+        ext = path.extname(filePath.split('?')[0]) || '.xlsx';
+    }
+    const tmpPath = path.join(tmpdir(), `nssf-upload-${Date.now()}${ext}`);
+
+    // If it's a GCS signed URL, use the SDK directly (more reliable than fetch)
+    if (filePath.includes('storage.googleapis.com')) {
+        try {
+            const url = new URL(filePath);
+            const parts = url.pathname.split('/').filter(Boolean);
+            parts.shift(); // remove bucket name
+            const gcsPath = parts.join('/');
+            if (!gcsPath) {
+                throw new Error('Could not parse GCS path from URL');
+            }
+            const { downloadToTemp } = await import('../lib/cloudStorage');
+            return await downloadToTemp(gcsPath, tmpdir());
+        } catch (e: any) {
+            console.error('[resolveNssfFile] GCS download failed:', e.message, 'URL:', filePath.substring(0, 200));
+            throw new Error(`Failed to download from GCS: ${e.message}`);
+        }
+    }
+
+    // Fallback: fetch via HTTP
     const url = filePath.startsWith('http') ? filePath : `http://localhost:3000${filePath.startsWith('/') ? '' : '/'}${filePath}`;
     const response = await fetch(url);
     if (!response.ok) {
@@ -17,15 +43,14 @@ async function resolveNssfFile(filePath: string): Promise<string> {
     }
 
     const buffer = Buffer.from(await response.arrayBuffer());
-    const ext = path.extname(filePath.split('?')[0]) || '.xlsx';
-    const tmpPath = path.join(tmpdir(), `nssf-upload-${Date.now()}${ext}`);
     await fs.writeFile(tmpPath, buffer);
     return tmpPath;
 }
 
 export async function fileNssfReturn(job: any, username: string, password: string, filePath: string, submissionPeriod: string) {
     const resolvedFilePath = await resolveNssfFile(filePath);
-  const browser = await chromium.launch({ headless: false }); // Set to false to see the actions
+  const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
+  const browser = await chromium.launch({ headless: isHeadless });
   const context = await browser.newContext();
   const page = await context.newPage();
 

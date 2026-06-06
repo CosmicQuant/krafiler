@@ -116,41 +116,116 @@ export function useJobListener(
                     vatSummary: resultVatSummary,
                 };
 
-                // VAT side-effect updates (mirror old polling behaviour)
-                if (data.payload?.taxObligationType === 'vat' && setClients) {
-                    const vatUpdate: Partial<ClientObligation> = {};
+                // Side-effect updates: sync job results back to the client record
+                // so receipts / generated files remain visible after the job is cleared.
+                if (setClients) {
                     const finishedAt = data.completedAt
                         ? data.completedAt.toDate().toISOString()
                         : now;
 
-                    if (resultGeneratedZipUrl) {
-                        vatUpdate.vatZipUrl = resultGeneratedZipUrl;
-                        vatUpdate.vatZipLabel = result.generatedZipLabel;
-                        vatUpdate.vatSourcePackageUrl = resultSourcePackageUrl;
-                        vatUpdate.vatSourcePackageLabel = result.sourcePackageLabel;
-                        vatUpdate.vatPreparedAt = finishedAt;
-                        vatUpdate.vat = 'generated';
-                    }
+                    const obligationType = data.payload?.taxObligationType;
 
-                    if (resultVatSummary) {
-                        vatUpdate.vatInputVat = resultVatSummary.inputVat;
-                        vatUpdate.vatOutputVat = resultVatSummary.outputVat;
-                        vatUpdate.vatPreviousCredit = resultVatSummary.previousCredit;
-                        vatUpdate.vatPayableVat = resultVatSummary.payableVat;
-                        vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
-                    }
+                    if (obligationType === 'vat') {
+                        const vatUpdate: Partial<ClientObligation> = {};
 
-                    if (data.status === 'completed' && resultReceiptUrl) {
-                        vatUpdate.vat = 'filed';
-                        vatUpdate.vatReceiptUrl = resultReceiptUrl;
-                        vatUpdate.vatLastFiledDate = finishedAt;
-                    }
+                        if (resultGeneratedZipUrl) {
+                            vatUpdate.vatZipUrl = resultGeneratedZipUrl;
+                            vatUpdate.vatZipLabel = result.generatedZipLabel;
+                            vatUpdate.vatSourcePackageUrl = resultSourcePackageUrl;
+                            vatUpdate.vatSourcePackageLabel = result.sourcePackageLabel;
+                            vatUpdate.vatPreparedAt = finishedAt;
+                            vatUpdate.vat = 'generated';
+                        }
 
-                    if (Object.keys(vatUpdate).length > 0) {
-                        vatClientUpdates[clientId] = {
-                            ...(vatClientUpdates[clientId] ?? {}),
-                            ...vatUpdate,
-                        };
+                        if (resultVatSummary) {
+                            vatUpdate.vatInputVat = resultVatSummary.inputVat;
+                            vatUpdate.vatOutputVat = resultVatSummary.outputVat;
+                            vatUpdate.vatPreviousCredit = resultVatSummary.previousCredit;
+                            vatUpdate.vatPayableVat = resultVatSummary.payableVat;
+                            vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
+                        }
+
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            vatUpdate.vat = 'filed';
+                            vatUpdate.vatReceiptUrl = resultReceiptUrl;
+                            vatUpdate.vatLastFiledDate = finishedAt;
+                        }
+
+                        if (Object.keys(vatUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...vatUpdate,
+                            };
+                        }
+                    } else if (obligationType === 'paye') {
+                        const payeUpdate: Partial<ClientObligation> = {};
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            payeUpdate.paye = 'filed';
+                            payeUpdate.payeReceiptUrl = resultReceiptUrl;
+                            payeUpdate.payeLastFiledDate = finishedAt;
+                        }
+                        if (resultGeneratedZipUrl) {
+                            payeUpdate.payeZipUrl = resultGeneratedZipUrl;
+                            payeUpdate.payeZipLabel = result.generatedZipLabel;
+                        }
+                        if (Object.keys(payeUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...payeUpdate,
+                            };
+                        }
+                    } else if (obligationType === 'turnover_tax') {
+                        const totUpdate: Partial<ClientObligation> = {};
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            totUpdate.tot = 'filed';
+                            totUpdate.totReceiptUrl = resultReceiptUrl;
+                            totUpdate.totLastFiledDate = finishedAt;
+                        }
+                        if (Object.keys(totUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...totUpdate,
+                            };
+                        }
+                    } else if (obligationType === 'monthly_rental_income') {
+                        const mriUpdate: Partial<ClientObligation> = {};
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            mriUpdate.mri = 'filed';
+                            mriUpdate.mriReceiptUrl = resultReceiptUrl;
+                            mriUpdate.mriLastFiledDate = finishedAt;
+                        }
+                        if (Object.keys(mriUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...mriUpdate,
+                            };
+                        }
+                    } else if (obligationType === 'nssf' || data.payload?.taxObligationType === 'nssf') {
+                        const nssfUpdate: Partial<ClientObligation> = {};
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            nssfUpdate.nssf = 'filed';
+                            nssfUpdate.nssfReceiptUrl = resultReceiptUrl;
+                            nssfUpdate.nssfLastFiledDate = finishedAt;
+                        }
+                        if (Object.keys(nssfUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...nssfUpdate,
+                            };
+                        }
+                    } else if (obligationType === 'sha' || data.payload?.taxObligationType === 'sha') {
+                        const shaUpdate: Partial<ClientObligation> = {};
+                        if (data.status === 'completed' && resultReceiptUrl) {
+                            shaUpdate.sha = 'filed';
+                            shaUpdate.shaReceiptUrl = resultReceiptUrl;
+                            shaUpdate.shaLastFiledDate = finishedAt;
+                        }
+                        if (Object.keys(shaUpdate).length > 0) {
+                            vatClientUpdates[clientId] = {
+                                ...(vatClientUpdates[clientId] ?? {}),
+                                ...shaUpdate,
+                            };
+                        }
                     }
                 }
             });

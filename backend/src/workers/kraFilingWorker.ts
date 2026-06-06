@@ -1505,7 +1505,7 @@ async function extractReceiptNumber(page: any): Promise<string | null> {
 // ─── Core Job Processor ───────────────────────────────────────────────────────
 
 export async function processFilingJob(job: JobContext): Promise<{
-    receiptPath: string;
+    receiptPath?: string;
     receiptNumber: string | null;
     credentialUpdate: CredentialUpdate | null;
     prnPath?: string;
@@ -2401,7 +2401,7 @@ export async function processFilingJob(job: JobContext): Promise<{
             console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
         } catch (downloadErr: any) {
             console.warn(`[Worker][${jobId}] Receipt download failed (continuing without receipt):`, downloadErr.message);
-            await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'warn' });
+            await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'info' });
         }
 
         // -- Step 13: Generate Payment Slip (PRN) ----------------------------------
@@ -2483,10 +2483,32 @@ export async function processFilingJob(job: JobContext): Promise<{
             else if (taxObligationType === 'excise_duty') obligationCol = 'exciseDuty';
 
             if (obligationCol && payload.clientId) {
-                await adminDb.collection('clients').doc(payload.clientId).update({
+                const clientUpdate: Record<string, any> = {
                     [`lastFiled.${obligationCol}`]: new Date().toISOString(),
                     [`status.${obligationCol}`]: 'filed',
-                });
+                    [`${obligationCol}LastFiledDate`]: new Date().toISOString(),
+                };
+
+                // Persist receipt URL so the dashboard can show a download link
+                if (receiptRelativePath) {
+                    clientUpdate[`${obligationCol}ReceiptUrl`] = receiptRelativePath;
+                }
+
+                // Persist PRN URL
+                if (storedPrnPath) {
+                    clientUpdate[`${obligationCol}PrnUrl`] = storedPrnPath.replace(/\\/g, '/');
+                }
+
+                // Persist the filing period (e.g. 2026-05) for period-aware tracking
+                const periodFrom = payload.periodFrom || '';
+                if (periodFrom) {
+                    const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
+                    if (periodMatch) {
+                        clientUpdate[`${obligationCol}Period`] = `${periodMatch[1]}-${periodMatch[2]}`;
+                    }
+                }
+
+                await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
                 await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
             }
         } catch (e) {
@@ -2495,18 +2517,20 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         // ── Step 14: Notify user ──────────────────────────────────────────────────
         await setJobStep(job, 98, 'Dispatching completion notification');
-        await sendReceiptNotification({
-            userId,
-            jobId,
-            kraPin,
-            receiptPath: storedReceiptPath,
-            completedAt: new Date().toISOString(),
-        });
+        if (storedReceiptPath) {
+            await sendReceiptNotification({
+                userId,
+                jobId,
+                kraPin,
+                receiptPath: storedReceiptPath,
+                completedAt: new Date().toISOString(),
+            });
+        }
 
         await setJobStep(job, 100, 'Job completed successfully');
         console.log(`[Worker][${jobId}] Job completed. Receipt path: ${storedReceiptPath}`);
         return {
-            receiptPath: receiptRelativePath,
+            receiptPath: receiptRelativePath || undefined,
             receiptNumber,
             credentialUpdate,
             prnPath: storedPrnPath || undefined,

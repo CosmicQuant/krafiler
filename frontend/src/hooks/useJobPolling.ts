@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { apiFetch } from '../services/api';
 import { ActiveDashboardJob, ClientObligation, FilingJobState, FilingStepLog, VatPreparationSummary } from '../types';
-import { buildStoredArtifactUrl, isTerminalFilingJob } from '../utils/dashboardUtils';
+import { buildStoredArtifactUrl } from '../utils/dashboardUtils';
 
 export function useJobPolling(
   activeJobs: Record<string, ActiveDashboardJob>,
@@ -18,7 +18,6 @@ export function useJobPolling(
         if (!job.id) continue;
         // For terminal jobs, we still poll them once more to capture the final
         // result (receiptUrl, prnUrl, etc.) and then keep them in state.
-        const isTerminal = isTerminalFilingJob(job);
 
         try {
           const res = await apiFetch(`/tax/filing-status/${job.id}`);

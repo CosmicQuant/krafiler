@@ -12,10 +12,13 @@ export function useJobPolling(
     const checkJobs = async () => {
       const currentJobs = { ...activeJobs };
       let hasChanges = false;
-      const vatClientUpdates: Record<string, Partial<ClientObligation>> = {};
+      const clientUpdates: Record<string, Partial<ClientObligation>> = {};
 
       for (const [clientId, job] of Object.entries(currentJobs)) {
-        if (isTerminalFilingJob(job) || !job.id) continue;
+        if (!job.id) continue;
+        // For terminal jobs, we still poll them once more to capture the final
+        // result (receiptUrl, prnUrl, etc.) and then keep them in state.
+        const isTerminal = isTerminalFilingJob(job);
 
         try {
           const res = await apiFetch(`/tax/filing-status/${job.id}`);
@@ -68,10 +71,49 @@ export function useJobPolling(
             hasChanges = true;
           }
 
-          if (currentJobs[clientId].obligationType === 'vat') {
-            const vatUpdate: Partial<ClientObligation> = {};
-            const finishedAt = typeof data.finishedOn === 'string' ? data.finishedOn : new Date().toISOString();
+          // ── Side-effect: update client record when job completes ─────────────
+          const finishedAt = typeof data.finishedOn === 'string' ? data.finishedOn : new Date().toISOString();
+          const obligationType = currentJobs[clientId].obligationType;
 
+          if (data.state === 'completed') {
+            if (obligationType === 'vat' && resultReceiptUrl) {
+              clientUpdates[clientId] = {
+                ...(clientUpdates[clientId] ?? {}),
+                vat: 'filed',
+                vatReceiptUrl: resultReceiptUrl,
+                vatLastFiledDate: finishedAt,
+              };
+            }
+            if (obligationType === 'paye' && resultReceiptUrl) {
+              clientUpdates[clientId] = {
+                ...(clientUpdates[clientId] ?? {}),
+                paye: 'filed',
+                payeReceiptUrl: resultReceiptUrl,
+                payePrnUrl: resultPrnUrl,
+                payeLastFiledDate: finishedAt,
+              };
+            }
+            if (obligationType === 'turnover_tax' && resultReceiptUrl) {
+              clientUpdates[clientId] = {
+                ...(clientUpdates[clientId] ?? {}),
+                tot: 'filed',
+                totReceiptUrl: resultReceiptUrl,
+                totLastFiledDate: finishedAt,
+              };
+            }
+            if (obligationType === 'monthly_rental_income' && resultReceiptUrl) {
+              clientUpdates[clientId] = {
+                ...(clientUpdates[clientId] ?? {}),
+                mri: 'filed',
+                mriReceiptUrl: resultReceiptUrl,
+                mriLastFiledDate: finishedAt,
+              };
+            }
+          }
+
+          // VAT generated (prepare-only) side effects
+          if (obligationType === 'vat') {
+            const vatUpdate: Partial<ClientObligation> = {};
             if (resultGeneratedZipUrl) {
               vatUpdate.vatZipUrl = resultGeneratedZipUrl;
               vatUpdate.vatZipLabel = data.result?.generatedZipLabel;
@@ -80,7 +122,6 @@ export function useJobPolling(
               vatUpdate.vatPreparedAt = finishedAt;
               vatUpdate.vat = 'generated';
             }
-
             if (resultVatSummary) {
               vatUpdate.vatInputVat = resultVatSummary.inputVat;
               vatUpdate.vatOutputVat = resultVatSummary.outputVat;
@@ -88,18 +129,8 @@ export function useJobPolling(
               vatUpdate.vatPayableVat = resultVatSummary.payableVat;
               vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
             }
-
-            if (data.state === 'completed' && resultReceiptUrl) {
-              vatUpdate.vat = 'filed';
-              vatUpdate.vatReceiptUrl = resultReceiptUrl;
-              vatUpdate.vatLastFiledDate = finishedAt;
-            }
-
             if (Object.keys(vatUpdate).length > 0) {
-              vatClientUpdates[clientId] = {
-                ...(vatClientUpdates[clientId] ?? {}),
-                ...vatUpdate,
-              };
+              clientUpdates[clientId] = { ...(clientUpdates[clientId] ?? {}), ...vatUpdate };
             }
           }
         } catch (e) {
@@ -111,13 +142,11 @@ export function useJobPolling(
         setActiveJobs((prev) => ({ ...prev, ...currentJobs }));
       }
 
-      if (Object.keys(vatClientUpdates).length > 0) {
+      if (Object.keys(clientUpdates).length > 0) {
         setClients((current) =>
           current.map((client) => {
-            const update = vatClientUpdates[client.id];
-            if (!update) {
-              return client;
-            }
+            const update = clientUpdates[client.id];
+            if (!update) return client;
             return {
               ...client,
               ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined)),

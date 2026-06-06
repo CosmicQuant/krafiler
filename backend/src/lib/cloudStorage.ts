@@ -19,7 +19,7 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../logger';
 
-const BUCKET_NAME = process.env.CLOUD_STORAGE_BUCKET || 'krafiler-artifacts';
+const BUCKET_NAME = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
 
 // Reuse the same Storage instance that firebase-admin uses internally
 // so we don't create duplicate connections.
@@ -33,6 +33,7 @@ function getStorage(): Storage {
 }
 
 function getBucket() {
+    logger.info({ bucket: BUCKET_NAME, envBucket: process.env.CLOUD_STORAGE_BUCKET }, 'Resolving Cloud Storage bucket');
     return getStorage().bucket(BUCKET_NAME);
 }
 

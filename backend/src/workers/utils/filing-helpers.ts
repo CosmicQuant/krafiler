@@ -58,7 +58,15 @@ export async function resolveUploadArtifactPath(
         throw new Error(`Failed to fetch ${artifactPrefix.toUpperCase()} artifact: ${response.status} ${response.statusText}`);
     }
 
-    const downloadPath = path.join(TMP_DIR, `${artifactPrefix}-${jobId}${path.extname(normalizedUrl) || '.zip'}`);
+    // Extract extension from pathname only (strip query string) to avoid ENAMETOOLONG
+    let ext = '.zip';
+    try {
+        const urlObj = new URL(normalizedUrl);
+        ext = path.extname(urlObj.pathname) || '.zip';
+    } catch {
+        ext = path.extname(normalizedUrl.split('?')[0]) || '.zip';
+    }
+    const downloadPath = path.join(TMP_DIR, `${artifactPrefix}-${jobId}${ext}`);
     await fs.writeFile(downloadPath, Buffer.from(await response.arrayBuffer()));
     return downloadPath;
 }

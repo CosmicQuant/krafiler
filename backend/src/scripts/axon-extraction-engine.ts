@@ -189,7 +189,7 @@ export class AxonDataExtractionEngine {
                             });
 
                             employees.push({
-                                payrollNumber: this.stripApostrophe(record['Payroll Number'] || record['PayrollNo'] || record['EMP NO']),
+                                payrollNumber: this.stripApostrophe(record['Payroll Number (A)'] || record['Payroll Number'] || record['PayrollNo'] || record['EMP NO']),
                                 firstName: firstName,
                                 lastName: lastName,
                                 fullName: fullName,

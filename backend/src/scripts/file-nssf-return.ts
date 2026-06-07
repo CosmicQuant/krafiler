@@ -89,15 +89,20 @@ export async function fileNssfReturn(job: any, username: string, password: strin
     // Wait for the dashboard to load
     await page.waitForTimeout(3000);
 
-    // 2. Click "Create Submission Period" directly
-    // The NSSF portal lands on the dashboard after login.
-    // "Create Submission Period" is a standalone button in the "Submission Period" section.
-    await updateProgress(2, 'Opening Create Submission Period...', 40);
+    // 2. Navigate to the SF24 Management submissions page
+    // After login, NSSF lands on secureAll/index.xhtml (Help Instructions).
+    // "Create Submission Period" only exists on the submissions page.
+    await updateProgress(2, 'Navigating to SF24 Submissions...', 40);
+    console.log('Navigating to SF24 Submissions page...');
+    await page.goto('https://eservice.nssfkenya.co.ke/eSF24/faces/secureAdmin/submissions.xhtml');
+    await page.waitForTimeout(3000);
+
+    // 3. Click "Create Submission Period" at the bottom of the submissions table
+    await updateProgress(3, 'Opening Create Submission Period...', 50);
     console.log('Looking for Create Submission Period...');
 
     const createBtn = page.locator('text="Create Submission Period"').first();
     if (await createBtn.isHidden()) {
-        // If not visible, try scrolling down or navigating via the sidebar link
         console.log('Create Submission Period not visible, scrolling down...');
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await page.waitForTimeout(1000);

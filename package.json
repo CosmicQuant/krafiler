@@ -11,7 +11,12 @@
     "dev:frontend": "npm --prefix frontend run dev"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.25",
     "adm-zip": "^0.5.17",
+    "ecdsa-sig-formatter": "^1.0.11",
+    "extend": "^3.0.2",
+    "is-stream": "^3.0.0",
+    "lru-cache": "^11.5.1",
     "sqlite3": "^6.0.1"
   },
   "devDependencies": {

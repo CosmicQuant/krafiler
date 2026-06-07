@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   FileSpreadsheet, Send, Play, AlertCircle, CheckCircle2,
   RefreshCw, Clock, Download,
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../../lib/firebase';
 import type { ClientObligation } from '../../../types';
 
 type RunStatus = 'draft' | 'approved' | 'finalized' | 'filed';
@@ -92,45 +94,52 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
 
   useEffect(() => { fetchStatus(); fetchEmployees(); }, [fetchStatus, fetchEmployees]);
 
-  // Poll active filing jobs for real-time progress in the payroll pipeline
+  // Real-time Firestore listener for active filing jobs
+  const activeJobsRef = useRef(activeJobs);
+  activeJobsRef.current = activeJobs;
+
   useEffect(() => {
-    const jobIds = Object.values(activeJobs).filter(j => j.status === 'waiting' || j.status === 'active' || j.status === 'processing').map(j => j.jobId);
-    if (jobIds.length === 0) return;
+    const unsubscribes: (() => void)[] = [];
 
-    const interval = setInterval(async () => {
-      let hasUpdate = false;
-      const next: Record<string, typeof activeJobs[string]> = {};
-
-      await Promise.all(Object.entries(activeJobs).map(async ([type, job]) => {
-        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-          next[type] = job;
-          return;
-        }
-        try {
-          const res = await apiFetch(`/tax/filing-status/${job.jobId}`);
-          if (res.ok) {
-            const data = await res.json();
-            next[type] = { jobId: job.jobId, status: data.status || job.status, progress: typeof data.progress === 'number' ? data.progress : job.progress, message: data.message || job.message };
-            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
-              hasUpdate = true;
-            }
-          } else {
-            next[type] = job;
-          }
-        } catch {
-          next[type] = job;
-        }
-      }));
-
-      setActiveJobs(next);
-      if (hasUpdate) {
-        // Refresh client data so receipt buttons appear
-        onRefresh();
-        fetchStatus();
+    for (const [type, job] of Object.entries(activeJobs)) {
+      if (!job.jobId) continue;
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+        // Terminal states—no need to listen
+        continue;
       }
-    }, 3000);
 
-    return () => clearInterval(interval);
+      const unsub = onSnapshot(
+        doc(db, 'jobs', job.jobId),
+        (docSnap) => {
+          if (!docSnap.exists()) return;
+          const data = docSnap.data();
+          const newStatus = data.status as string;
+          const newProgress = typeof data.progress === 'number' ? data.progress : job.progress;
+          const newMessage = (data.message as string) || job.message;
+
+          setActiveJobs((prev) => ({
+            ...prev,
+            [type]: {
+              ...prev[type],
+              status: newStatus || prev[type].status,
+              progress: newProgress,
+              message: newMessage,
+            },
+          }));
+
+          if (newStatus === 'completed' || newStatus === 'failed' || newStatus === 'cancelled') {
+            onRefresh();
+            fetchStatus();
+          }
+        },
+        (err) => {
+          console.error(`[ComplianceTabs] Firestore listener error for job ${job.jobId}:`, err);
+        }
+      );
+      unsubscribes.push(unsub);
+    }
+
+    return () => unsubscribes.forEach((unsub) => unsub());
   }, [activeJobs, onRefresh, fetchStatus]);
 
   const handleGenerate = async () => {

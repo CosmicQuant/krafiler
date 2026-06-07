@@ -13,7 +13,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
 import fsStandard from 'fs';
-import { adminDb } from '../lib/firebaseAdmin';
+import { adminDb, adminStorage } from '../lib/firebaseAdmin';
 import { calculatePayrollFields } from '../utils/payroll-calculations';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { ClientDoc, TaxObligationType, FilingStatus } from '../types/firestoreSchema';
@@ -924,6 +924,64 @@ router.put('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
     } catch (err) {
         console.error('Error saving payroll data to Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+/**
+ * GET /:id/receipts/:obligationType
+ *
+ * Streams the most recent receipt PDF for the given obligation from Cloud Storage.
+ * Never touches local disk. Used by the frontend to download receipts.
+ */
+router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, res) => {
+    const { id, obligationType } = req.params;
+    const token = normalizeObligationToken(obligationType);
+    try {
+        // Verify client ownership
+        const clientRef = adminDb.collection('clients').doc(id);
+        const clientDoc = await clientRef.get();
+        if (!clientDoc.exists) {
+            return res.status(404).json({ error: 'Client not found' });
+        }
+        if (req.user && clientDoc.data()?.ownerUid && clientDoc.data()?.ownerUid !== req.user.uid) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+
+        // Find the most recent job for this client + obligation that has a GCS receipt
+        const jobsSnap = await adminDb.collection('jobs')
+            .where('clientId', '==', id)
+            .where('taxObligationType', '==', token)
+            .orderBy('completedAt', 'desc')
+            .limit(10)
+            .get();
+
+        let gcsPath: string | null = null;
+        for (const doc of jobsSnap.docs) {
+            const data = doc.data();
+            const p = data?.artifacts?.receiptGcsPath;
+            if (p) { gcsPath = p; break; }
+        }
+
+        if (!gcsPath) {
+            return res.status(404).json({ error: 'No receipt found in Cloud Storage for this obligation' });
+        }
+
+        const bucketName = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
+        const file = adminStorage.bucket(bucketName).file(gcsPath);
+        const [exists] = await file.exists();
+        if (!exists) {
+            return res.status(404).json({ error: 'Receipt file missing in Cloud Storage' });
+        }
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${path.basename(gcsPath)}"`);
+        file.createReadStream().on('error', (err) => {
+            console.error('GCS read stream error:', err);
+            if (!res.headersSent) res.status(500).json({ error: 'Failed to read receipt' });
+        }).pipe(res);
+    } catch (err: any) {
+        console.error('Error streaming receipt from GCS:', err);
+        res.status(500).json({ error: 'Internal server error', detail: err?.message });
     }
 });
 

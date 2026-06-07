@@ -29,7 +29,7 @@ import * as jobStore from '../services/jobStore';
 // import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
-import { uploadFile, receiptPath as gcsReceiptPath } from '../lib/cloudStorage';
+import { uploadFile, uploadBuffer, receiptPath as gcsReceiptPath } from '../lib/cloudStorage';
 import type { PrnConfig } from '../utils/kra-prn-generator';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { PayeFilingService } from './services/PayeFilingService';
@@ -1563,8 +1563,50 @@ export async function processFilingJob(job: JobContext): Promise<{
         if (!nssfFileUrl) throw new Error('Missing NSSF File URL in payload.');
         const nssfPeriod = (payload as any).nssfPeriod as string | undefined;
         const nssfService = new NssfService(job);
-        await nssfService.execute(kraPin, activePassword, nssfFileUrl, nssfPeriod);
-        return { receiptPath: '', receiptNumber: null, credentialUpdate };
+        const nssfResult = await nssfService.execute(kraPin, activePassword, nssfFileUrl, nssfPeriod);
+
+        // Upload NSSF payment order receipt to GCS — no local disk storage.
+        // fileNssfReturn writes to tmpdir() (not the receipts/ dir), so we read
+        // the buffer and upload it directly, then delete the temp file.
+        let receiptGcsPath: string | null = null;
+        if (nssfResult.receiptPath) {
+            try {
+                const buf = await fs.readFile(nssfResult.receiptPath);
+                const fileName = path.basename(nssfResult.receiptPath);
+                receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, fileName);
+                await uploadBuffer(buf, receiptGcsPath, { contentType: 'application/pdf' });
+                await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
+                // Delete the temp file — we never store receipts on local disk
+                await fs.unlink(nssfResult.receiptPath).catch(() => {});
+            } catch (uploadErr: any) {
+                console.error(`[Worker][${jobId}] Failed to upload NSSF receipt to GCS:`, uploadErr.message);
+                await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+            }
+        }
+
+        // Update client NSSF status and receipt URL
+        if (payload.clientId) {
+            // Receipt URL points at the GCS-backed streaming endpoint, NOT a local path.
+            // The endpoint streams the file from Cloud Storage and never touches local disk.
+            const nssfReceiptUrl = receiptGcsPath
+                ? `/api/clients/${payload.clientId}/receipts/nssf`
+                : '';
+            await adminDb.collection('clients').doc(payload.clientId).update({
+                'lastFiled.nssf': new Date().toISOString(),
+                'status.nssf': 'filed',
+                nssf: 'filed',
+                nssfLastFiledDate: new Date().toISOString(),
+                nssfReceiptUrl,
+            });
+            if (receiptGcsPath) {
+                await jobStore.updateJob(jobId, {
+                    'artifacts.receiptGcsPath': receiptGcsPath,
+                } as any);
+            }
+            await appendJobLog(job, `Updated client NSSF last filed tracking`, { progress: 95 });
+        }
+
+        return { receiptPath: receiptGcsPath || undefined, receiptNumber: null, credentialUpdate };
     }
 
     await fs.mkdir(TMP_DIR, { recursive: true });

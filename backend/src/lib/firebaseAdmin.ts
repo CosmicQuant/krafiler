@@ -13,6 +13,7 @@
 import { initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 
 const projectId = process.env.FIREBASE_PROJECT_ID || 'taxpulse-498006';
 
@@ -34,6 +35,16 @@ const adminApp = initializeApp({
 
 export const adminAuth = getAuth(adminApp);
 export const adminDb = getFirestore(adminApp);
+// Lazy: getStorage() requires the @google-cloud/storage tree to be fully resolved
+// (uuid, readable-stream, etc.). Some entrypoints (e.g. the NSSF test script) do
+// not need storage, so we expose it via a getter that initializes on first use.
+let _adminStorage: ReturnType<typeof getStorage> | null = null;
+export const adminStorage = new Proxy({} as ReturnType<typeof getStorage>, {
+    get(_target, prop) {
+        if (!_adminStorage) _adminStorage = getStorage(adminApp);
+        return (_adminStorage as any)[prop];
+    },
+});
 
 // Allow undefined values to be ignored during writes (safe for migrations)
 adminDb.settings({ ignoreUndefinedProperties: true });

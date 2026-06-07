@@ -16,7 +16,7 @@ export class NssfService {
             if (now.getDate() <= 9) { month = month - 1; if (month === 0) month = 12; }
             return `${String(month).padStart(2, '0')}/${year}`;
         })();
-        await fileNssfReturn(this.job, kraPin, password, fileUrl, effectivePeriod);
-        return { receiptPath: '', receiptNumber: null };
+        const result = await fileNssfReturn(this.job, kraPin, password, fileUrl, effectivePeriod);
+        return { receiptPath: result.paymentOrderPath || '', receiptNumber: null };
     }
 }

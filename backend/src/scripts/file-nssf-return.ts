@@ -87,26 +87,22 @@ export async function fileNssfReturn(job: any, username: string, password: strin
     await page.click('input[value="Login"]');
 
     // Wait for the dashboard to load
-    await page.waitForTimeout(3000); 
-
-    // 2. Click on e-SF24 Management
-    await updateProgress(2, 'Navigating to e-SF24 Management...', 40);
-    console.log('Navigating to e-SF24 Management...');
-    await page.click('text=e-SF24 Management');
     await page.waitForTimeout(3000);
 
-// 3. Click SF24 Actions to expand the menu
-      await updateProgress(3, 'Opening SF24 Actions...', 60);
-      console.log('Opening SF24 Actions...');
-      
-      // Click 'SF24 Actions' only if 'Create Submission Period' is not visible yet
-      if (await page.locator('text="Create Submission Period"').first().isHidden()) {
-          await page.click('text="SF24 Actions"');
-          await page.waitForTimeout(1500); // give the menu animation time to slide down
-      }
+    // 2. Click "Create Submission Period" directly
+    // The NSSF portal lands on the dashboard after login.
+    // "Create Submission Period" is a standalone button in the "Submission Period" section.
+    await updateProgress(2, 'Opening Create Submission Period...', 40);
+    console.log('Looking for Create Submission Period...');
 
-      console.log('Clicking Create Submission Period...');
-      await page.locator('text="Create Submission Period"').first().click({ force: true });
+    const createBtn = page.locator('text="Create Submission Period"').first();
+    if (await createBtn.isHidden()) {
+        // If not visible, try scrolling down or navigating via the sidebar link
+        console.log('Create Submission Period not visible, scrolling down...');
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.waitForTimeout(1000);
+    }
+    await createBtn.click({ force: true });
       
       // Wait for the modal/dialog showing "Submission Mode:*"
       await page.waitForSelector('text=Submission Mode:*', { state: 'visible', timeout: 15000 });

@@ -44,7 +44,7 @@ gcloud run deploy "${API_SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars "NODE_ENV=production,PORT=8080,USE_PUBSUB=true,PUBSUB_TOPIC=filing-jobs,TEMP_DIR=/tmp,PLAYWRIGHT_HEADLESS=true" \
+  --set-env-vars "NODE_ENV=production,USE_PUBSUB=true,PUBSUB_TOPIC=filing-jobs,TEMP_DIR=/tmp" \
   --memory 1Gi \
   --cpu 1 \
   --concurrency 80 \
@@ -64,7 +64,7 @@ gcloud run deploy "${WORKER_SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --no-allow-unauthenticated \
-  --set-env-vars "NODE_ENV=production,PORT=8080,TEMP_DIR=/tmp,PLAYWRIGHT_HEADLESS=true" \
+  --set-env-vars "NODE_ENV=production,PORT=8080,TEMP_DIR=/tmp" \
   --memory 4Gi \
   --cpu 2 \
   --concurrency 1 \

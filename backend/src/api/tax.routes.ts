@@ -668,16 +668,19 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             ownsRentalProperty: false,
             nssfFileUrl: nssfFileUrl,
             nssfPeriod: effectivePeriod,
+            clientId: clientId || '',
         } as any;
+
+        const userId = (req as Request & { user?: { uid: string } }).user?.uid ?? 'anonymous';
 
         const filingJob: FilingJob = {
             jobId,
-            userId: 'dev-user',
+            userId,
             payload,
             createdAt: new Date().toISOString(),
         };
 
-        const { messageId } = await queueNssfJob(filingJob, 'dev-user');
+        const { messageId } = await queueNssfJob(filingJob, userId);
 
         res.json({
             success: true,

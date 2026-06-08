@@ -11,14 +11,19 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@jridgewell/gen-mapping": "^0.3.13",
     "@tanstack/react-query": "^5.100.9",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.2",
     "clsx": "^2.1.1",
     "firebase": "^12.14.0",
     "framer-motion": "^12.38.0",
+    "glob-parent": "^6.0.2",
     "krafiler": "file:..",
     "lucide-react": "^0.511.0",
+    "motion-dom": "^12.40.0",
+    "motion-utils": "^12.39.0",
+    "picomatch": "^4.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.75.0",
@@ -38,6 +43,7 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
+    "util-deprecate": "^1.0.2",
     "vite": "^5.4.21"
   }
 }

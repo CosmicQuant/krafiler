@@ -694,6 +694,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
             console.log('Waiting for post-save dialog (up to 30s)...');
             let okClicked = false;
             let receiptPage: any = null;
+            let pdfResponsePromise: any = null;
             for (let i = 0; i < 30; i++) {
                 await delay(1000);
                 const dialogs = await page.locator('.ui-dialog:visible').all();
@@ -703,8 +704,21 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                         console.log('Dialog:', txt.substring(0, 120).replace(/\s+/g, ' '));
                         const ok = dlg.locator('button').filter({ hasText: /^OK$/i }).first();
                         if (await ok.isVisible()) {
-                            // Set up listener RIGHT BEFORE clicking OK
+                            // Set up listeners BEFORE clicking OK:
+                            // 1) wait for the new page to open
+                            // 2) wait for the PDF response from ANY page (the new page may
+                            //    immediately request a PDF after opening)
                             const newPagePromise = context.waitForEvent('page', { timeout: 30000 });
+                            pdfResponsePromise = context.waitForEvent('response', {
+                                predicate: (response: any) => {
+                                    const ct = response.headers()['content-type'] || '';
+                                    const url = response.url();
+                                    const isPdf = ct.includes('application/pdf') && url.includes('nssfkenya.co.ke');
+                                    const isPdfUrl = url.includes('.pdf') && url.includes('nssfkenya.co.ke');
+                                    return isPdf || isPdfUrl;
+                                },
+                                timeout: 30000,
+                            });
                             await ok.click();
                             console.log('Clicked OK');
                             okClicked = true;
@@ -714,7 +728,8 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                             try {
                                 receiptPage = await newPagePromise;
                                 console.log('New receipt window opened');
-                                console.log('  Receipt URL:', receiptPage.url());
+                                const receiptUrl = receiptPage.url();
+                                console.log('  Receipt URL:', receiptUrl);
                                 console.log('  Receipt title:', await receiptPage.title().catch(() => 'n/a'));
                             } catch (e: any) {
                                 console.log('No new window opened; will capture current page. Err:', e.message);
@@ -750,26 +765,26 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     let downloadedContentType = '';
                     let downloadedContentDisp = '';
 
-                    // Try to capture the PDF response from the new window
-                    if (receiptPage) {
+                    // Try to capture the PDF response from the new window.
+                    // We set up the listener BEFORE clicking OK so it catches the
+                    // initial PDF response that populates the new window.
+                    if (receiptPage && pdfResponsePromise) {
                         try {
                             console.log('  Waiting for PDF response from new window...');
-                            const pdfResponse = await receiptPage.waitForResponse(
-                                (response: any) => {
-                                    const ct = response.headers()['content-type'] || '';
-                                    return ct.includes('application/pdf') || response.url().includes('.pdf');
-                                },
-                                { timeout: 15000 }
-                            );
+                            const pdfResponse = await pdfResponsePromise;
                             const buf = await pdfResponse.body();
                             const headers = pdfResponse.headers();
                             downloadedContentType = headers['content-type'] || '';
                             downloadedContentDisp = headers['content-disposition'] || '';
                             console.log(`  PDF response: status=${pdfResponse.status()} content-type="${downloadedContentType}" size=${buf.length}`);
-                            if (buf.length > 0) {
+                            // A real PDF must be > 1KB and start with %PDF magic bytes
+                            const isValidPdf = buf.length > 1000 && buf.toString('ascii', 0, 4) === '%PDF';
+                            if (isValidPdf) {
                                 downloadedBuf = buf;
                                 downloaded = true;
                                 console.log('  -> Got actual PDF bytes from new window response');
+                            } else {
+                                console.log(`  -> Response too small (${buf.length} bytes) or missing %PDF header — treating as invalid PDF, will fall back to browser fetch`);
                             }
                         } catch (pdfWaitErr: any) {
                             console.log('  No PDF response detected:', pdfWaitErr.message);
@@ -785,7 +800,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                             await receiptPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
                             await delay(2000); // give the page time to render receipt data
 
-                            const fetchResult = await receiptPage.evaluate(async (url) => {
+                            const fetchResult = await receiptPage.evaluate(async (url: string) => {
                                 try {
                                     const r = await fetch(url, { credentials: 'include', redirect: 'follow' });
                                     const ab = await r.arrayBuffer();
@@ -858,7 +873,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                             if (blobUrl) {
                                 console.log(`  Found blob URL: ${blobUrl.substring(0, 100)}...`);
                                 try {
-                                    const pdfData = await receiptPage.evaluate(async (url) => {
+                                    const pdfData = await receiptPage.evaluate(async (url: string) => {
                                         const response = await fetch(url);
                                         const buffer = await response.arrayBuffer();
                                         return Array.from(new Uint8Array(buffer));
@@ -885,7 +900,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                 if (embedSrc) {
                                     console.log(`  Found embed src: ${embedSrc.substring(0, 100)}...`);
                                     try {
-                                        const pdfData = await receiptPage.evaluate(async (url) => {
+                                        const pdfData = await receiptPage.evaluate(async (url: string) => {
                                             const response = await fetch(url);
                                             const buffer = await response.arrayBuffer();
                                             return Array.from(new Uint8Array(buffer));
@@ -914,7 +929,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                 if (shadowSrc) {
                                     console.log(`  Found shadow DOM src: ${shadowSrc.substring(0, 100)}...`);
                                     try {
-                                        const pdfData = await receiptPage.evaluate(async (url) => {
+                                        const pdfData = await receiptPage.evaluate(async (url: string) => {
                                             const response = await fetch(url);
                                             const buffer = await response.arrayBuffer();
                                             return Array.from(new Uint8Array(buffer));

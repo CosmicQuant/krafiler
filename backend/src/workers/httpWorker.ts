@@ -30,9 +30,26 @@ router.post('/process-job', async (req: Request, res: Response): Promise<void> =
             const decoded = Buffer.from(req.body.message.data, 'base64').toString('utf8');
             const parsed = JSON.parse(decoded);
             jobId = parsed.jobId;
-        } catch {
-            res.status(400).json({ error: 'Invalid Pub/Sub message format' });
-            return;
+        } catch (err: any) {
+            // Some legacy messages have backslashes instead of quotes in the JSON
+            try {
+                const decoded = Buffer.from(req.body.message.data, 'base64').toString('utf8');
+                const fixed = decoded.replace(/\\/g, '"');
+                const parsed = JSON.parse(fixed);
+                jobId = parsed.jobId;
+                logger.info({ rawData: req.body.message?.data, fixed, jobId }, 'Fixed corrupted Pub/Sub message format');
+            } catch (fixErr: any) {
+                logger.error({
+                    body: req.body,
+                    rawData: req.body.message?.data,
+                    decodeError: err?.message || String(err),
+                    fixError: (fixErr as any)?.message || String(fixErr),
+                }, 'Invalid Pub/Sub message format — acking to stop retry loop');
+                // Return 200 so Pub/Sub acks the message and stops retrying.
+                // A permanently malformed message will never process; we log it.
+                res.json({ success: false, error: 'Invalid Pub/Sub message format', acked: true });
+                return;
+            }
         }
     } else {
         // Direct JSON (legacy Cloud Tasks or local dev)
@@ -40,7 +57,9 @@ router.post('/process-job', async (req: Request, res: Response): Promise<void> =
     }
 
     if (!jobId || typeof jobId !== 'string') {
-        res.status(400).json({ error: 'jobId is required' });
+        logger.error({ body: req.body, jobId, jobIdType: typeof jobId }, 'jobId is required — acking to stop retry loop');
+        // Return 200 so Pub/Sub acks the message and stops retrying.
+        res.json({ success: false, error: 'jobId is required', acked: true });
         return;
     }
 
@@ -50,7 +69,9 @@ router.post('/process-job', async (req: Request, res: Response): Promise<void> =
     const doc = await jobStore.getJob(jobId);
     if (!doc) {
         logger.error({ jobId }, 'Job not found in Firestore');
-        res.status(404).json({ error: 'Job not found' });
+        // Return 200 so Pub/Sub acks the message. If the job doc is missing,
+        // there's nothing to process and retrying won't help.
+        res.json({ success: false, error: 'Job not found', acked: true });
         return;
     }
 

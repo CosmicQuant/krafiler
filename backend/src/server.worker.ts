@@ -11,9 +11,24 @@
 
 import dotenv from 'dotenv';
 import path from 'path';
+import { spawn } from 'child_process';
 
 // Load env vars before any module that reads process.env at import time
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+// Start Xvfb for headful browser support in headless containers
+const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
+if (!isHeadless) {
+    const xvfb = spawn('Xvfb', [':99', '-screen', '0', '1920x1080x24', '-ac']);
+    xvfb.on('error', (err) => {
+        console.error('[Xvfb] Failed to start:', err.message);
+    });
+    xvfb.on('exit', (code) => {
+        console.log(`[Xvfb] exited with code ${code}`);
+    });
+    process.env.DISPLAY = ':99';
+    console.log('[Xvfb] Started on DISPLAY :99 for headful browser support');
+}
 
 import 'express-async-errors';
 import express from 'express';

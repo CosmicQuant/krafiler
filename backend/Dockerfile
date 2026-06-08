@@ -30,12 +30,15 @@ RUN npx playwright install chromium
 # Create directories for receipts and temp files
 RUN mkdir -p /data/receipts /tmp/kra-receipts
 
+# Install xvfb for headful browser support in headless containers
+RUN apt-get update && apt-get install -y xvfb
+
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV RECEIPTS_DIR=/data/receipts
 ENV TEMP_DIR=/tmp
 ENV KRA_BROWSER_PROFILE_DIR=/tmp/browser-profile
-ENV PLAYWRIGHT_HEADLESS=true
+ENV PLAYWRIGHT_HEADLESS=false
 
 # Default command
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/server.worker.js"]

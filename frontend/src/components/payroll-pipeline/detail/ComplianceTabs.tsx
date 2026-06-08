@@ -7,6 +7,7 @@ import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
+import { useState, useEffect } from 'react';
 import type { ClientObligation } from '../../../types';
 
 type RunStatus = 'draft' | 'approved' | 'finalized' | 'filed';
@@ -93,6 +94,26 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
   }, [client.id]);
 
   useEffect(() => { fetchStatus(); fetchEmployees(); }, [fetchStatus, fetchEmployees]);
+
+  // Real-time Firestore listener for client document updates (e.g., nssf status, receiptUrl)
+  const [liveClient, setLiveClient] = useState<ClientObligation>(client);
+  useEffect(() => {
+    setLiveClient(client);
+  }, [client]);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'clients', client.id),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setLiveClient({ ...client, ...docSnap.data() } as ClientObligation);
+        }
+      },
+      (err) => {
+        console.error('[ComplianceTabs] Firestore listener error for client:', err);
+      }
+    );
+    return () => unsub();
+  }, [client.id]);
 
   // Real-time Firestore listener for active filing jobs
   const activeJobsRef = useRef(activeJobs);
@@ -330,19 +351,19 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                 })()}
                 {/* Receipt download link after filing is completed */}
                 {(() => {
-                  const receiptUrl = activeConfig.key === 'paye' ? client.payeReceiptUrl
-                    : activeConfig.key === 'nssf' ? client.nssfReceiptUrl
-                    : activeConfig.key === 'sha' ? client.shaReceiptUrl
-                    : activeConfig.key === 'tot' ? client.totReceiptUrl
-                    : activeConfig.key === 'mri' ? client.mriReceiptUrl
-                    : activeConfig.key === 'vat' ? client.vatReceiptUrl
+                  const receiptUrl = activeConfig.key === 'paye' ? liveClient.payeReceiptUrl
+                    : activeConfig.key === 'nssf' ? liveClient.nssfReceiptUrl
+                    : activeConfig.key === 'sha' ? liveClient.shaReceiptUrl
+                    : activeConfig.key === 'tot' ? liveClient.totReceiptUrl
+                    : activeConfig.key === 'mri' ? liveClient.mriReceiptUrl
+                    : activeConfig.key === 'vat' ? liveClient.vatReceiptUrl
                     : null;
-                  const isFiled = activeConfig.key === 'paye' ? client.paye === 'filed'
-                    : activeConfig.key === 'nssf' ? client.nssf === 'filed'
-                    : activeConfig.key === 'sha' ? client.sha === 'filed'
-                    : activeConfig.key === 'tot' ? client.tot === 'filed'
-                    : activeConfig.key === 'mri' ? client.mri === 'filed'
-                    : activeConfig.key === 'vat' ? client.vat === 'filed'
+                  const isFiled = activeConfig.key === 'paye' ? liveClient.paye === 'filed'
+                    : activeConfig.key === 'nssf' ? liveClient.nssf === 'filed'
+                    : activeConfig.key === 'sha' ? liveClient.sha === 'filed'
+                    : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
+                    : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
+                    : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
                     : false;
                   if (!isFiled || !receiptUrl) return null;
                   return (

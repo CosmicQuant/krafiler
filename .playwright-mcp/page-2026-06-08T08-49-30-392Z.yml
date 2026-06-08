@@ -1,0 +1,467 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e11]: zani.ai
+      - generic [ref=e12]:
+        - link "Features" [ref=e13] [cursor=pointer]:
+          - /url: "#features"
+        - link "How it Works" [ref=e14] [cursor=pointer]:
+          - /url: "#workflow"
+        - link "Demo" [ref=e15] [cursor=pointer]:
+          - /url: "#demo"
+        - link "Pricing" [ref=e16] [cursor=pointer]:
+          - /url: "#pricing"
+        - link "Login" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+      - link "Get Started" [ref=e18] [cursor=pointer]:
+        - /url: /dashboard
+  - main [ref=e19]:
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - img [ref=e23]
+          - text: Built exclusively for Kenyan Accounting and Audit Firms
+        - heading "Automate Statutory Filings" [level=1] [ref=e26]
+        - paragraph [ref=e27]: AI-powered automation for KRA, NSSF, SHA, Tourism Fund & More. zani generates ZIP files and Excel/CSV files ready to upload and submit, and can also file everything automatically. No Excel data entry. No portal hopping. Just results.
+        - generic [ref=e28]:
+          - link "Start Automating Now" [ref=e29] [cursor=pointer]:
+            - /url: /dashboard
+            - text: Start Automating Now
+            - img [ref=e30]
+          - link "Run Your First Filing" [ref=e32] [cursor=pointer]:
+            - /url: "#demo"
+            - img [ref=e33]
+            - text: Run Your First Filing
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - img [ref=e38]
+            - generic [ref=e42]:
+              - generic [ref=e43]: 12,000+
+              - generic [ref=e44]: Returns Filed
+          - generic [ref=e45]:
+            - img [ref=e47]
+            - generic [ref=e51]:
+              - generic [ref=e52]: 150+
+              - generic [ref=e53]: Kenyan Firms
+          - generic [ref=e54]:
+            - img [ref=e56]
+            - generic [ref=e59]:
+              - generic [ref=e60]: 320+
+              - generic [ref=e61]: Hours Saved/mo
+      - generic [ref=e63]:
+        - generic [ref=e73]:
+          - generic [ref=e74]:
+            - generic [ref=e75]: Clients
+            - generic [ref=e76]: "28"
+          - generic [ref=e77]:
+            - generic [ref=e78]: Due This Month
+            - generic [ref=e79]: "14"
+          - generic [ref=e80]:
+            - generic [ref=e81]: Filed
+            - generic [ref=e82]: "8"
+          - generic [ref=e83]:
+            - generic [ref=e84]: Receipts
+            - generic [ref=e85]: "156"
+        - generic [ref=e114]:
+          - img [ref=e116]
+          - generic [ref=e119]:
+            - generic [ref=e120]: PAYE Filed
+            - generic [ref=e121]: "Client #042"
+        - generic [ref=e123]:
+          - img [ref=e125]
+          - generic [ref=e128]:
+            - generic [ref=e129]: Receipt Downloaded
+            - generic [ref=e130]: VAT-2026-05
+    - generic [ref=e134]:
+      - generic [ref=e135]:
+        - img "KRA" [ref=e137]
+        - generic [ref=e138]:
+          - generic [ref=e139]: KRA
+          - generic [ref=e140]: Kenya Revenue Authority
+      - generic [ref=e141]:
+        - img "NSSF" [ref=e143]
+        - generic [ref=e144]:
+          - generic [ref=e145]: NSSF
+          - generic [ref=e146]: National Social Security Fund
+      - generic [ref=e147]:
+        - img "SHA" [ref=e149]
+        - generic [ref=e150]:
+          - generic [ref=e151]: SHA
+          - generic [ref=e152]: Social Health Authority
+      - generic [ref=e153]:
+        - generic [ref=e154]:
+          - img "eLevy"
+        - generic [ref=e155]:
+          - generic [ref=e156]: eLevy
+          - generic [ref=e157]: Tourism Fund E-Levy
+      - generic [ref=e158]:
+        - img "eTIMS" [ref=e160]
+        - generic [ref=e161]:
+          - generic [ref=e162]: eTIMS
+          - generic [ref=e163]: Electronic Tax Invoice Management
+      - generic [ref=e164]:
+        - img "NITA" [ref=e166]
+        - generic [ref=e167]:
+          - generic [ref=e168]: NITA
+          - generic [ref=e169]: National Industrial Training Authority
+      - generic [ref=e170]:
+        - img "KRA" [ref=e172]
+        - generic [ref=e173]:
+          - generic [ref=e174]: KRA
+          - generic [ref=e175]: Kenya Revenue Authority
+      - generic [ref=e176]:
+        - img "NSSF" [ref=e178]
+        - generic [ref=e179]:
+          - generic [ref=e180]: NSSF
+          - generic [ref=e181]: National Social Security Fund
+      - generic [ref=e182]:
+        - img "SHA" [ref=e184]
+        - generic [ref=e185]:
+          - generic [ref=e186]: SHA
+          - generic [ref=e187]: Social Health Authority
+      - generic [ref=e188]:
+        - generic [ref=e189]:
+          - img "eLevy"
+        - generic [ref=e190]:
+          - generic [ref=e191]: eLevy
+          - generic [ref=e192]: Tourism Fund E-Levy
+      - generic [ref=e193]:
+        - img "eTIMS" [ref=e195]
+        - generic [ref=e196]:
+          - generic [ref=e197]: eTIMS
+          - generic [ref=e198]: Electronic Tax Invoice Management
+      - generic [ref=e199]:
+        - img "NITA" [ref=e201]
+        - generic [ref=e202]:
+          - generic [ref=e203]: NITA
+          - generic [ref=e204]: National Industrial Training Authority
+    - generic [ref=e205]:
+      - generic [ref=e207]:
+        - heading "Everything you need to run compliance at scale" [level=2] [ref=e208]
+        - paragraph [ref=e209]: One platform. Every authority. Zero spreadsheet chaos.
+      - generic [ref=e210]:
+        - generic [ref=e212]:
+          - img [ref=e214]
+          - heading "One Master Payroll, All Authorities" [level=3] [ref=e216]
+          - paragraph [ref=e217]: Upload a single payroll file. zani auto-generates KRA PAYE, NSSF, SHA & HELB packs — formatted and ready to file. It can also automatically file for you.
+        - generic [ref=e219]:
+          - img [ref=e221]
+          - heading "Automatic Filing" [level=3] [ref=e224]
+          - paragraph [ref=e225]: File VAT, TOT, Nil returns, DST and MRI automatically or generate ZIP packs if you want to upload yourself across all your clients. No manual Excel & portal work. No missed deadlines.
+        - generic [ref=e227]:
+          - img [ref=e229]
+          - heading "Real-Time Compliance Tracker" [level=3] [ref=e231]
+          - paragraph [ref=e232]: Track every client's filing status across PAYE, VAT, TOT, MRI, NSSF, and SHA in a single real-time dashboard.
+        - generic [ref=e234]:
+          - img [ref=e236]
+          - heading "Bank-Grade Security" [level=3] [ref=e239]
+          - paragraph [ref=e240]: Client credentials are handled securely and never logged or stored outside the filing workflow.
+        - generic [ref=e242]:
+          - img [ref=e244]
+          - heading "eTIMS VAT Reconciliation" [level=3] [ref=e247]
+          - paragraph [ref=e248]: Sync your eTIMS invoices with VAT returns automatically. Reconcile sales data, detect discrepancies, and ensure every return matches your electronic tax invoices.
+        - generic [ref=e250]:
+          - img [ref=e252]
+          - heading "ZIP, CSV & Excel Packs" [level=3] [ref=e255]
+          - paragraph [ref=e256]: Generate authority-ready ZIP files for KRA uploads, CSV schedules for NSSF, and Excel workbooks for SHA. Every format pre-validated before download.
+    - generic [ref=e257]:
+      - generic [ref=e259]:
+        - heading "From CSV to filed return in 4 steps" [level=2] [ref=e260]
+        - paragraph [ref=e261]: Compliance work that used to take days now takes minutes.
+      - generic [ref=e262]:
+        - generic [ref=e263]:
+          - generic [ref=e265]: "01"
+          - heading "Upload Your Data" [level=3] [ref=e266]
+          - paragraph [ref=e267]: Drop your unified payroll spreadsheet (Excel or CSV). zani reads employee details, PINs, and statutory lines automatically.
+        - generic [ref=e268]:
+          - generic [ref=e270]: "02"
+          - heading "Generate Filing Packs" [level=3] [ref=e271]
+          - paragraph [ref=e272]: PAYE ZIP, NSSF workbook, SHA schedule, and HELB remittance are auto-formatted to each authority's exact requirements.
+        - generic [ref=e273]:
+          - generic [ref=e275]: "03"
+          - heading "File Automatically" [level=3] [ref=e276]
+          - paragraph [ref=e277]: Returns are filed across all authorities automatically, or download the packs to upload manually. You just review and confirm.
+        - generic [ref=e278]:
+          - generic [ref=e279]: "04"
+          - heading "Track & Store Receipts" [level=3] [ref=e280]
+          - paragraph [ref=e281]: Every receipt is saved to the client profile. View filing history, track deadlines, and stay audit-ready.
+    - generic [ref=e282]:
+      - generic [ref=e284]:
+        - heading "Try the tools right now" [level=2] [ref=e285]
+        - paragraph [ref=e286]: No signup required. Generate a real payroll pack or model TOT tax in seconds. Pay only for what you use.
+      - generic [ref=e287]:
+        - generic [ref=e288]:
+          - generic [ref=e289]:
+            - generic [ref=e290]:
+              - img [ref=e292]
+              - generic [ref=e294]:
+                - heading "ToT Return Generator" [level=3] [ref=e295]
+                - paragraph [ref=e296]: Generate a Turnover Tax ZIP for KRA upload
+            - generic [ref=e297]: KES 200
+          - generic [ref=e298]:
+            - generic [ref=e299]:
+              - generic [ref=e300]: KRA PIN
+              - generic [ref=e301]:
+                - img [ref=e302]
+                - textbox "P052000000X" [ref=e304]
+            - generic [ref=e305]:
+              - generic [ref=e306]:
+                - generic [ref=e307]: Month
+                - combobox [ref=e308]:
+                  - option "Select month" [selected]
+                  - option "January"
+                  - option "February"
+                  - option "March"
+                  - option "April"
+                  - option "May"
+                  - option "June"
+                  - option "July"
+                  - option "August"
+                  - option "September"
+                  - option "October"
+                  - option "November"
+                  - option "December"
+              - generic [ref=e309]:
+                - generic [ref=e310]: Year
+                - spinbutton [ref=e311]: "2026"
+            - generic [ref=e312]:
+              - generic [ref=e313]: Monthly Turnover (KES)
+              - generic [ref=e314]:
+                - generic [ref=e315]: KES
+                - spinbutton [ref=e316]
+            - button "Generate ToT ZIP" [disabled] [ref=e317]:
+              - img [ref=e318]
+              - text: Generate ToT ZIP
+        - generic [ref=e322]:
+          - generic [ref=e323]:
+            - generic [ref=e324]:
+              - img [ref=e326]
+              - generic [ref=e329]:
+                - heading "Payroll Pack Generator" [level=3] [ref=e330]
+                - paragraph [ref=e331]: Upload once. Get 4 authority files.
+            - generic [ref=e332]: KES 500
+          - generic [ref=e333] [cursor=pointer]:
+            - generic [ref=e334]:
+              - img [ref=e335]
+              - img [ref=e338]
+            - generic [ref=e342]: Click to upload payroll file
+            - generic [ref=e343]: Accepts Excel (.xlsx, .xls) or CSV with employee identifiers
+          - generic [ref=e344]:
+            - button "paye" [ref=e345] [cursor=pointer]
+            - button "nssf" [ref=e346] [cursor=pointer]
+            - button "sha" [ref=e347] [cursor=pointer]
+            - generic [ref=e348]: helb
+          - button "Generate Payroll Pack" [disabled] [ref=e349]:
+            - img [ref=e350]
+            - text: Generate Payroll Pack
+          - generic [ref=e353]:
+            - generic [ref=e354]:
+              - img [ref=e355]
+              - generic [ref=e359]:
+                - generic [ref=e360]: PAYE CSV+ZIP
+                - generic [ref=e361]: KRA-ready upload
+            - generic [ref=e362]:
+              - img [ref=e363]
+              - generic [ref=e366]:
+                - generic [ref=e367]: NSSF Workbook
+                - generic [ref=e368]: Contribution schedule
+            - generic [ref=e369]:
+              - img [ref=e370]
+              - generic [ref=e374]:
+                - generic [ref=e375]: SHA Schedule
+                - generic [ref=e376]: Health authority format
+            - generic [ref=e377]:
+              - img [ref=e378]
+              - generic [ref=e381]:
+                - generic [ref=e382]: HELB Remittance
+                - generic [ref=e383]: Coming soon
+    - generic [ref=e384]:
+      - generic [ref=e386]:
+        - heading "Trusted by Kenyan accounting firms" [level=2] [ref=e387]
+        - paragraph [ref=e388]: See what practicing accountants say about zani.
+      - generic [ref=e389]:
+        - generic [ref=e391]:
+          - generic [ref=e392]:
+            - img [ref=e393]
+            - img [ref=e395]
+            - img [ref=e397]
+            - img [ref=e399]
+            - img [ref=e401]
+          - paragraph [ref=e403]: "\"We used to spend 3 days every month on KRA filings. With zani, it is done in 2 hours. The automation is a game changer for our practice.\""
+          - generic [ref=e404]:
+            - generic [ref=e405]: JM
+            - generic [ref=e406]:
+              - generic [ref=e407]: James Mwangi
+              - generic [ref=e408]: CPA, Managing Partner, Mwangi & Associates
+        - generic [ref=e410]:
+          - generic [ref=e411]:
+            - img [ref=e412]
+            - img [ref=e414]
+            - img [ref=e416]
+            - img [ref=e418]
+            - img [ref=e420]
+          - paragraph [ref=e422]: "\"The tax preparation workflow alone saves us 10 hours per client. Being able to download KRA auto-populated data and review before filing reduces errors to zero.\""
+          - generic [ref=e423]:
+            - generic [ref=e424]: SO
+            - generic [ref=e425]:
+              - generic [ref=e426]: Sarah Ochieng
+              - generic [ref=e427]: Senior Auditor, Nairobi Audit Partners
+        - generic [ref=e429]:
+          - generic [ref=e430]:
+            - img [ref=e431]
+            - img [ref=e433]
+            - img [ref=e435]
+            - img [ref=e437]
+            - img [ref=e439]
+          - paragraph [ref=e441]: "\"I manage 45 clients. Before zani, I needed two junior staff just for portal work. Now I handle everything myself from one dashboard.\""
+          - generic [ref=e442]:
+            - generic [ref=e443]: PK
+            - generic [ref=e444]:
+              - generic [ref=e445]: Peter Kimani
+              - generic [ref=e446]: Tax Consultant, PK Tax Advisory
+    - generic [ref=e447]:
+      - generic [ref=e448]:
+        - heading "Simple, transparent pricing" [level=2] [ref=e449]
+        - paragraph [ref=e450]: Whether you are filing for yourself or managing hundreds of clients, we have a plan for you.
+        - generic [ref=e451]:
+          - generic [ref=e452]:
+            - button "Accountants & Auditors" [ref=e453] [cursor=pointer]
+            - button "Individuals & Companies" [ref=e454] [cursor=pointer]
+          - generic [ref=e455]:
+            - generic [ref=e456]: Monthly
+            - switch [ref=e457] [cursor=pointer]
+            - generic [ref=e459]:
+              - text: Annual
+              - generic [ref=e460]: Save 20%
+      - generic [ref=e461]:
+        - generic [ref=e462]:
+          - generic [ref=e463]:
+            - heading "Starter" [level=3] [ref=e464]
+            - paragraph [ref=e465]: For independent accountants starting their practice.
+          - generic [ref=e466]:
+            - generic [ref=e467]: KES 2,500
+            - generic [ref=e468]: /mo
+          - paragraph [ref=e469]: Spacer
+          - list [ref=e470]:
+            - listitem [ref=e471]:
+              - img [ref=e472]
+              - generic [ref=e475]: Up to 10 Client PINs
+            - listitem [ref=e476]:
+              - img [ref=e477]
+              - generic [ref=e480]: KRA, NSSF, SHA, HELB, Tourism E-levy & More
+            - listitem [ref=e481]:
+              - img [ref=e482]
+              - generic [ref=e485]: Pack Generation & automatic filing
+            - listitem [ref=e486]:
+              - img [ref=e487]
+              - generic [ref=e490]: Client Dashboard
+            - listitem [ref=e491]:
+              - img [ref=e492]
+              - generic [ref=e495]: Email Support
+          - button "Get started" [ref=e496] [cursor=pointer]
+        - generic [ref=e497]:
+          - generic [ref=e498]: Most Popular
+          - generic [ref=e499]:
+            - heading "Growth" [level=3] [ref=e500]
+            - paragraph [ref=e501]: For mid-sized firms managing multiple clients.
+          - generic [ref=e502]:
+            - generic [ref=e503]: KES 4,500
+            - generic [ref=e504]: /mo
+          - paragraph [ref=e505]: Spacer
+          - list [ref=e506]:
+            - listitem [ref=e507]:
+              - img [ref=e508]
+              - generic [ref=e511]: Up to 50 Client PINs
+            - listitem [ref=e512]:
+              - img [ref=e513]
+              - generic [ref=e516]: Payroll Management
+            - listitem [ref=e517]:
+              - img [ref=e518]
+              - generic [ref=e521]: KRA, NSSF, SHA, HELB, Tourism E-levy & More
+            - listitem [ref=e522]:
+              - img [ref=e523]
+              - generic [ref=e526]: Pack Generation & automatic filing
+            - listitem [ref=e527]:
+              - img [ref=e528]
+              - generic [ref=e531]: Client Dashboard
+            - listitem [ref=e532]:
+              - img [ref=e533]
+              - generic [ref=e536]: Priority Support
+            - listitem [ref=e537]:
+              - img [ref=e538]
+              - generic [ref=e541]: Advanced Bulk Processing
+            - listitem [ref=e542]:
+              - img [ref=e543]
+              - generic [ref=e546]: Role-based Access
+            - listitem [ref=e547]:
+              - img [ref=e548]
+              - generic [ref=e551]: E-tims VAT Reconciliation
+          - button "Get started" [ref=e552] [cursor=pointer]
+        - generic [ref=e553]:
+          - generic [ref=e554]:
+            - heading "Premium" [level=3] [ref=e555]
+            - paragraph [ref=e556]: Designed for large auditing and accounting firms.
+          - generic [ref=e557]:
+            - generic [ref=e558]: KES 7,500
+            - generic [ref=e559]: /mo
+          - paragraph [ref=e560]: Spacer
+          - list [ref=e561]:
+            - listitem [ref=e562]:
+              - img [ref=e563]
+              - generic [ref=e566]: Unlimited Client PINs
+            - listitem [ref=e567]:
+              - img [ref=e568]
+              - generic [ref=e571]: Payroll Management
+            - listitem [ref=e572]:
+              - img [ref=e573]
+              - generic [ref=e576]: KRA, NSSF, SHA, HELB, Tourism E-levy & More
+            - listitem [ref=e577]:
+              - img [ref=e578]
+              - generic [ref=e581]: Pack Generation & automatic filing
+            - listitem [ref=e582]:
+              - img [ref=e583]
+              - generic [ref=e586]: Client Dashboard
+            - listitem [ref=e587]:
+              - img [ref=e588]
+              - generic [ref=e591]: Priority Support
+            - listitem [ref=e592]:
+              - img [ref=e593]
+              - generic [ref=e596]: Advanced Bulk Processing
+            - listitem [ref=e597]:
+              - img [ref=e598]
+              - generic [ref=e601]: Role-based Access
+            - listitem [ref=e602]:
+              - img [ref=e603]
+              - generic [ref=e606]: E-tims VAT Reconciliation
+            - listitem [ref=e607]:
+              - img [ref=e608]
+              - generic [ref=e611]: Custom integration
+            - listitem [ref=e612]:
+              - img [ref=e613]
+              - generic [ref=e616]: Dedicated Success Manager
+          - button "Get started" [ref=e617] [cursor=pointer]
+    - generic [ref=e621]:
+      - heading "Ready to automate your practice?" [level=2] [ref=e622]
+      - paragraph [ref=e623]: Join 150+ Kenyan firms already using zani to file returns faster, track clients better, and never miss a deadline.
+      - generic [ref=e624]:
+        - link "Get Started" [ref=e625] [cursor=pointer]:
+          - /url: /dashboard
+          - text: Get Started
+          - img [ref=e626]
+        - link "Open Dashboard" [ref=e628] [cursor=pointer]:
+          - /url: /dashboard
+      - paragraph [ref=e629]: Simple pricing. Cancel anytime. Start filing in minutes.
+    - generic [ref=e631]:
+      - generic [ref=e632]:
+        - img [ref=e634]
+        - generic [ref=e636]: zani.ai
+      - paragraph [ref=e637]: © 2026 zani. Built for Kenyan finance teams.
+      - generic [ref=e638]:
+        - link "Features" [ref=e639] [cursor=pointer]:
+          - /url: "#features"
+        - link "Workflow" [ref=e640] [cursor=pointer]:
+          - /url: "#workflow"
+        - link "Dashboard" [ref=e641] [cursor=pointer]:
+          - /url: /dashboard

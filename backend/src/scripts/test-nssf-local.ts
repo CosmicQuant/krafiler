@@ -13,7 +13,6 @@
 
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { tmpdir } from 'os';
 import 'dotenv/config';
 
 import { adminDb } from '../lib/firebaseAdmin';

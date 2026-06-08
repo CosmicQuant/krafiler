@@ -703,23 +703,6 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                         console.log('Dialog:', txt.substring(0, 120).replace(/\s+/g, ' '));
                         const ok = dlg.locator('button').filter({ hasText: /^OK$/i }).first();
                         if (await ok.isVisible()) {
-                            // Capture the actual response that populates the new window.
-                            // The response captured here is the real bytes NSSF sends to the
-                            // browser — it may be a PDF (rendered in Chrome's PDF viewer)
-                            // or HTML. This is more reliable than refetching the URL.
-                            // We match on URL pattern because receiptPage is still null
-                            // when the response fires.
-                            let capturedResponse: any = null;
-                            const responseHandler = (response: any) => {
-                                try {
-                                    const u = response.url() || '';
-                                    if (u.includes('paymentOrder') || u.includes('receipt') || u.includes('PaymentOrder')) {
-                                        capturedResponse = response;
-                                    }
-                                } catch {}
-                            };
-                            context.on('response', responseHandler);
-
                             // Set up listener RIGHT BEFORE clicking OK
                             const newPagePromise = context.waitForEvent('page', { timeout: 30000 });
                             await ok.click();
@@ -736,8 +719,6 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                             } catch (e: any) {
                                 console.log('No new window opened; will capture current page. Err:', e.message);
                             }
-                            context.off('response', responseHandler);
-                            (globalThis as any).__lastCapturedResponse = capturedResponse;
                             break;
                         }
                     }
@@ -768,30 +749,33 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     let downloadedBuf: Buffer | null = null;
                     let downloadedContentType = '';
                     let downloadedContentDisp = '';
-                    const captured = (globalThis as any).__lastCapturedResponse;
-                    if (captured && false /* disabled: captured response is often partial */) {
+
+                    // Try to capture the PDF response from the new window
+                    if (receiptPage) {
                         try {
-                            const buf = await captured.body();
-                            const headers = captured.headers();
+                            console.log('  Waiting for PDF response from new window...');
+                            const pdfResponse = await receiptPage.waitForResponse(
+                                (response: any) => {
+                                    const ct = response.headers()['content-type'] || '';
+                                    return ct.includes('application/pdf') || response.url().includes('.pdf');
+                                },
+                                { timeout: 15000 }
+                            );
+                            const buf = await pdfResponse.body();
+                            const headers = pdfResponse.headers();
                             downloadedContentType = headers['content-type'] || '';
                             downloadedContentDisp = headers['content-disposition'] || '';
-                            const firstBytes = buf.slice(0, 8).toString('ascii');
-                            console.log(`  Captured response: status=${captured.status()} content-type="${downloadedContentType}" content-disposition="${downloadedContentDisp}" size=${buf.length} firstBytes="${firstBytes.replace(/[^\x20-\x7e]/g, '.')}"`);
-                            if ((downloadedContentType || '').includes('application/pdf') || firstBytes.startsWith('%PDF')) {
+                            console.log(`  PDF response: status=${pdfResponse.status()} content-type="${downloadedContentType}" size=${buf.length}`);
+                            if (buf.length > 0) {
                                 downloadedBuf = buf;
                                 downloaded = true;
-                                console.log('  -> Got actual PDF bytes from captured response (no re-rasterization)');
-                            } else if (buf.length > 0) {
-                                downloadedBuf = buf;
-                                downloadedContentType = 'text/html';
-                                console.log('  -> Captured response is HTML; will use it for clean-page render');
-                            } else {
-                                console.log('  -> Captured response is empty; will try browser fetch');
+                                console.log('  -> Got actual PDF bytes from new window response');
                             }
-                        } catch (capErr: any) {
-                            console.log('  captured.body() failed:', capErr.message);
+                        } catch (pdfWaitErr: any) {
+                            console.log('  No PDF response detected:', pdfWaitErr.message);
                         }
                     }
+
                     if (!downloaded) {
                         try {
                             // Wait for the receipt page to fully render after the post-save
@@ -852,91 +836,173 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     }
 
                     if (!downloaded) {
-                        // The new window opens Chrome's built-in PDF viewer. The receipt is
-                        // a PDF file rendered inside Chrome's viewer. The viewer's UI (toolbar,
-                        // zoom, dark background) is part of the browser, not the page.
-                        //
-                        // Chrome's PDF viewer does NOT respect emulateMedia('print') — it
-                        // always renders its own chrome (toolbar, zoom, dark background).
-                        // Using page.pdf() produces a PDF-of-the-PDF-viewer, which looks
-                        // distorted (double-rasterization).
-                        //
-                        // Professional solution: capture the rendered pixels via screenshot,
-                        // then create a clean PDF using pdf-lib. The screenshot captures the
-                        // exact visual output without the PDF viewer's chrome artifacts.
+                        // Try to extract the actual PDF from Chrome's PDF viewer.
+                        // The PDF is loaded from a blob URL in the PDF viewer.
                         try {
                             await receiptPage.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-                            await delay(800);
+                            await delay(1000);
 
-                            // Detect the white content area (the actual receipt page) to clip out
-                            // the PDF viewer chrome (toolbar, zoom controls, dark background).
-                            const clipBox = await receiptPage.evaluate(() => {
-                                // Chrome's PDF viewer renders the page inside a <div class="pdfViewer">
-                                const viewer = document.querySelector('div.pdfViewer');
-                                if (viewer) {
-                                    const rect = viewer.getBoundingClientRect();
-                                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-                                }
-                                // Fallback: embed element
-                                const embed = document.querySelector('embed[type="application/pdf"]');
-                                if (embed) {
-                                    const rect = embed.getBoundingClientRect();
-                                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-                                }
-                                // Fallback: the main content div
-                                const main = document.querySelector('body > div');
-                                if (main) {
-                                    const rect = main.getBoundingClientRect();
-                                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                            console.log('  Trying to extract PDF from Chrome PDF viewer...');
+
+                            // Method 1: Try to find the blob URL in performance entries
+                            const blobUrl = await receiptPage.evaluate(() => {
+                                const entries = performance.getEntriesByType('resource');
+                                for (const entry of entries) {
+                                    if (entry.name.startsWith('blob:') || entry.name.startsWith('chrome-extension:')) {
+                                        return entry.name;
+                                    }
                                 }
                                 return null;
                             });
 
-                            const screenshotOptions: any = {
-                                type: 'png',
-                                fullPage: true,
-                            };
-                            if (clipBox && clipBox.width > 0 && clipBox.height > 0) {
-                                screenshotOptions.clip = {
-                                    x: Math.max(0, Math.round(clipBox.x)),
-                                    y: Math.max(0, Math.round(clipBox.y)),
-                                    width: Math.round(clipBox.width),
-                                    height: Math.round(clipBox.height),
-                                };
-                                console.log('  Clipping to content area:', screenshotOptions.clip);
-                            } else {
-                                console.log('  Could not detect content area, capturing full page');
+                            if (blobUrl) {
+                                console.log(`  Found blob URL: ${blobUrl.substring(0, 100)}...`);
+                                try {
+                                    const pdfData = await receiptPage.evaluate(async (url) => {
+                                        const response = await fetch(url);
+                                        const buffer = await response.arrayBuffer();
+                                        return Array.from(new Uint8Array(buffer));
+                                    }, blobUrl);
+                                    if (pdfData && pdfData.length > 0) {
+                                        downloadedBuf = Buffer.from(pdfData);
+                                        downloaded = true;
+                                        console.log(`  -> Downloaded PDF from blob URL (${downloadedBuf.length} bytes)`);
+                                    }
+                                } catch (blobErr: any) {
+                                    console.log('  Blob download failed:', blobErr.message);
+                                }
                             }
 
-                            const screenshot = await receiptPage.screenshot(screenshotOptions);
+                            // Method 2: Try to find embed/iframe src
+                            if (!downloaded) {
+                                const embedSrc = await receiptPage.evaluate(() => {
+                                    const embed = document.querySelector('embed[type="application/pdf"]');
+                                    if (embed) return embed.getAttribute('src');
+                                    const iframe = document.querySelector('iframe');
+                                    if (iframe) return iframe.getAttribute('src');
+                                    return null;
+                                });
+                                if (embedSrc) {
+                                    console.log(`  Found embed src: ${embedSrc.substring(0, 100)}...`);
+                                    try {
+                                        const pdfData = await receiptPage.evaluate(async (url) => {
+                                            const response = await fetch(url);
+                                            const buffer = await response.arrayBuffer();
+                                            return Array.from(new Uint8Array(buffer));
+                                        }, embedSrc);
+                                        if (pdfData && pdfData.length > 0) {
+                                            downloadedBuf = Buffer.from(pdfData);
+                                            downloaded = true;
+                                            console.log(`  -> Downloaded PDF from embed src (${downloadedBuf.length} bytes)`);
+                                        }
+                                    } catch (embedErr: any) {
+                                        console.log('  Embed download failed:', embedErr.message);
+                                    }
+                                }
+                            }
 
-                            // Create a clean PDF with the screenshot as the single page.
-                            const pdfDoc = await PDFDocument.create();
-                            const image = await pdfDoc.embedPng(screenshot);
-                            const { width, height } = image.size();
-                            const pdfPage = pdfDoc.addPage([width, height]);
-                            pdfPage.drawImage(image, {
-                                x: 0,
-                                y: 0,
-                                width: width,
-                                height: height,
-                            });
+                            // Method 3: Try to access the PDF viewer shadow DOM
+                            if (!downloaded) {
+                                const shadowSrc = await receiptPage.evaluate(() => {
+                                    const viewer = document.querySelector('pdf-viewer');
+                                    if (viewer && viewer.shadowRoot) {
+                                        const embed = viewer.shadowRoot.querySelector('embed');
+                                        if (embed) return embed.getAttribute('src');
+                                    }
+                                    return null;
+                                });
+                                if (shadowSrc) {
+                                    console.log(`  Found shadow DOM src: ${shadowSrc.substring(0, 100)}...`);
+                                    try {
+                                        const pdfData = await receiptPage.evaluate(async (url) => {
+                                            const response = await fetch(url);
+                                            const buffer = await response.arrayBuffer();
+                                            return Array.from(new Uint8Array(buffer));
+                                        }, shadowSrc);
+                                        if (pdfData && pdfData.length > 0) {
+                                            downloadedBuf = Buffer.from(pdfData);
+                                            downloaded = true;
+                                            console.log(`  -> Downloaded PDF from shadow DOM (${downloadedBuf.length} bytes)`);
+                                        }
+                                    } catch (shadowErr: any) {
+                                        console.log('  Shadow DOM download failed:', shadowErr.message);
+                                    }
+                                }
+                            }
 
-                            const pdfBytes = await pdfDoc.save();
-                            await fs.writeFile(paymentOrderPath, pdfBytes);
+                            // Method 4: Use the browser's print to PDF functionality
+                            // This bypasses the PDF viewer UI and prints only the content
+                            if (!downloaded) {
+                                console.log('  Using browser print to PDF...');
+                                try {
+                                    // Use CDP to print the page to PDF
+                                    const cdpSession = await receiptPage.context().newCDPSession(receiptPage);
+                                    
+                                    // Set print media to hide the PDF viewer UI
+                                    await receiptPage.emulateMedia({ media: 'print' });
+                                    await delay(500);
+                                    
+                                    // Use CDP to print to PDF
+                                    const { data } = await cdpSession.send('Page.printToPDF', {
+                                        printBackground: true,
+                                        preferCSSPageSize: true,
+                                        marginTop: 0,
+                                        marginBottom: 0,
+                                        marginLeft: 0,
+                                        marginRight: 0,
+                                    });
+                                    
+                                    const pdfBuffer = Buffer.from(data, 'base64');
+                                    await fs.writeFile(paymentOrderPath, pdfBuffer);
+                                    console.log('Captured receipt PDF via CDP printToPDF:', paymentOrderPath, `(${pdfBuffer.length} bytes)`);
+                                    await receiptPage.close();
+                                    console.log('Receipt window closed');
+                                    console.log('Payment order receipt PDF saved to:', paymentOrderPath);
+                                    await updateProgress(10, 'Payment order receipt captured', 99);
+                                    return { paymentOrderPath };
+                                } catch (cdpErr: any) {
+                                    console.log('  CDP printToPDF failed:', cdpErr.message);
+                                    // Fall back to screenshot
+                                }
+                            }
+                            
+                            // Method 5: Take a screenshot and crop to the receipt area only
+                            if (!downloaded) {
+                                console.log('  Falling back to cropped screenshot...');
+                                await receiptPage.setViewportSize({ width: 1200, height: 1600 });
+                                await delay(500);
 
-                            console.log('Captured receipt PDF via screenshot + pdf-lib:', paymentOrderPath, `(${pdfBytes.length} bytes)`);
-                            await receiptPage.close();
-                            console.log('Receipt window closed');
-                            console.log('Payment order receipt PDF saved to:', paymentOrderPath);
-                            await updateProgress(10, 'Payment order receipt captured', 99);
-                            return { paymentOrderPath };
+                                const screenshot = await receiptPage.screenshot({
+                                    fullPage: true,
+                                    type: 'png',
+                                });
+
+                                const pdfDoc = await PDFDocument.create();
+                                const image = await pdfDoc.embedPng(screenshot);
+                                const { width, height } = image.size();
+                                const pdfPage = pdfDoc.addPage([width, height]);
+                                pdfPage.drawImage(image, {
+                                    x: 0,
+                                    y: 0,
+                                    width: width,
+                                    height: height,
+                                });
+
+                                const pdfBytes = await pdfDoc.save();
+                                await fs.writeFile(paymentOrderPath, pdfBytes);
+                                console.log('Captured receipt PDF via screenshot:', paymentOrderPath, `(${pdfBytes.length} bytes)`);
+                                await receiptPage.close();
+                                console.log('Receipt window closed');
+                                console.log('Payment order receipt PDF saved to:', paymentOrderPath);
+                                await updateProgress(10, 'Payment order receipt captured', 99);
+                                return { paymentOrderPath };
+                            }
                         } catch (pdfErr: any) {
-                            console.error('Screenshot + pdf-lib approach failed:', pdfErr.message);
-                            // Fall through to the screenshot-based approach below
+                            console.error('PDF extraction failed:', pdfErr.message);
                         }
+                    }
 
-                    } else if (downloadedBuf) {
+                    if (downloadedBuf) {
                         // Write the actual PDF bytes to a tmp path; the worker will read+upload+delete
                         const tmpPath = path.join(tmpdir(), `nssf-payment-order-${Date.now()}.pdf`);
                         await fs.writeFile(tmpPath, downloadedBuf);

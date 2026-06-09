@@ -690,11 +690,14 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                 });
             }
 
+            // Prepare payment order path early so route handler can reference it
+            const pdfDir = outputDir || tmpdir();
+            const paymentOrderPath = path.join(pdfDir, `nssf-payment-order-${Date.now()}.pdf`);
+
             // ── Wait for success dialog ───────────────────────────────────────
             console.log('Waiting for post-save dialog (up to 30s)...');
             let okClicked = false;
             let receiptPage: any = null;
-            let pdfResponsePromise: any = null;
             for (let i = 0; i < 30; i++) {
                 await delay(1000);
                 const dialogs = await page.locator('.ui-dialog:visible').all();
@@ -704,35 +707,43 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                         console.log('Dialog:', txt.substring(0, 120).replace(/\s+/g, ' '));
                         const ok = dlg.locator('button').filter({ hasText: /^OK$/i }).first();
                         if (await ok.isVisible()) {
-                            // Set up listeners BEFORE clicking OK:
-                            // 1) wait for the new page to open
-                            // 2) wait for the PDF response from ANY page (the new page may
-                            //    immediately request a PDF after opening)
                             const newPagePromise = context.waitForEvent('page', { timeout: 30000 });
-                            pdfResponsePromise = context.waitForEvent('response', {
-                                predicate: (response: any) => {
-                                    const ct = response.headers()['content-type'] || '';
-                                    const url = response.url();
-                                    const isPdf = ct.includes('application/pdf') && url.includes('nssfkenya.co.ke');
-                                    const isPdfUrl = url.includes('.pdf') && url.includes('nssfkenya.co.ke');
-                                    return isPdf || isPdfUrl;
-                                },
-                                timeout: 30000,
+
+                            // Intercept the POST response to paymentOrder.xhtml (the real PDF receipt)
+                            let interceptedBody: Buffer | null = null;
+                            let interceptedHeaders: any = null;
+                            await context.route('**/secureAdmin/paymentOrder.xhtml', async (route, request) => {
+                                const response = await route.fetch();
+                                const body = await response.body();
+                                interceptedBody = body;
+                                interceptedHeaders = response.headers();
+                                await route.fulfill({ status: response.status(), headers: response.headers(), body });
                             });
+
                             await ok.click();
                             console.log('Clicked OK');
                             okClicked = true;
                             await delay(3000);
 
-                            // Now wait for the new receipt window
                             try {
                                 receiptPage = await newPagePromise;
-                                console.log('New receipt window opened');
-                                const receiptUrl = receiptPage.url();
-                                console.log('  Receipt URL:', receiptUrl);
-                                console.log('  Receipt title:', await receiptPage.title().catch(() => 'n/a'));
+                                await delay(2000);
+                                await context.unroute('**/secureAdmin/paymentOrder.xhtml');
+
+                                if (interceptedBody && interceptedBody.length > 1000) {
+                                    const firstBytes = interceptedBody.slice(0, 8).toString('ascii');
+                                    if (firstBytes.startsWith('%PDF')) {
+                                        await fs.writeFile(paymentOrderPath, interceptedBody);
+                                        console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${interceptedBody.length} bytes)`);
+                                        await receiptPage.close().catch(() => {});
+                                        await updateProgress(10, 'Payment order receipt captured', 99);
+                                        return { paymentOrderPath };
+                                    }
+                                }
+                                console.log('No valid PDF intercepted, falling back to screenshot');
                             } catch (e: any) {
-                                console.log('No new window opened; will capture current page. Err:', e.message);
+                                console.log('No new window opened:', e.message);
+                                await context.unroute('**/secureAdmin/paymentOrder.xhtml');
                             }
                             break;
                         }
@@ -744,304 +755,31 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                 console.log('No post-save dialog detected within 30s');
             }
 
-            // Capture payment order receipt as PDF
-            let paymentOrderPath: string | null = null;
-            try {
-                const pdfDir = outputDir || tmpdir();
-                paymentOrderPath = path.join(pdfDir, `nssf-payment-order-${Date.now()}.pdf`);
-
-                if (receiptPage) {
-                    const receiptUrl = receiptPage.url();
-                    console.log('Receipt window URL:', receiptUrl);
-
-                    // Capture the actual PDF bytes. We try two paths, in order:
-                    //  (1) the response that populated the new window (set up by the
-                    //      responseHandler before OK was clicked) — this is the real
-                    //      bytes NSSF sent to the browser, including any PDF stream
-                    //      that the Chrome PDF viewer is rendering.
-                    //  (2) a fresh in-page fetch using the browser's SSL trust store.
-                    let downloaded = false;
-                    let downloadedBuf: Buffer | null = null;
-                    let downloadedContentType = '';
-                    let downloadedContentDisp = '';
-
-                    // Try to capture the PDF response from the new window.
-                    // We set up the listener BEFORE clicking OK so it catches the
-                    // initial PDF response that populates the new window.
-                    if (receiptPage && pdfResponsePromise) {
-                        try {
-                            console.log('  Waiting for PDF response from new window...');
-                            const pdfResponse = await pdfResponsePromise;
-                            const buf = await pdfResponse.body();
-                            const headers = pdfResponse.headers();
-                            downloadedContentType = headers['content-type'] || '';
-                            downloadedContentDisp = headers['content-disposition'] || '';
-                            console.log(`  PDF response: status=${pdfResponse.status()} content-type="${downloadedContentType}" size=${buf.length}`);
-                            // A real PDF must be > 1KB and start with %PDF magic bytes
-                            const isValidPdf = buf.length > 1000 && buf.toString('ascii', 0, 4) === '%PDF';
-                            if (isValidPdf) {
-                                downloadedBuf = buf;
-                                downloaded = true;
-                                console.log('  -> Got actual PDF bytes from new window response');
-                            } else {
-                                console.log(`  -> Response too small (${buf.length} bytes) or missing %PDF header — treating as invalid PDF, will fall back to browser fetch`);
-                            }
-                        } catch (pdfWaitErr: any) {
-                            console.log('  No PDF response detected:', pdfWaitErr.message);
-                        }
-                    }
-
-                    if (!downloaded) {
-                        try {
-                            // Wait for the receipt page to fully render after the post-save
-                            // navigation. The page first loads the payment-order FORM, then
-                            // re-renders with receipt data (UPN, employer, amount, etc.).
-                            // We poll until the HTML contains receipt markers.
-                            await receiptPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
-                            await delay(2000); // give the page time to render receipt data
-
-                            const fetchResult = await receiptPage.evaluate(async (url: string) => {
-                                try {
-                                    const r = await fetch(url, { credentials: 'include', redirect: 'follow' });
-                                    const ab = await r.arrayBuffer();
-                                    // Encode ArrayBuffer to base64 so it can cross the evaluate boundary
-                                    const bytes = new Uint8Array(ab);
-                                    let bin = '';
-                                    for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
-                                    const b64 = btoa(bin);
-                                    return {
-                                        ok: r.ok,
-                                        status: r.status,
-                                        contentType: r.headers.get('content-type') || '',
-                                        contentDisposition: r.headers.get('content-disposition') || '',
-                                        size: bytes.byteLength,
-                                        b64,
-                                    };
-                                } catch (e: any) {
-                                    return { ok: false, error: e?.message || String(e) };
-                                }
-                            }, receiptUrl);
-
-                            if (fetchResult && (fetchResult as any).ok) {
-                                const r = fetchResult as any;
-                                downloadedContentType = r.contentType;
-                                downloadedContentDisp = r.contentDisposition;
-                                const buf = Buffer.from(r.b64, 'base64');
-                                const firstBytes = buf.slice(0, 8).toString('ascii');
-                                console.log(`  Browser fetch: status=${r.status} content-type="${r.contentType}" content-disposition="${r.contentDisposition}" size=${buf.length} firstBytes="${firstBytes.replace(/[^\x20-\x7e]/g, '.')}"`);
-
-                                if (r.contentType.includes('application/pdf') || firstBytes.startsWith('%PDF')) {
-                                    downloadedBuf = buf;
-                                    downloaded = true;
-                                    console.log('  -> Got actual PDF bytes from NSSF (no re-rasterization)');
-                                } else if (buf.length > 0) {
-                                    // Treat as HTML and keep the buffer for the clean-page render
-                                    downloadedBuf = buf;
-                                    downloadedContentType = 'text/html';
-                                    console.log('  -> Browser fetch returned HTML; will use it for clean-page render');
-                                } else {
-                                    console.log('  -> Receipt URL returned no usable content; will fall back to page.pdf()');
-                                }
-                            } else {
-                                console.log('  Browser fetch failed:', (fetchResult as any)?.error || 'unknown');
-                            }
-                        } catch (dlErr: any) {
-                            console.log('  Direct download failed, falling back to page.pdf():', dlErr.message);
-                        }
-                    }
-
-                    if (!downloaded) {
-                        // Try to extract the actual PDF from Chrome's PDF viewer.
-                        // The PDF is loaded from a blob URL in the PDF viewer.
-                        try {
-                            await receiptPage.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-                            await delay(1000);
-
-                            console.log('  Trying to extract PDF from Chrome PDF viewer...');
-
-                            // Method 1: Try to find the blob URL in performance entries
-                            const blobUrl = await receiptPage.evaluate(() => {
-                                const entries = performance.getEntriesByType('resource');
-                                for (const entry of entries) {
-                                    if (entry.name.startsWith('blob:') || entry.name.startsWith('chrome-extension:')) {
-                                        return entry.name;
-                                    }
-                                }
-                                return null;
-                            });
-
-                            if (blobUrl) {
-                                console.log(`  Found blob URL: ${blobUrl.substring(0, 100)}...`);
-                                try {
-                                    const pdfData = await receiptPage.evaluate(async (url: string) => {
-                                        const response = await fetch(url);
-                                        const buffer = await response.arrayBuffer();
-                                        return Array.from(new Uint8Array(buffer));
-                                    }, blobUrl);
-                                    if (pdfData && pdfData.length > 0) {
-                                        downloadedBuf = Buffer.from(pdfData);
-                                        downloaded = true;
-                                        console.log(`  -> Downloaded PDF from blob URL (${downloadedBuf.length} bytes)`);
-                                    }
-                                } catch (blobErr: any) {
-                                    console.log('  Blob download failed:', blobErr.message);
-                                }
-                            }
-
-                            // Method 2: Try to find embed/iframe src
-                            if (!downloaded) {
-                                const embedSrc = await receiptPage.evaluate(() => {
-                                    const embed = document.querySelector('embed[type="application/pdf"]');
-                                    if (embed) return embed.getAttribute('src');
-                                    const iframe = document.querySelector('iframe');
-                                    if (iframe) return iframe.getAttribute('src');
-                                    return null;
-                                });
-                                if (embedSrc) {
-                                    console.log(`  Found embed src: ${embedSrc.substring(0, 100)}...`);
-                                    try {
-                                        const pdfData = await receiptPage.evaluate(async (url: string) => {
-                                            const response = await fetch(url);
-                                            const buffer = await response.arrayBuffer();
-                                            return Array.from(new Uint8Array(buffer));
-                                        }, embedSrc);
-                                        if (pdfData && pdfData.length > 0) {
-                                            downloadedBuf = Buffer.from(pdfData);
-                                            downloaded = true;
-                                            console.log(`  -> Downloaded PDF from embed src (${downloadedBuf.length} bytes)`);
-                                        }
-                                    } catch (embedErr: any) {
-                                        console.log('  Embed download failed:', embedErr.message);
-                                    }
-                                }
-                            }
-
-                            // Method 3: Try to access the PDF viewer shadow DOM
-                            if (!downloaded) {
-                                const shadowSrc = await receiptPage.evaluate(() => {
-                                    const viewer = document.querySelector('pdf-viewer');
-                                    if (viewer && viewer.shadowRoot) {
-                                        const embed = viewer.shadowRoot.querySelector('embed');
-                                        if (embed) return embed.getAttribute('src');
-                                    }
-                                    return null;
-                                });
-                                if (shadowSrc) {
-                                    console.log(`  Found shadow DOM src: ${shadowSrc.substring(0, 100)}...`);
-                                    try {
-                                        const pdfData = await receiptPage.evaluate(async (url: string) => {
-                                            const response = await fetch(url);
-                                            const buffer = await response.arrayBuffer();
-                                            return Array.from(new Uint8Array(buffer));
-                                        }, shadowSrc);
-                                        if (pdfData && pdfData.length > 0) {
-                                            downloadedBuf = Buffer.from(pdfData);
-                                            downloaded = true;
-                                            console.log(`  -> Downloaded PDF from shadow DOM (${downloadedBuf.length} bytes)`);
-                                        }
-                                    } catch (shadowErr: any) {
-                                        console.log('  Shadow DOM download failed:', shadowErr.message);
-                                    }
-                                }
-                            }
-
-                            // Method 4: Use the browser's print to PDF functionality
-                            // This bypasses the PDF viewer UI and prints only the content
-                            if (!downloaded) {
-                                console.log('  Using browser print to PDF...');
-                                try {
-                                    // Use CDP to print the page to PDF
-                                    const cdpSession = await receiptPage.context().newCDPSession(receiptPage);
-                                    
-                                    // Set print media to hide the PDF viewer UI
-                                    await receiptPage.emulateMedia({ media: 'print' });
-                                    await delay(500);
-                                    
-                                    // Use CDP to print to PDF
-                                    const { data } = await cdpSession.send('Page.printToPDF', {
-                                        printBackground: true,
-                                        preferCSSPageSize: true,
-                                        marginTop: 0,
-                                        marginBottom: 0,
-                                        marginLeft: 0,
-                                        marginRight: 0,
-                                    });
-                                    
-                                    const pdfBuffer = Buffer.from(data, 'base64');
-                                    await fs.writeFile(paymentOrderPath, pdfBuffer);
-                                    console.log('Captured receipt PDF via CDP printToPDF:', paymentOrderPath, `(${pdfBuffer.length} bytes)`);
-                                    await receiptPage.close();
-                                    console.log('Receipt window closed');
-                                    console.log('Payment order receipt PDF saved to:', paymentOrderPath);
-                                    await updateProgress(10, 'Payment order receipt captured', 99);
-                                    return { paymentOrderPath };
-                                } catch (cdpErr: any) {
-                                    console.log('  CDP printToPDF failed:', cdpErr.message);
-                                    // Fall back to screenshot
-                                }
-                            }
-                            
-                            // Method 5: Take a screenshot and crop to the receipt area only
-                            if (!downloaded) {
-                                console.log('  Falling back to cropped screenshot...');
-                                await receiptPage.setViewportSize({ width: 1200, height: 1600 });
-                                await delay(500);
-
-                                const screenshot = await receiptPage.screenshot({
-                                    fullPage: true,
-                                    type: 'png',
-                                });
-
-                                const pdfDoc = await PDFDocument.create();
-                                const image = await pdfDoc.embedPng(screenshot);
-                                const { width, height } = image.size();
-                                const pdfPage = pdfDoc.addPage([width, height]);
-                                pdfPage.drawImage(image, {
-                                    x: 0,
-                                    y: 0,
-                                    width: width,
-                                    height: height,
-                                });
-
-                                const pdfBytes = await pdfDoc.save();
-                                await fs.writeFile(paymentOrderPath, pdfBytes);
-                                console.log('Captured receipt PDF via screenshot:', paymentOrderPath, `(${pdfBytes.length} bytes)`);
-                                await receiptPage.close();
-                                console.log('Receipt window closed');
-                                console.log('Payment order receipt PDF saved to:', paymentOrderPath);
-                                await updateProgress(10, 'Payment order receipt captured', 99);
-                                return { paymentOrderPath };
-                            }
-                        } catch (pdfErr: any) {
-                            console.error('PDF extraction failed:', pdfErr.message);
-                        }
-                    }
-
-                    if (downloadedBuf) {
-                        // Write the actual PDF bytes to a tmp path; the worker will read+upload+delete
-                        const tmpPath = path.join(tmpdir(), `nssf-payment-order-${Date.now()}.pdf`);
-                        await fs.writeFile(tmpPath, downloadedBuf);
-                        paymentOrderPath = tmpPath;
-                        console.log('Wrote actual PDF bytes to tmp path:', paymentOrderPath, `(${downloadedBuf.length} bytes)`);
-                    }
+            // Fallback: screenshot of the new window if interception failed
+            if (receiptPage) {
+                try {
+                    await receiptPage.setViewportSize({ width: 1200, height: 1600 });
+                    await delay(500);
+                    const screenshot = await receiptPage.screenshot({ fullPage: true, type: 'png' });
+                    const pdfDoc = await PDFDocument.create();
+                    const image = await pdfDoc.embedPng(screenshot);
+                    const { width, height } = image.size();
+                    const pdfPage = pdfDoc.addPage([width, height]);
+                    pdfPage.drawImage(image, { x: 0, y: 0, width, height });
+                    const pdfBytes = await pdfDoc.save();
+                    await fs.writeFile(paymentOrderPath, pdfBytes);
+                    console.log('Captured receipt PDF via screenshot:', paymentOrderPath, `(${pdfBytes.length} bytes)`);
                     await receiptPage.close();
-                    console.log('Receipt window closed');
-                } else {
-                    console.log('Capturing PDF from current page...');
-                    await page.pdf({
-                        path: paymentOrderPath,
-                        format: 'A4',
-                        printBackground: true,
-                        margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' },
-                    });
+                    await updateProgress(10, 'Payment order receipt captured', 99);
+                    return { paymentOrderPath };
+                } catch (e: any) {
+                    console.log('Screenshot fallback failed:', e.message);
+                    await receiptPage.close().catch(() => {});
                 }
-                console.log('Payment order receipt PDF saved to:', paymentOrderPath);
-                await updateProgress(10, 'Payment order receipt captured', 99);
-                return { paymentOrderPath };
-            } catch (pdfErr: any) {
-                console.error('Failed to capture payment order PDF:', pdfErr.message);
-                return { paymentOrderPath: null };
             }
+
+            console.log('Payment order receipt not captured');
+            return { paymentOrderPath: null };
         }
 
         // If payment order link not visible, return null

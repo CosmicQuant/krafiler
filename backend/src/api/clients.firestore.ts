@@ -932,10 +932,13 @@ router.put('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
  *
  * Streams the most recent receipt PDF for the given obligation from Cloud Storage.
  * Never touches local disk. Used by the frontend to download receipts.
+ * Also supports PRN downloads by appending "_prn" to the obligation type.
  */
 router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, res) => {
     const { id, obligationType } = req.params;
-    const token = normalizeObligationToken(obligationType);
+    const isPrn = obligationType.endsWith('_prn');
+    const baseObligation = isPrn ? obligationType.replace(/_prn$/, '') : obligationType;
+    const token = normalizeObligationToken(baseObligation);
     try {
         // Verify client ownership
         const clientRef = adminDb.collection('clients').doc(id);
@@ -947,7 +950,7 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        // Find the most recent job for this client + obligation that has a GCS receipt
+        // Find the most recent job for this client + obligation that has a GCS receipt or PRN
         const jobsSnap = await adminDb.collection('jobs')
             .where('clientId', '==', id)
             .where('taxObligationType', '==', token)
@@ -958,26 +961,26 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
         let gcsPath: string | null = null;
         for (const doc of jobsSnap.docs) {
             const data = doc.data();
-            const p = data?.artifacts?.receiptGcsPath;
+            const p = isPrn ? data?.artifacts?.prnGcsPath : data?.artifacts?.receiptGcsPath;
             if (p) { gcsPath = p; break; }
         }
 
         if (!gcsPath) {
-            return res.status(404).json({ error: 'No receipt found in Cloud Storage for this obligation' });
+            return res.status(404).json({ error: `No ${isPrn ? 'PRN' : 'receipt'} found in Cloud Storage for this obligation` });
         }
 
         const bucketName = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
         const file = adminStorage.bucket(bucketName).file(gcsPath);
         const [exists] = await file.exists();
         if (!exists) {
-            return res.status(404).json({ error: 'Receipt file missing in Cloud Storage' });
+            return res.status(404).json({ error: `${isPrn ? 'PRN' : 'Receipt'} file missing in Cloud Storage` });
         }
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${path.basename(gcsPath)}"`);
         file.createReadStream().on('error', (err) => {
             console.error('GCS read stream error:', err);
-            if (!res.headersSent) res.status(500).json({ error: 'Failed to read receipt' });
+            if (!res.headersSent) res.status(500).json({ error: `Failed to read ${isPrn ? 'PRN' : 'receipt'}` });
         }).pipe(res);
     } catch (err: any) {
         console.error('Error streaming receipt from GCS:', err);

@@ -118,7 +118,17 @@ const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     excise_duty: [
         /^excise\s*duty$/i,
         /excise/i,
-    ]
+    ],
+    nita: [
+        /^nita\s*levy$/i,
+        /^nita$/i,
+        /nita/i,
+    ],
+    affordable_housing: [
+        /^housing\s*levy$/i,
+        /^affordable\s*housing\s*levy$/i,
+        /housing\s*levy/i,
+    ],
 };
 
 const LOGIN_FAILURE_PATTERNS = [
@@ -243,6 +253,83 @@ function humanDelay(minMs = 80, maxMs = 180): Promise<void> {
 
 function navigationDelay(): Promise<void> {
     return humanDelay(140, 320);
+}
+
+// ─── Post-filing PRN auto-generation ───────────────────────────────────────────
+
+/**
+ * After a successful filing, generate PRN(s) inline within the same browser session.
+ * PAYE filings generate 3 PRNs (PAYE, NITA, AHL).
+ * VAT/ToT/MRI filings generate 1 PRN for the filed obligation.
+ * Errors are caught and logged as warnings — they do NOT mark the filing as failed.
+ */
+export async function generatePrnAfterFiling(
+    parentJob: JobContext,
+    page: any,
+    kraPin: string,
+    periodFrom: string,
+    periodTo: string,
+    taxObligationType: TaxObligationType
+): Promise<Array<{ taxType: TaxObligationType; prnPath?: string; prnGcsPath?: string; error?: string }>> {
+    const prnResults: Array<{ taxType: TaxObligationType; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
+
+    // Determine which PRN types to generate based on the filed obligation
+    const prnTypesToGenerate: Array<{ taxType: TaxObligationType; label: string }> = [];
+
+    if (taxObligationType === 'paye') {
+        // PAYE filings require 3 PRNs: PAYE, NITA, AHL
+        prnTypesToGenerate.push(
+            { taxType: 'paye', label: 'PAYE' },
+            { taxType: 'nita', label: 'NITA Levy' },
+            { taxType: 'affordable_housing', label: 'Housing Levy' }
+        );
+    } else if (taxObligationType === 'turnover_tax') {
+        prnTypesToGenerate.push({ taxType: 'turnover_tax', label: 'ToT' });
+    } else if (taxObligationType === 'monthly_rental_income') {
+        prnTypesToGenerate.push({ taxType: 'monthly_rental_income', label: 'MRI' });
+    } else if (taxObligationType === 'vat') {
+        prnTypesToGenerate.push({ taxType: 'vat', label: 'VAT' });
+    }
+
+    if (prnTypesToGenerate.length === 0) {
+        console.log(`[PRN Auto] No PRN generation needed for ${taxObligationType}`);
+        return prnResults;
+    }
+
+    console.log(`[PRN Auto] Generating ${prnTypesToGenerate.length} PRN(s) inline after ${taxObligationType} filing...`);
+    await appendJobLog(parentJob, `Generating ${prnTypesToGenerate.length} PRN(s) inline after successful filing`, { progress: 96 });
+
+    const prnService = new PrnService(page, parentJob);
+
+    for (const prnConfig of prnTypesToGenerate) {
+        const prnDate = new Date();
+        const prnConfigObj: PrnConfig = {
+            taxType: prnConfig.taxType,
+            periodYear: prnDate.getFullYear().toString(),
+            periodMonth: prnDate.toLocaleString('default', { month: 'long' }),
+        };
+
+        try {
+            console.log(`[PRN Auto] Generating ${prnConfig.label} PRN...`);
+            const prnResult = await prnService.generate(prnConfigObj);
+
+            if (prnResult.prnPath) {
+                prnResults.push({ taxType: prnConfig.taxType, prnPath: prnResult.prnPath, prnGcsPath: prnResult.prnGcsPath });
+                console.log(`[PRN Auto] ${prnConfig.label} PRN generated: ${prnResult.prnPath}`);
+                await appendJobLog(parentJob, `${prnConfig.label} PRN generated successfully`, { progress: 97 });
+            } else if (prnResult.error) {
+                prnResults.push({ taxType: prnConfig.taxType, error: prnResult.error });
+                console.log(`[PRN Auto] ${prnConfig.label} PRN failed: ${prnResult.error}`);
+                await appendJobLog(parentJob, `${prnConfig.label} PRN generation failed: ${prnResult.error}`, { progress: 97, level: 'info' });
+            }
+        } catch (err: any) {
+            console.error(`[PRN Auto] ${prnConfig.label} PRN error:`, err.message);
+            prnResults.push({ taxType: prnConfig.taxType, error: err.message });
+                await appendJobLog(parentJob, `${prnConfig.label} PRN generation error: ${err.message}`, { progress: 97, level: 'info' });
+        }
+    }
+
+    return prnResults;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -1563,7 +1650,50 @@ export async function processFilingJob(job: JobContext): Promise<{
         if (!nssfFileUrl) throw new Error('Missing NSSF File URL in payload.');
         const nssfPeriod = (payload as any).nssfPeriod as string | undefined;
         const nssfService = new NssfService(job);
-        const nssfResult = await nssfService.execute(kraPin, activePassword, nssfFileUrl, nssfPeriod);
+        let nssfResult: any;
+        try {
+            nssfResult = await nssfService.execute(kraPin, activePassword, nssfFileUrl, nssfPeriod);
+        } catch (nssfErr: any) {
+            const msg = nssfErr?.message || String(nssfErr);
+            let errorType = 'UNKNOWN';
+            let userMessage = 'An unexpected error occurred during NSSF filing. Please try again or contact support.';
+            if (msg.includes('Timeout') || msg.includes('timeout')) {
+                if (msg.includes('502') || msg.includes('504') || msg.includes('Gateway')) {
+                    errorType = 'SITE_DOWN';
+                    userMessage = 'NSSF portal is currently unavailable (502/504 Gateway Error). Please try again later.';
+                } else {
+                    errorType = 'TIMEOUT';
+                    userMessage = 'NSSF portal is taking too long to respond. The site may be slow or temporarily down. Please try again.';
+                }
+            } else if (msg.includes('502') || msg.includes('504') || msg.includes('Bad Gateway') || msg.includes('Gateway Timeout')) {
+                errorType = 'SITE_DOWN';
+                userMessage = 'NSSF portal is currently unavailable (502/504 Gateway Error). Please try again later.';
+            } else if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) {
+                errorType = 'NETWORK_ERROR';
+                userMessage = 'Cannot connect to NSSF portal. Please check your internet connection and try again.';
+            } else if (msg.includes('404')) {
+                errorType = 'NOT_FOUND';
+                userMessage = 'NSSF portal page not found. The site may be undergoing maintenance.';
+            }
+            console.error(`[Worker][${jobId}] NSSF filing failed: ${errorType}: ${msg}`);
+            await appendJobLog(job, `NSSF filing failed: ${userMessage}`, { progress: 0, level: 'error' });
+            await jobStore.updateJob(jobId, {
+                status: 'failed',
+                error: errorType,
+                errorMessage: msg,
+                userMessage,
+                updatedAt: new Date().toISOString(),
+            } as any);
+            if (payload.clientId) {
+                await adminDb.collection('clients').doc(payload.clientId).update({
+                    nssfStatus: 'failed',
+                    nssfError: userMessage,
+                    nssfErrorType: errorType,
+                    nssfLastErrorAt: new Date().toISOString(),
+                });
+            }
+            throw new Error(userMessage);
+        }
 
         // Upload NSSF payment order receipt to GCS — no local disk storage.
         // fileNssfReturn writes to tmpdir() (not the receipts/ dir), so we read
@@ -2446,40 +2576,6 @@ export async function processFilingJob(job: JobContext): Promise<{
             await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'info' });
         }
 
-        // -- Step 13: Generate Payment Slip (PRN) ----------------------------------
-        let storedPrnPath: string | null = null;
-        
-        // Determine PRN requirement: If MRI/TOT has liability, or if VAT/PAYE
-        const needsPrn = !isNilReturnExplicit && (
-            (isMriReturn && rentalIncomeAmount && rentalIncomeAmount > 0) ||
-            (taxObligationType === 'turnover_tax' && payload.totTurnover && payload.totTurnover > 0) ||
-            (taxObligationType === 'paye') || 
-            (taxObligationType === 'vat')
-        );
-
-        if (needsPrn) {
-            await setJobStep(job, 93, `Generating Payment Slip (PRN) for ${taxObligationType}`);
-            try {
-                const pDate = new Date();
-                const prnResult = await prnService.generate({
-                    taxType: taxObligationType,
-                    periodYear: pDate.getFullYear().toString(),
-                    periodMonth: pDate.toLocaleString('default', { month: 'long' }),
-                });
-
-                if (prnResult.prnPath) {
-                    storedPrnPath = prnResult.prnPath;
-                    console.log(`[Worker][${jobId}] PRN saved to: ${storedPrnPath}`);
-                    await appendJobLog(job, 'Successfully generated and downloaded PRN', { progress: 95 });
-                } else {
-                    await appendJobLog(job, `PRN generation skipped/failed. Receipt logic continues.`, { progress: 95, level: 'info' });
-                }
-            } catch (err: any) {
-                console.error(`[Worker][${jobId}] Could not generate PRN slip:`, err.message);
-                await appendJobLog(job, `Failed to generate PRN: ${err.message}. Receipt logic continues.`, { progress: 95, level: 'info' });
-            }
-        }
-
         // Clean up browser resources before network I/O
         if (context) {
             await context.close();
@@ -2516,6 +2612,30 @@ export async function processFilingJob(job: JobContext): Promise<{
             await appendJobLog(job, 'No receipt was downloaded — skipping local storage and Cloud Storage upload', { progress: 94, level: 'info' });
         }
 
+        // ── Step 14: Inline PRN generation after successful filing ───────────────────
+        let prnResults: Array<{ taxType: TaxObligationType; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
+        if (!isNilReturnExplicit && (isPayeUpload || isTotReturn || isMriReturn || isVatUpload)) {
+            await setJobStep(job, 96, 'Generating Payment Registration Number (PRN) inline');
+            try {
+                prnResults = await generatePrnAfterFiling(
+                    job,
+                    page,
+                    kraPin,
+                    payload.periodFrom || '',
+                    payload.periodTo || '',
+                    taxObligationType
+                );
+                if (prnResults.length > 0) {
+                    await jobStore.updateJob(jobId, {
+                        'result.prnResults': prnResults,
+                    } as any);
+                }
+            } catch (prnErr: any) {
+                console.error(`[Worker][${jobId}] PRN generation error:`, prnErr.message);
+                await appendJobLog(job, `PRN generation error: ${prnErr.message}`, { progress: 96, level: 'info' });
+            }
+        }
+
         try {
             let obligationCol = '';
             if (taxObligationType === 'turnover_tax') obligationCol = 'tot';
@@ -2540,9 +2660,23 @@ export async function processFilingJob(job: JobContext): Promise<{
                     clientUpdate[`${obligationCol}ReceiptUrl`] = apiReceiptUrl;
                 }
 
-                // Persist PRN URL
-                if (storedPrnPath) {
-                    clientUpdate[`${obligationCol}PrnUrl`] = storedPrnPath.replace(/\\/g, '/');
+                // Persist PRN URLs from inline generation
+                if (prnResults.length > 0) {
+                    const successfulPrns = prnResults.filter(r => r.prnPath && !r.error);
+                    if (successfulPrns.length > 0) {
+                        // Store the first successful PRN URL as the primary one
+                        const primaryPrn = successfulPrns[0];
+                        const prnUrl = primaryPrn.prnGcsPath
+                            ? `/api/clients/${payload.clientId}/receipts/${taxObligationType}_prn`
+                            : primaryPrn.prnPath!.replace(/\\/g, '/');
+                        clientUpdate[`${obligationCol}PrnUrl`] = prnUrl;
+                        // Store all PRN results in a sub-field for multi-PRN tracking (e.g. PAYE)
+                        clientUpdate[`${obligationCol}PrnResults`] = successfulPrns.map(r => ({
+                            taxType: r.taxType,
+                            prnPath: r.prnPath,
+                            prnGcsPath: r.prnGcsPath,
+                        }));
+                    }
                 }
 
                 // Persist the filing period (e.g. 2026-05) for period-aware tracking
@@ -2561,7 +2695,7 @@ export async function processFilingJob(job: JobContext): Promise<{
             console.error('[Worker] Failed to update client tracking:', e);
         }
 
-        // ── Step 14: Notify user ──────────────────────────────────────────────────
+        // ── Step 15: Notify user ──────────────────────────────────────────────────
         await setJobStep(job, 98, 'Dispatching completion notification');
         if (storedReceiptPath) {
             await sendReceiptNotification({
@@ -2573,13 +2707,18 @@ export async function processFilingJob(job: JobContext): Promise<{
             });
         }
 
+        // Determine the primary PRN path for the return value
+        const primaryPrnPath = prnResults.length > 0
+            ? prnResults.find(r => r.prnPath && !r.error)?.prnPath
+            : undefined;
+
         await setJobStep(job, 100, 'Job completed successfully');
         console.log(`[Worker][${jobId}] Job completed. Receipt path: ${storedReceiptPath}`);
         return {
             receiptPath: receiptRelativePath || undefined,
             receiptNumber,
             credentialUpdate,
-            prnPath: storedPrnPath || undefined,
+            prnPath: primaryPrnPath,
         };
     } catch (err) {
         const error = err as Error;

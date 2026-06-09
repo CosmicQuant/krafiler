@@ -7,7 +7,6 @@ import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
-import { useState, useEffect } from 'react';
 import type { ClientObligation } from '../../../types';
 
 type RunStatus = 'draft' | 'approved' | 'finalized' | 'filed';
@@ -44,6 +43,9 @@ interface ComplianceState {
   shaFileUrl: string | null; shaFileLabel: string | null;
   statuses: { paye: string; nssf: string; sha: string };
   amounts: { payeAmount: number; nitaAmount: number; housingLevyAmount: number; nssfAmount: number; shaAmount: number };
+  payeReceiptUrl?: string | null;
+  nssfReceiptUrl?: string | null;
+  shaReceiptUrl?: string | null;
 }
 
 interface TabConfig {
@@ -188,6 +190,10 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
         const payeUrl = state?.payeZipUrl; const [ys, ms] = period.split('-'); const lastDay = new Date(parseInt(ys), parseInt(ms), 0).getDate();
         const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: 'paye', periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(lastDay).padStart(2, '0')}`, payeZipUrl: payeUrl, printPrnOnly: false }) });
          const data = await res.json(); if (res.ok) { setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, paye: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PAYE filing failed');
+      } else if (type === 'prn') {
+        const [ys, ms] = period.split('-');
+        const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: activeTab === 'paye' ? 'paye' : activeTab, periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(new Date(parseInt(ys), parseInt(ms), 0).getDate()).padStart(2, '0')}`, printPrnOnly: true }) });
+        const data = await res.json(); if (res.ok) { setSuccess(`PRN queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, prn: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PRN generation failed');
       }
     } catch { setError('Network error'); } finally { setFilingType(null); }
   };
@@ -349,18 +355,34 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     </>
                   );
                 })()}
+                {/* Filing error display */}
+                {(() => {
+                  const error = activeConfig.key === 'nssf' ? (liveClient.nssfError || liveClient.nssfErrorType)
+                    : activeConfig.key === 'paye' ? (liveClient.payeError || liveClient.payeErrorType)
+                    : activeConfig.key === 'sha' ? (liveClient.shaError || liveClient.shaErrorType)
+                    : null;
+                  if (!error) return null;
+                  return (
+                    <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 mt-1">
+                      <p className="font-semibold">Filing Failed</p>
+                      <p>{liveClient.nssfError || liveClient.payeError || liveClient.shaError}</p>
+                    </div>
+                  );
+                })()}
                 {/* Receipt download link after filing is completed */}
                 {(() => {
-                  const receiptUrl = activeConfig.key === 'paye' ? liveClient.payeReceiptUrl
-                    : activeConfig.key === 'nssf' ? liveClient.nssfReceiptUrl
-                    : activeConfig.key === 'sha' ? liveClient.shaReceiptUrl
+                  // Prefer state (from compliance-status API) over liveClient (from Firestore)
+                  // so the UI updates immediately after fetchStatus() is called on job completion.
+                  const receiptUrl = activeConfig.key === 'paye' ? (state?.payeReceiptUrl || liveClient.payeReceiptUrl)
+                    : activeConfig.key === 'nssf' ? (state?.nssfReceiptUrl || liveClient.nssfReceiptUrl)
+                    : activeConfig.key === 'sha' ? (state?.shaReceiptUrl || liveClient.shaReceiptUrl)
                     : activeConfig.key === 'tot' ? liveClient.totReceiptUrl
                     : activeConfig.key === 'mri' ? liveClient.mriReceiptUrl
                     : activeConfig.key === 'vat' ? liveClient.vatReceiptUrl
                     : null;
-                  const isFiled = activeConfig.key === 'paye' ? liveClient.paye === 'filed'
-                    : activeConfig.key === 'nssf' ? liveClient.nssf === 'filed'
-                    : activeConfig.key === 'sha' ? liveClient.sha === 'filed'
+                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
+                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
+                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
                     : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
                     : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
                     : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
@@ -389,6 +411,80 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     >
                       <Download className="h-3.5 w-3.5" /> Download Receipt
                     </button>
+                  );
+                })()}
+                {/* PRN download link after filing is completed */}
+                {(() => {
+                  // Build a list of PRN URLs to show for this obligation
+                  const prnEntries: Array<{ label: string; url: string }> = [];
+                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
+                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
+                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
+                    : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
+                    : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
+                    : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
+                    : false;
+
+                  if (!isFiled) return null;
+
+                  // For PAYE, show all 3 PRNs (PAYE, NITA, AHL) if available
+                  if (activeConfig.key === 'paye') {
+                    const prnResults = (liveClient as any).payePrnResults || [];
+                    if (prnResults.length > 0) {
+                      prnResults.forEach((r: any) => {
+                        const label = r.taxType === 'paye' ? 'PAYE PRN'
+                          : r.taxType === 'nita' ? 'NITA Levy PRN'
+                          : r.taxType === 'affordable_housing' ? 'Housing Levy PRN'
+                          : 'PRN';
+                        const url = r.prnGcsPath
+                          ? `/api/clients/${client.id}/receipts/${r.taxType}_prn`
+                          : r.prnPath;
+                        if (url) prnEntries.push({ label, url });
+                      });
+                    } else if (liveClient.payePrnUrl) {
+                      prnEntries.push({ label: 'PAYE PRN', url: liveClient.payePrnUrl });
+                    }
+                  } else {
+                    // Single PRN for other obligations
+                    const prnUrl = activeConfig.key === 'nssf' ? liveClient.nssfPrnUrl
+                      : activeConfig.key === 'sha' ? liveClient.shaPrnUrl
+                      : activeConfig.key === 'tot' ? liveClient.totPrnUrl
+                      : activeConfig.key === 'mri' ? liveClient.mriPrnUrl
+                      : activeConfig.key === 'vat' ? liveClient.vatPrnUrl
+                      : null;
+                    if (prnUrl) prnEntries.push({ label: 'PRN', url: prnUrl });
+                  }
+
+                  if (prnEntries.length === 0) return null;
+
+                  return (
+                    <div className="flex flex-col gap-1.5 mt-1">
+                      {prnEntries.map((entry, idx) => (
+                        <button
+                          key={idx}
+                          onClick={async () => {
+                            try {
+                              const res = await apiFetch(entry.url.replace(/^\/api/, ''));
+                              if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+                              const blob = await res.blob();
+                              const objectUrl = window.URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = objectUrl;
+                              a.download = entry.url.split('/').pop() || 'prn.pdf';
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              window.URL.revokeObjectURL(objectUrl);
+                            } catch (e: any) {
+                              alert('Failed to download PRN: ' + e.message);
+                            }
+                          }}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs font-bold text-green-700 hover:bg-green-100 transition w-full"
+                        >
+                          <Download className="h-3.5 w-3.5" /> {entry.label}
+                        </button>
+                      ))}
+                    </div>
                   );
                 })()}
               </div>

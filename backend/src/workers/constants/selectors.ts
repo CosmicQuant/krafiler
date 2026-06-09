@@ -55,6 +55,16 @@ export const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
         /^excise\s*duty$/i,
         /excise/i,
     ],
+    nita: [
+        /^nita\s*levy$/i,
+        /^nita$/i,
+        /nita/i,
+    ],
+    affordable_housing: [
+        /^housing\s*levy$/i,
+        /^affordable\s*housing\s*levy$/i,
+        /housing\s*levy/i,
+    ],
 };
 
 // ─── Login Patterns ──────────────────────────────────────────────────────────

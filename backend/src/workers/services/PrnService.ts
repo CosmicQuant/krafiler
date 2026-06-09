@@ -2,7 +2,9 @@ import { Page } from 'playwright';
 import { JobContext } from '../../types';
 import { generatePRNSlip, PrnConfig } from '../../utils/kra-prn-generator';
 import { storeReceiptLocally } from '../../utils/storage';
+import { uploadBuffer, receiptPath as gcsReceiptPath } from '../../lib/cloudStorage';
 import { appendJobLog, setJobStep } from '../utils/job-helpers';
+import * as fs from 'fs/promises';
 
 export class PrnService {
     private page: Page;
@@ -13,7 +15,7 @@ export class PrnService {
         this.job = job;
     }
 
-    async generate(config: PrnConfig): Promise<{ prnPath?: string; error?: string }> {
+    async generate(config: PrnConfig): Promise<{ prnPath?: string; prnGcsPath?: string; error?: string }> {
         await setJobStep(this.job, 80, `Generating Payment Slip (PRN) for ${config.taxType}...`);
 
         const prnDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -29,9 +31,26 @@ export class PrnService {
             return { error: errorMessage };
         }
 
+        // Store locally for backward compatibility
         const { relativePath } = await storeReceiptLocally(prnResult.filePath, this.job.data.jobId);
         const prnPath = relativePath.replace(/\\/g, '/');
+
+        // Upload to Cloud Storage so the file persists in Cloud Run
+        let prnGcsPath: string | undefined;
+        try {
+            const buf = await fs.readFile(prnResult.filePath);
+            const userId = this.job.data.userId || 'dev-user';
+            const clientId = this.job.data.payload.clientId || 'unknown';
+            const jobId = this.job.data.jobId;
+            prnGcsPath = gcsReceiptPath(userId, clientId, jobId, prnFileName);
+            await uploadBuffer(buf, prnGcsPath, { contentType: 'application/pdf' });
+            await appendJobLog(this.job, `PRN uploaded to Cloud Storage: ${prnGcsPath}`, { progress: 90 });
+        } catch (uploadErr: any) {
+            console.error(`[PRN] Failed to upload PRN to GCS:`, uploadErr.message);
+            await appendJobLog(this.job, `PRN upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 90, level: 'info' });
+        }
+
         await appendJobLog(this.job, `PRN generated and stored at ${prnPath}`, { progress: 90 });
-        return { prnPath };
+        return { prnPath, prnGcsPath };
     }
 }

@@ -1890,6 +1890,10 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
                 nssfAmount: client.amounts?.nssfAmount || 0,
                 shaAmount: client.amounts?.shaAmount || 0,
             },
+            // Receipt URLs from filing jobs
+            payeReceiptUrl: client.payeReceiptUrl || null,
+            nssfReceiptUrl: client.nssfReceiptUrl || null,
+            shaReceiptUrl: client.shaReceiptUrl || null,
         });
     } catch (err: any) {
         console.error('Error fetching compliance status:', err);

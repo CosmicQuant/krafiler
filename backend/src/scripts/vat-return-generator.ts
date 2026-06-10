@@ -248,6 +248,10 @@ async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string
     const sections: { [key: string]: string[] } = {};
 
     for (const file of csvFiles) {
+        // Skip the non-VAT PIN file that should not be included in generation
+        if (/WITHOUT_PIN_AND_NON-VAT_PIN/i.test(file)) {
+            continue;
+        }
         // Match patterns like SEC_B_WITH_VAT_PIN1.CSV, SEC_D1_WITH_VAT_PIN1.CSV, SEC_H_ZERO_RATED_PIN1.CSV, etc.
         const match = file.match(/^SEC_([A-Z]\d*)_(.+?)(?:_PIN\d+)?\.CSV$/i);
         if (match) {

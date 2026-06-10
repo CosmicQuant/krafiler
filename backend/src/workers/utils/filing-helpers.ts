@@ -271,8 +271,12 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext,
     // The button has a typo in the ID: "dwnlod_btn_tims" (not "download_btn_tims")
     const exactSelectors = [
         '#dwnlod_btn_tims',
-        'input[type="button"][value="Download Autopopulated VAT Return"]',
-        'input.submit[type="button"][value*="Autopopulated"]',
+        'input[type="button"][value*="Download Autopopulated VAT Return" i]',
+        'input[type="button"][value*="Autopopulated" i]',
+        'button:has-text("Autopopulated")',
+        'button:has-text("Download"):has-text("VAT")',
+        'input[type="button"][value*="Download" i][value*="VAT" i]',
+        'input.submit[type="button"][value*="Autopopulated" i]',
     ];
 
     let trigger: any = null;
@@ -288,6 +292,9 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext,
     }
 
     if (!trigger) {
+        // Snapshot the page for debugging before giving up
+        const pageSnapshot = await snapshotPageControls(page);
+        await appendJobLog(job, `VAT download button not found. Page snapshot: ${pageSnapshot}`, { progress: 72, level: 'error' });
         page.off('dialog', dialogHandler);
         throw new Error('Could not locate the VAT auto-populated return download control (#dwnlod_btn_tims)');
     }
@@ -307,8 +314,8 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext,
     let download: any = null;
     try {
         [download] = await Promise.all([
-            page.waitForEvent('download', { timeout: 45_000 }),
-            trigger.click({ force: true }),
+            page.waitForEvent('download', { timeout: 60_000 }),
+            trigger.click({ force: true }).catch(() => trigger.click()),
         ]);
         await download.saveAs(sourceZipPath);
         await appendJobLog(job, `Downloaded VAT package via browser download event: ${sourceZipPath}`, { progress: 73 });
@@ -364,8 +371,8 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext,
         });
         await appendJobLog(job, `Triggered VAT download via JS fallback`, { progress: 72 });
 
-        // Wait up to 15s for the response handler to fire
-        const deadline = Date.now() + 15_000;
+        // Wait up to 30s for the response handler to fire
+        const deadline = Date.now() + 30_000;
         while (!captured && Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 500));
         }

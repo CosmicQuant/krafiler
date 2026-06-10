@@ -86,11 +86,21 @@ export function useJobListener(
             const vatClientUpdates: Record<string, Partial<ClientObligation>> = {};
             const now = new Date().toISOString();
 
-            snapshot.docs.forEach((docSnap) => {
+            // Sort by createdAt descending so the most recent job per client wins
+            const sortedDocs = snapshot.docs.slice().sort((a, b) => {
+                const aTime = a.data().createdAt?.toMillis?.() ?? 0;
+                const bTime = b.data().createdAt?.toMillis?.() ?? 0;
+                return bTime - aTime;
+            });
+
+            sortedDocs.forEach((docSnap) => {
                 const data = docSnap.data() as FirestoreJobDoc;
                 const jobId = docSnap.id;
                 const clientId = data.clientId || data.payload?.clientId;
                 if (!clientId) return; // Skip legacy jobs without client mapping
+
+                // Skip if we already have a more recent job for this client
+                if (nextJobs[clientId]) return;
 
                 const state = mapStatusToState(data.status);
                 const result = data.result || {};

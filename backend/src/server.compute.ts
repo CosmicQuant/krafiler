@@ -85,7 +85,7 @@ app.use(
 // ─── Rate Limiting ────────────────────────────────────────────────────────────
 const filingLimiter = rateLimit({
     windowMs: 15 * 60 * 1_000,
-    max: 10,
+    max: 100,
     message: {
         success: false,
         message: 'Too many requests. Please wait 15 minutes before trying again.',

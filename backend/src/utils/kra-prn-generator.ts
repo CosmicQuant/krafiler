@@ -108,7 +108,7 @@ export async function generatePRNSlip(
                 if (!nextBtnFound) {
                     console.log('[PRN] Next button not found with selectors, trying JS click...');
                     await page.evaluate(() => {
-                        const allInputs = document.querySelectorAll('input[type="button"], input[type="submit"], button, a');
+                        const allInputs = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button, a'));
                         for (const el of allInputs) {
                             if (el.getAttribute('value') === 'Next' || el.textContent?.trim() === 'Next') {
                                 (el as HTMLElement).click();

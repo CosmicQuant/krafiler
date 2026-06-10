@@ -5,7 +5,7 @@ import fs from 'fs';
 
 chromium.use(StealthPlugin());
 
-const KRA_PIN = 'P051784007D';
+const KRA_PIN = 'P052262687K';
 const KRA_PASSWORD = '0720470947';
 
 interface PrnConfig {

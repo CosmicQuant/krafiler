@@ -714,7 +714,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                             let interceptedHeaders: any = null;
                             await context.route('**/secureAdmin/paymentOrder.xhtml', async (route, request) => {
                                 const response = await route.fetch();
-                                const body = await response.body();
+                                const body = (await response.body()) as Buffer;
                                 interceptedBody = body;
                                 interceptedHeaders = response.headers();
                                 await route.fulfill({ status: response.status(), headers: response.headers(), body });
@@ -730,14 +730,17 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                 await delay(2000);
                                 await context.unroute('**/secureAdmin/paymentOrder.xhtml');
 
-                                if (interceptedBody && interceptedBody.length > 1000) {
-                                    const firstBytes = interceptedBody.slice(0, 8).toString('ascii');
-                                    if (firstBytes.startsWith('%PDF')) {
-                                        await fs.writeFile(paymentOrderPath, interceptedBody);
-                                        console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${interceptedBody.length} bytes)`);
-                                        await receiptPage.close().catch(() => {});
-                                        await updateProgress(10, 'Payment order receipt captured', 99);
-                                        return { paymentOrderPath };
+                                if (interceptedBody) {
+                                    const body = interceptedBody as Buffer;
+                                    if (body.length > 1000) {
+                                        const firstBytes = body.slice(0, 8).toString('ascii');
+                                        if (firstBytes.startsWith('%PDF')) {
+                                            await fs.writeFile(paymentOrderPath, body);
+                                            console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${body.length} bytes)`);
+                                            await receiptPage.close().catch(() => {});
+                                            await updateProgress(10, 'Payment order receipt captured', 99);
+                                            return { paymentOrderPath };
+                                        }
                                     }
                                 }
                                 console.log('No valid PDF intercepted, falling back to screenshot');

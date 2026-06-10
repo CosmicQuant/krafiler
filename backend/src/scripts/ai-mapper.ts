@@ -1,12 +1,11 @@
 ﻿import * as fs from 'fs';
 import * as path from 'path';
 import * as ExcelJS from 'exceljs';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { calculatePayrollFields } from '../utils/payroll-calculations';
 
-// Initialize Gemini
-const apiKey = process.env.GEMINI_API_KEY || '';
-const genAI = new GoogleGenerativeAI(apiKey);
+// Initialize Gemma 4
+const apiKey = process.env.GEMMA4_API_KEY || '';
+const gemma4Model = process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
 
 export interface StandardMapping {
     // Preamble Extraction
@@ -47,7 +46,7 @@ export async function processAndStandardizePayroll(
 ): Promise<{ success: boolean; mappedFile: string; message: string }> {
 
     if (!apiKey) {
-        return { success: false, mappedFile: '', message: 'AI Mapping failed: GEMINI_API_KEY not configured.' };
+        return { success: false, mappedFile: '', message: 'AI Mapping failed: GEMMA4_API_KEY not configured.' };
     }
 
     try {
@@ -81,16 +80,14 @@ export async function processAndStandardizePayroll(
             sampleData += cleanRow.join(' | ') + '\n';
         }
 
-        // 2. Call Gemini to map headers and extract preamble
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
-        
+        // 2. Call Gemma 4 to map headers and extract preamble
         const prompt = `
         You are a highly intelligent payroll data extraction AI.
-        A user uploaded a payroll file (could be unstructured). 
+        A user uploaded a payroll file (could be unstructured).
         Analyze the first 15 rows provided below.
-        
+
         TASK 1: Extract Preamble Values
-        Find any explicit VALUES for the company/employer listed at the top of the file. 
+        Find any explicit VALUES for the company/employer listed at the top of the file.
         - companyName: The actual name of the company.
         - companyPin: The KRA PIN of the company.
         - companyNssf: The company's NSSF number/login.
@@ -118,8 +115,24 @@ export async function processAndStandardizePayroll(
         ${sampleData}
         `;
 
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(gemma4Model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Gemma 4 mapping request failed (${response.status}): ${await response.text()}`);
+        }
+
+        const payload = await response.json();
+        const parts = payload.candidates?.[0]?.content?.parts ?? [];
+        const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
+        const responseText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
         const mapping: StandardMapping = JSON.parse(responseText);
 
         console.log('[AI Mapper] Successfully mapped headers:', mapping);

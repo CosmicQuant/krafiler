@@ -9,7 +9,6 @@
 import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -18,35 +17,53 @@ chromium.use(StealthPlugin());
 const KRA_PIN = 'A001141767G';
 const KRA_PASSWORD = '0722935813';
 const RENTAL_INCOME = 5000;
-const GEMINI_API_KEY = 'AIzaSyDStvPX3EdrxdsvHQ1OTCppoVe8t8F6uss';
+const GEMMA4_API_KEY = process.env.GEMMA4_API_KEY ?? '';
+const GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
 const TMP_DIR = path.join(process.cwd(), 'tmp', 'kra-test');
 
 async function ensureDir(dir: string) {
     await fs.mkdir(dir, { recursive: true });
 }
 
-async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
-
+async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
     const imageBuffer = await fs.readFile(screenshotPath);
-    const base64Image = imageBuffer.toString('base64');
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
 
-    const result = await model.generateContent([
-        {
-            inlineData: {
-                data: base64Image,
-                mimeType: 'image/png',
-            },
-        },
-        {
-            text: 'What is the captcha code in this image? Return ONLY the numeric or alphanumeric code, nothing else.',
-        },
-    ]);
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            contents: [{
+                parts: [
+                    { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
+                    { inline_data: { mime_type: 'image/png', data: imageBuffer.toString('base64') } },
+                ],
+            }],
+            generationConfig: { maxOutputTokens: 128, temperature: 0 },
+        }),
+    });
 
-    const answer = result.response.text().trim();
-    console.log(`[Gemini] Captcha answer: "${answer}"`);
-    return answer;
+    if (!response.ok) {
+        throw new Error(`Gemma 4 request failed (${response.status}): ${await response.text()}`);
+    }
+
+    const payload = await response.json();
+    const parts = payload.candidates?.[0]?.content?.parts ?? [];
+    const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
+    const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
+
+    const allNumbers = rawText.match(/\b\d+\b/g);
+    if (allNumbers && allNumbers.length > 0) {
+        return allNumbers[allNumbers.length - 1];
+    }
+
+    const allPartsText = parts.map((p: any) => p.text).join('\n');
+    const fallbackNumbers = allPartsText.match(/\b\d+\b/g);
+    if (fallbackNumbers && fallbackNumbers.length > 0) {
+        return fallbackNumbers[fallbackNumbers.length - 1];
+    }
+
+    throw new Error(`Gemma 4 returned an unexpected captcha format: "${rawText}"`);
 }
 
 async function delay(ms: number) {
@@ -136,7 +153,7 @@ async function main() {
             if (captchaElement) {
                 const captchaPath = path.join(TMP_DIR, `captcha-${Date.now()}.png`);
                 await captchaElement.screenshot({ path: captchaPath });
-                captchaAnswer = await solveCaptchaWithGemini(captchaPath);
+                captchaAnswer = await solveCaptchaWithGemma4(captchaPath);
                 console.log(`  Gemini captcha answer: ${captchaAnswer}`);
             } else {
                 console.warn('  No captcha element found!');

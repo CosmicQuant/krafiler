@@ -53,10 +53,8 @@ const KRA_REUSE_BROWSER_PROFILE = process.env.KRA_REUSE_BROWSER_PROFILE !== 'fal
 const KRA_PORTAL_URL = 'https://itax.kra.go.ke/KRA-Portal/';
 const KRA_DEBUG_ARTIFACTS = process.env.KRA_DEBUG_ARTIFACTS === 'true';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
-const OPENCODE_API_KEY = process.env.OPENCODE_API_KEY ?? '';
-const OPENCODE_MODEL = process.env.OPENCODE_MODEL ?? 'kimi-k2.6';
+const GEMMA4_API_KEY = process.env.GEMMA4_API_KEY ?? '';
+const GEMMA4_MODEL = process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
 const PLAYWRIGHT_SLOW_MO = Math.max(0, Number.parseInt(process.env.PLAYWRIGHT_SLOW_MO ?? '0', 10) || 0);
 const KRA_BROWSER_CHANNEL = (process.env.KRA_BROWSER_CHANNEL ?? 'chrome').trim().toLowerCase();
 const KRA_BROWSER_EXECUTABLE_PATH = process.env.KRA_BROWSER_EXECUTABLE_PATH?.trim() ?? '';
@@ -778,86 +776,64 @@ function extractGeminiText(payload: any): string {
         .trim();
 }
 
-async function solveCaptchaWithOpenCodeGo(screenshotPath: string): Promise<string> {
-    if (!OPENCODE_API_KEY) {
-        throw new Error('OPENCODE_API_KEY is required for captcha extraction');
+async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
+    if (!GEMMA4_API_KEY) {
+        throw new Error('GEMMA4_API_KEY is required for captcha extraction');
     }
 
     const imageBuffer = await fs.readFile(screenshotPath);
-    const endpoint = 'https://opencode.ai/zen/go/v1/chat/completions';
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
 
     const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENCODE_API_KEY}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            model: OPENCODE_MODEL,
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You solve math captchas. Give only the final number.',
-                },
-                {
-                    role: 'user',
-                    content: [
-                        {
-                            type: 'image_url',
-                            image_url: {
-                                url: `data:image/png;base64,${imageBuffer.toString('base64')}`,
-                            },
+            contents: [{
+                parts: [
+                    { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
+                    {
+                        inline_data: {
+                            mime_type: 'image/png',
+                            data: imageBuffer.toString('base64'),
                         },
-                        {
-                            type: 'text',
-                            text: 'What is the answer to the math problem in this image? Output ONLY the final number.',
-                        },
-                    ],
-                },
-            ],
-            temperature: 0,
-            max_tokens: 128,
+                    },
+                ],
+            }],
+            generationConfig: {
+                maxOutputTokens: 128,
+                temperature: 0,
+            },
         }),
     });
 
     if (!response.ok) {
-        throw new Error(`OpenCode Go request failed (${response.status}): ${await response.text()}`);
+        throw new Error(`Gemma 4 request failed (${response.status}): ${await response.text()}`);
     }
 
     const payload = await response.json();
-    const rawText = payload.choices?.[0]?.message?.content ?? '';
 
-    // Reasoning models put the answer at the END. Try last occurrence first.
+    // Gemma 4 returns a two-part response:
+    // parts[0] = { text: "... reasoning ...", thought: true }
+    // parts[1] = { text: "126", thought: false }  ← answer
+    // Extract the answer from the last non-thought part.
+    const parts = payload.candidates?.[0]?.content?.parts ?? [];
+    const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
+    const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
+
+    // Fallback: scan all parts for numbers
     const allNumbers = rawText.match(/\b\d+\b/g);
     if (allNumbers && allNumbers.length > 0) {
-        // If there's an expression, compute it; otherwise return last number
-        const lastNumber = allNumbers[allNumbers.length - 1];
-
-        // Check if there's an arithmetic expression near the end
-        const tailText = rawText.slice(-100);
-        const exprMatch = tailText.match(/(\d+)\s*([+\-×x*])\s*(\d+)/);
-        if (exprMatch) {
-            const a = parseInt(exprMatch[1], 10);
-            const op = exprMatch[2];
-            const b = parseInt(exprMatch[3], 10);
-            if (op === '+' || op === '×' || op === 'x' || op === '*') {
-                return String(a + b);
-            } else if (op === '-') {
-                return String(a - b);
-            }
-        }
-
-        // Single-number captcha fallback
-        if (allNumbers.length === 1) {
-            return lastNumber;
-        }
-
-        // If multiple numbers and no expression found, return the last one
-        // (reasoning models often end with the computed answer)
-        return lastNumber;
+        return allNumbers[allNumbers.length - 1];
     }
 
-    throw new Error(`OpenCode Go returned an unexpected captcha format: "${rawText}"`);
+    // If no answer part found, scan the entire response for any number
+    const allPartsText = parts.map((p: any) => p.text).join('\n');
+    const fallbackNumbers = allPartsText.match(/\b\d+\b/g);
+    if (fallbackNumbers && fallbackNumbers.length > 0) {
+        return fallbackNumbers[fallbackNumbers.length - 1];
+    }
+
+    throw new Error(`Gemma 4 returned an unexpected captcha format: "${rawText}" (full response: ${JSON.stringify(parts)})`);
 }
 
 async function selectOptionByTextPatterns(
@@ -1320,7 +1296,7 @@ async function performKraLogin(
         }
 
         try {
-            captchaAnswer = await solveCaptchaWithOpenCodeGo(screenPath);
+            captchaAnswer = await solveCaptchaWithGemma4(screenPath);
             console.log(`[Worker][${jobId}] OpenCode Go solved captcha: ${captchaAnswer}`);
         } catch (e) {
             console.warn(`[Worker][${jobId}] OpenCode Go captcha solving failed:`, (e as Error).message);

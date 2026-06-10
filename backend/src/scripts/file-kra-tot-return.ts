@@ -305,16 +305,16 @@ function extractGeminiText(payload: any): string {
         .trim();
 }
 
-async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    const geminiModel = process.env.GEMINI_MODEL ?? 'gemini-flash-latest';
+async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
+    const gemma4ApiKey = process.env.GEMMA4_API_KEY;
+    const gemma4Model = process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
 
-    if (!geminiApiKey) {
-        throw new Error('GEMINI_API_KEY is required for Gemini captcha extraction');
+    if (!gemma4ApiKey) {
+        throw new Error('GEMMA4_API_KEY is required for Gemma 4 captcha extraction');
     }
 
     const imageBuffer = await fs.readFile(screenshotPath);
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(gemma4Model)}:generateContent?key=${encodeURIComponent(gemma4ApiKey)}`;
 
     const response = await fetch(endpoint, {
         method: 'POST',
@@ -322,13 +322,6 @@ async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-            systemInstruction: {
-                parts: [
-                    {
-                        text: 'Extract the KRA Security Stamp arithmetic captcha from screenshots and respond in the exact requested format only.',
-                    },
-                ],
-            },
             contents: [
                 {
                     parts: [
@@ -352,29 +345,25 @@ async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
                 },
             ],
             generationConfig: {
-                responseMimeType: 'text/plain',
                 temperature: 0,
-                topP: 0.1,
-                candidateCount: 1,
                 maxOutputTokens: 32,
-                mediaResolution: 'MEDIA_RESOLUTION_HIGH',
-                thinkingConfig: {
-                    thinkingBudget: 0,
-                },
             },
         }),
     });
 
     if (!response.ok) {
-        throw new Error(`Gemini request failed (${response.status}): ${await response.text()}`);
+        throw new Error(`Gemma 4 request failed (${response.status}): ${await response.text()}`);
     }
 
     const payload = await response.json();
-    const rawText = extractGeminiText(payload);
+    const parts = payload.candidates?.[0]?.content?.parts ?? [];
+    const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
+    const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
+
     const match = rawText.match(/expression\s*=\s*(\d+)\s*([\+\-\*\/])\s*(\d+)\s*;\s*answer\s*=\s*(-?\d+)/i);
 
     if (!match) {
-        throw new Error(`Gemini returned an unexpected captcha format: "${rawText}"`);
+        throw new Error(`Gemma 4 returned an unexpected captcha format: "${rawText}"`);
     }
 
     const expression = `${match[1]} ${match[2]} ${match[3]}`;
@@ -382,7 +371,7 @@ async function solveCaptchaWithGemini(screenshotPath: string): Promise<string> {
     const expectedAnswer = String(solveCaptcha(expression));
 
     if (answer !== expectedAnswer) {
-        throw new Error(`Gemini answer mismatch: expression ${expression}, expected ${expectedAnswer}, got ${answer}`);
+        throw new Error(`Gemma 4 answer mismatch: expression ${expression}, expected ${expectedAnswer}, got ${answer}`);
     }
 
     return answer;
@@ -420,7 +409,7 @@ async function solveLoginCaptcha(page: Page, runId: string): Promise<string> {
         await page.screenshot({ path: screenshotPath, fullPage: false, type: 'png' });
     }
 
-    return solveCaptchaWithGemini(screenshotPath);
+    return solveCaptchaWithGemma4(screenshotPath);
 }
 
 async function selectOptionByTextPatterns(locator: Locator, patterns: RegExp[]): Promise<{ value: string; text: string }> {

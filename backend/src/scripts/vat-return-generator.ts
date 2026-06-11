@@ -302,7 +302,9 @@ function mapSectionRows(params: {
             case 'C': {
                 // Sales with PIN (10-col source)
                 // Output: 11 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, empty, empty, Rate]
-                vatAmount = round(taxableAmount * 0.16, 4);
+                // B = General Rate (16%), C = Other Rate (8%)
+                const rate = section === 'B' ? 0.16 : 0.08;
+                vatAmount = round(taxableAmount * rate, 4);
                 const pin = (row[0] || '').trim();
                 values = [
                     pin,

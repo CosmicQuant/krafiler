@@ -144,6 +144,25 @@ const AUTHENTICATED_DASHBOARD_SELECTORS = [
     '#homePageLink',
     'a:has-text("Logout")',
     'a:has-text("Returns")',
+    'a:has-text("My Profile")',
+    'a:has-text("Compliance")',
+    'a:has-text("My Ledger")',
+    'a:has-text("Audit & Assessment")',
+    'a:has-text("Payments")',
+    'a:has-text("Refunds")',
+    'a:has-text("Objection & Appeal")',
+    'a:has-text("Taxpayer Information Update")',
+    'text=Dashboard',
+    'text=Returns',
+    '#mainNav',
+    '#sideNav',
+    '.dashboard',
+    'a[href="eReturns.htm"]',
+    'a[href="logout.htm"]',
+    'a[href="javascript:logout()"]',
+    'a[href*="logout"]',
+    '#logout',
+    '#logoutBtn',
 ] as const;
 
 const PASSWORD_CHANGE_SELECTORS = [
@@ -554,8 +573,9 @@ async function findVisibleSelector(
     selectors: readonly string[]
 ): Promise<string | null> {
     for (const selector of selectors) {
-        const isVisible = await page.locator(selector).first().isVisible().catch(() => false);
-        if (isVisible) {
+        const locator = page.locator(selector).first();
+        const count = await locator.count().catch(() => 0);
+        if (count > 0) {
             return selector;
         }
     }
@@ -820,10 +840,9 @@ async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
     const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
     const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
 
-    // Fallback: scan all parts for numbers
-    const allNumbers = rawText.match(/\b\d+\b/g);
-    if (allNumbers && allNumbers.length > 0) {
-        return allNumbers[allNumbers.length - 1];
+    const cleaned = rawText.replace(/\D/g, '');
+    if (cleaned) {
+        return cleaned;
     }
 
     // If no answer part found, scan the entire response for any number
@@ -1504,6 +1523,168 @@ async function handleMobileVerification(
     });
 }
 
+async function extractVatCreditBroughtForward(page: any, job: JobContext): Promise<number> {
+    const { jobId } = job.data;
+
+    await appendJobLog(job, 'Navigating to View Filed Returns to extract credit brought forward...', { progress: 46 });
+
+    // Step 1: Hover over Returns menu and click "View Filed Returns"
+    const returnsMenu = page.locator('a:has-text("Returns"), #returns, td:has-text("Returns") a').first();
+    if (await returnsMenu.count() === 0) {
+        throw new Error('Returns menu not found');
+    }
+    await returnsMenu.hover();
+    await page.waitForTimeout(1_500);
+
+    const viewFiledReturns = page.locator('a:has-text("View Filed Returns"), a[href*="showReturns"], a[href*="viewReturns"]').first();
+    if (await viewFiledReturns.count() === 0) {
+        throw new Error('View Filed Returns link not found');
+    }
+    await viewFiledReturns.click();
+    await page.waitForTimeout(3_000);
+    await appendJobLog(job, 'Clicked View Filed Returns', { progress: 46 });
+
+    // Step 2: Select VAT from Tax Obligation dropdown
+    const allSelects = await page.locator('select').all();
+    let obligationSelect: any = null;
+    for (const sel of allSelects) {
+        const isDisabled = await sel.isDisabled().catch(() => true);
+        if (isDisabled) continue;
+        try {
+            const options = await sel.evaluate((el: HTMLSelectElement) => Array.from(el.options).map(o => o.text));
+            if (options.some((o: string) => o.includes('Value Added Tax'))) {
+                obligationSelect = sel;
+                break;
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    if (!obligationSelect) {
+        throw new Error('Could not find Tax Obligation dropdown with VAT option');
+    }
+    await obligationSelect.selectOption({ label: 'Value Added Tax (VAT)' });
+    await appendJobLog(job, 'Selected VAT from Tax Obligation dropdown', { progress: 46 });
+    await page.waitForTimeout(1_000);
+
+    // Step 3: Click Consult button
+    const consultBtn = page.locator('input[value="Consult"], button:has-text("Consult"), a:has-text("Consult"]').first();
+    if (await consultBtn.count() === 0) {
+        throw new Error('Consult button not found');
+    }
+    await consultBtn.click();
+    await appendJobLog(job, 'Clicked Consult button', { progress: 46 });
+    await page.waitForTimeout(2_000);
+
+    // Step 4: Handle confirmation dialog
+    try {
+        const dialog = await page.waitForEvent('dialog', { timeout: 5_000 });
+        const dialogMsg = dialog.message();
+        await appendJobLog(job, `KRA dialog: "${dialogMsg}"`, { progress: 46 });
+        await dialog.accept();
+        await page.waitForTimeout(2_000);
+    } catch {
+        // No dialog appeared
+    }
+
+    // Step 5: Click "View" on the most recent filing (first row)
+    const viewLinks = await page.locator('a:has-text("View"), a[href*="view"], input[value="View"]').all();
+    if (viewLinks.length === 0) {
+        throw new Error('No View links found in filed returns list');
+    }
+    await viewLinks[0].click();
+    await appendJobLog(job, 'Clicked View on most recent filing', { progress: 46 });
+    await page.waitForTimeout(3_000);
+
+    // Step 6: Scroll down to find "Net VAT Payable / Credit Carried Forward"
+    await appendJobLog(job, 'Scrolling to find Net VAT Payable / Credit Carried Forward...', { progress: 46 });
+
+    // Try to find the element by text
+    const creditRow = page.locator('tr:has-text("Net VAT Payable / Credit Carried Forward"), tr:has-text("Net VAT Payable"), tr:has-text("Credit Carried Forward"), td:has-text("Net VAT Payable"), td:has-text("Credit Carried Forward")').first();
+
+    let creditValue: number | null = null;
+
+    if (await creditRow.count() > 0) {
+        // Try to extract the value from the adjacent cell
+        try {
+            const cells = await creditRow.locator('td').all();
+            for (const cell of cells) {
+                const text = await cell.textContent();
+                const match = text?.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
+                if (match) {
+                    const num = parseFloat(match[0].replace(/,/g, ''));
+                    if (num !== 0) {
+                        creditValue = num;
+                        break;
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    // If direct extraction failed, take screenshot and use Gemma 4
+    if (creditValue === null) {
+        await appendJobLog(job, 'Could not extract value via DOM, taking screenshot for AI analysis...', { progress: 46 });
+        const screenshotPath = path.join(TMP_DIR, `vat-credit-${jobId}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+
+        const imageBuffer = await fs.readFile(screenshotPath);
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [
+                        { text: 'Find the value next to "Net VAT Payable / Credit Carried Forward" in this VAT return page. If the number is negative, that is the credit carried forward. Return ONLY the numeric value (including the negative sign if present). No explanation.' },
+                        {
+                            inline_data: {
+                                mime_type: 'image/png',
+                                data: imageBuffer.toString('base64'),
+                            },
+                        },
+                    ],
+                }],
+                generationConfig: {
+                    maxOutputTokens: 50,
+                    temperature: 0,
+                },
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Gemma 4 request failed (${response.status})`);
+        }
+
+        const payload = await response.json();
+        const parts = payload.candidates?.[0]?.content?.parts ?? [];
+        const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
+        const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
+
+        const match = rawText.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
+        if (match) {
+            creditValue = parseFloat(match[0].replace(/,/g, ''));
+        }
+    }
+
+    if (creditValue === null) {
+        throw new Error('Could not extract credit carried forward value');
+    }
+
+    // Only use negative values as credit (positive means payable, not credit)
+    const credit = creditValue < 0 ? Math.abs(creditValue) : 0;
+
+    await appendJobLog(job, `Extracted credit carried forward: KES ${credit}`, { progress: 46 });
+
+    // Navigate back to dashboard for the main flow
+    await page.goto('https://itax.kra.go.ke/KRA-Portal/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await navigationDelay();
+
+    return credit;
+}
+
 async function resolveUploadArtifactPath(
     artifactUrl: string,
     jobId: string,
@@ -1969,6 +2150,19 @@ export async function processFilingJob(job: JobContext): Promise<{
                         ? 'VAT return obligation page ready'
                     : 'Nil return obligation page ready';
 
+        // ── For VAT preparation: extract credit brought forward from portal ──
+        let creditBroughtForward = 0;
+        if (isVatPrepareOnly || isVatUpload) {
+            try {
+                creditBroughtForward = await extractVatCreditBroughtForward(page, job);
+                if (creditBroughtForward !== 0) {
+                    await appendJobLog(job, `Extracted VAT credit brought forward from portal: KES ${creditBroughtForward}`, { progress: 47 });
+                }
+            } catch (e: any) {
+                await appendJobLog(job, `Could not extract credit from portal: ${e.message}`, { progress: 47, level: 'warn' });
+            }
+        }
+
         // ── Robust Returns menu navigation ──────────────────────────────────────
         // KRA sometimes redirects to "My Ledger" after login instead of dashboard.
         // If so, navigate to dashboard first, then click Returns menu.
@@ -2099,12 +2293,30 @@ export async function processFilingJob(job: JobContext): Promise<{
             console.log(`[Worker][${jobId}] Type select dropdown not visible or error:`, e.message);
         }
 
-        const obligationSelect = page.locator('select#regType, select[name="obligationId"]').first();
-        await obligationSelect.waitFor({ timeout: 10_000 });
-        const obligationChoice = await selectOptionByTextPatterns(
-            obligationSelect,
-            TAX_OBLIGATION_PATTERNS[taxObligationType]
-        );
+        // Find the Tax Obligation dropdown by scanning all enabled <select> elements
+        // and picking the one that contains an option matching the desired tax type.
+        let obligationSelect: any = null;
+        let obligationChoice: any = null;
+        const allSelects = await page.locator('select').all();
+        for (const sel of allSelects) {
+            const isDisabled = await sel.isDisabled().catch(() => true);
+            if (isDisabled) continue;
+            try {
+                const choice = await selectOptionByTextPatterns(sel, TAX_OBLIGATION_PATTERNS[taxObligationType]);
+                if (choice) {
+                    obligationSelect = sel;
+                    obligationChoice = choice;
+                    break;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        if (!obligationSelect || !obligationChoice) {
+            throw new Error(`Could not find the Tax Obligation dropdown for ${taxObligationType}`);
+        }
+
         console.log(`[Worker][${jobId}] Selected tax obligation: ${obligationChoice.text} [${obligationChoice.value}]`);
         await appendJobLog(job, `Selected tax obligation: ${obligationChoice.text}`, { progress: 60 });
 
@@ -2166,12 +2378,18 @@ export async function processFilingJob(job: JobContext): Promise<{
         await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
 
     if (!isNilReturnExplicit && isVatPrepareOnly) {
+        // Use credit brought forward from portal if available, otherwise fall back to frontend value
+        const effectivePreviousCredit = creditBroughtForward !== 0 ? creditBroughtForward : vatPreviousCredit;
+        if (creditBroughtForward !== 0) {
+            await appendJobLog(job, `Using portal-extracted credit brought forward: KES ${effectivePreviousCredit}`, { progress: 70 });
+        }
+
         const preparedVat = await vatFilingService.prepareFromPortal({
             kraPin,
             clientName: resolvedClientName,
             periodFrom,
             periodTo,
-            previousCredit: vatPreviousCredit,
+            previousCredit: effectivePreviousCredit,
             sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
         });
 

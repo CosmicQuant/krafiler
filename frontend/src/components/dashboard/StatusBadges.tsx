@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock, FileArchive, Download } from 'lucide-react';
+import { CheckCircle2, Clock, FileArchive } from 'lucide-react';
 import { TaxStatus } from '../../types';
 import { apiFetch } from '../../services/api';
 

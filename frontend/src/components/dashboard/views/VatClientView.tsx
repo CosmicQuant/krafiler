@@ -6,7 +6,7 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Download, RefreshCw, FileText } from 'lucide-react';
+import { Download, RefreshCw } from 'lucide-react';
 import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, VatPreparationSummary } from '../../../types';
 import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
@@ -16,7 +16,7 @@ import {
     getReceiptUrlForObligation,
     isPendingFilingJob,
     isTerminalFilingJob,
-    isSameMoney,
+    getClientFilingPeriod,
 } from '../../../utils/dashboardUtils';
 import JobStatusInline from '../JobStatusInline';
 import { StatusBadge } from '../StatusBadges';
@@ -25,8 +25,6 @@ import { ActiveDashboardJob } from '../../../types';
 interface VatClientViewProps {
     clients: ClientObligation[];
     activeJobs: Record<string, ActiveDashboardJob>;
-    vatPreviousCreditVals: Record<string, string>;
-    setVatPreviousCreditVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     vatSectionBWithoutPinVals: Record<string, string>;
     setVatSectionBWithoutPinVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     onPrepareVat: (client: ClientObligation) => Promise<void>;
@@ -39,8 +37,6 @@ interface VatClientViewProps {
 export function VatClientView({
     clients,
     activeJobs,
-    vatPreviousCreditVals,
-    setVatPreviousCreditVals,
     vatSectionBWithoutPinVals,
     setVatSectionBWithoutPinVals,
     onPrepareVat,
@@ -77,21 +73,17 @@ export function VatClientView({
     const vatGeneratedZipUrl = client.vatZipUrl ?? relevantJob?.generatedZipUrl;
     const vatSourcePackageUrl = client.vatSourcePackageUrl ?? relevantJob?.sourcePackageUrl;
 
+    // Extract credit and withholding from job results or client data
     const vatSummary: VatPreparationSummary = {
         inputVat: client.vatInputVat ?? relevantJob?.vatSummary?.inputVat ?? 0,
         outputVat: client.vatOutputVat ?? relevantJob?.vatSummary?.outputVat ?? 0,
         previousCredit: client.vatPreviousCredit ?? relevantJob?.vatSummary?.previousCredit ?? 0,
+        withholdingAmount: client.vatWithholdingAmount ?? relevantJob?.vatSummary?.withholdingAmount ?? 0,
         payableVat: client.vatPayableVat ?? relevantJob?.vatSummary?.payableVat ?? 0,
         netVatBalance: client.vatNetVatBalance ?? relevantJob?.vatSummary?.netVatBalance ?? 0,
         sales: relevantJob?.vatSummary?.sales,
         purchases: relevantJob?.vatSummary?.purchases,
     };
-
-    const vatInputValue =
-        vatPreviousCreditVals[client.id] ??
-        (typeof client.vatPreviousCredit === 'number' ? String(client.vatPreviousCredit) : '');
-    const parsedVatInputValue = vatInputValue.trim().length > 0 ? Number.parseFloat(vatInputValue) : 0;
-    const vatCurrentCredit = Number.isFinite(parsedVatInputValue) ? parsedVatInputValue : 0;
 
     const vatSectionBWithoutPinInputValue =
         vatSectionBWithoutPinVals[client.id] ??
@@ -100,10 +92,12 @@ export function VatClientView({
             : '');
 
     const vatHasPreparedArtifacts = Boolean(vatGeneratedZipUrl);
-    const vatCreditMatchesPrepared = isSameMoney(vatSummary.previousCredit, vatCurrentCredit);
     const vatGenerateActionLabel = vatHasPreparedArtifacts ? 'Regenerate VAT ZIP' : 'Generate VAT ZIP';
-    const vatBalanceLabel = vatSummary.netVatBalance >= 0 ? 'VAT Payable' : 'Credit Balance';
-    const vatBalanceValue = Math.abs(vatSummary.netVatBalance);
+
+    // Determine the VAT period from client settings (or fallback to current filing period)
+    const vatPeriod = getClientFilingPeriod(client, 'vat');
+    const vatPeriodKey = vatPeriod.period;
+    const vatPeriodAlreadyFiled = client.filedPeriods?.vat?.includes(vatPeriodKey);
 
     return (
         <div className="mt-6 space-y-6">
@@ -117,7 +111,15 @@ export function VatClientView({
                         label="VAT Client"
                     />
                 </div>
-                <StatusBadge status={client.vat} />
+                <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-slate-500">
+                        Period: <span className="font-bold text-slate-700">{vatPeriodKey}</span>
+                        {vatPeriodAlreadyFiled && (
+                            <span className="ml-2 text-emerald-600">(filed)</span>
+                        )}
+                    </span>
+                    <StatusBadge status={client.vat} />
+                </div>
             </div>
 
             {/* Downloads row */}
@@ -148,8 +150,8 @@ export function VatClientView({
 
             {/* Main VAT Card */}
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-6">
-                {/* Inputs: Section B + Credit */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Inputs: Section B Without VAT PIN + Credit/Withholding Display */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                     {/* Section B Without VAT PIN */}
                     <div className="rounded-xl bg-slate-50 border border-slate-200/60 p-4">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -174,104 +176,32 @@ export function VatClientView({
                         </div>
                     </div>
 
-                    {/* Credit Brought Forward */}
+                    {/* Credit Brought Forward — Auto-extracted */}
                     <div className="rounded-xl bg-slate-50 border border-slate-200/60 p-4">
                         <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                             Credit Brought Forward
                         </label>
                         <div className="mt-2 flex items-center gap-2">
                             <span className="text-xs font-medium text-slate-500">KES</span>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="Carry-forward credit"
-                                value={vatInputValue}
-                                onChange={(e) =>
-                                    setVatPreviousCreditVals((prev) => ({
-                                        ...prev,
-                                        [client.id]: e.target.value,
-                                    }))
-                                }
-                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 transition shadow-inner"
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Section M & N Side by Side */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {/* Section M — Output VAT (Sales) */}
-                    <div className="rounded-xl border border-blue-500/10 bg-blue-50/40 p-5">
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-blue-700 mb-4 flex items-center gap-2">
-                            <FileText className="h-3.5 w-3.5" />
-                            Section M — Output VAT (Sales)
-                        </h4>
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center text-sm">
-                                <span className="text-slate-600 font-medium">Output VAT</span>
-                                <span className="text-slate-900 font-bold">
-                                    KES {formatTaxAmount(vatSummary.outputVat)}
-                                </span>
-                            </div>
-                            <div className="h-px bg-blue-200/40" />
-                            <div className="flex justify-between items-center text-sm">
-                                <span className="text-slate-600 font-medium">Sales Value</span>
-                                <span className="text-slate-900 font-semibold">
-                                    KES {formatTaxAmount((vatSummary.outputVat || 0) * 20)}
-                                </span>
+                            <div className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                                {formatTaxAmount(vatSummary.previousCredit)}
                             </div>
                         </div>
+                        <p className="mt-1 text-[10px] text-slate-400">Auto-extracted from KRA portal</p>
                     </div>
 
-                    {/* Section N — Input VAT (Purchases) */}
-                    <div className="rounded-xl border border-emerald-500/10 bg-emerald-50/40 p-5">
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-700 mb-4 flex items-center gap-2">
-                            <FileText className="h-3.5 w-3.5" />
-                            Section N — Input VAT (Purchases)
-                        </h4>
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center text-sm">
-                                <span className="text-slate-600 font-medium">Input VAT</span>
-                                <span className="text-slate-900 font-bold">
-                                    KES {formatTaxAmount(vatSummary.inputVat)}
-                                </span>
-                            </div>
-                            <div className="h-px bg-emerald-200/40" />
-                            <div className="flex justify-between items-center text-sm">
-                                <span className="text-slate-600 font-medium">Purchases Value</span>
-                                <span className="text-slate-900 font-semibold">
-                                    KES {formatTaxAmount((vatSummary.inputVat || 0) * 20)}
-                                </span>
+                    {/* VAT Withholding — Auto-extracted */}
+                    <div className="rounded-xl bg-slate-50 border border-slate-200/60 p-4">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                            VAT Withholding
+                        </label>
+                        <div className="mt-2 flex items-center gap-2">
+                            <span className="text-xs font-medium text-slate-500">KES</span>
+                            <div className="w-full rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
+                                {formatTaxAmount(vatSummary.withholdingAmount)}
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                {/* Summary & Balance */}
-                <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-4 space-y-3">
-                    <div className="flex justify-between items-center text-sm">
-                        <span className="text-slate-600 font-medium">Previous Credit Applied</span>
-                        <span className="text-slate-900 font-bold">
-                            KES {formatTaxAmount(vatSummary.previousCredit)}
-                        </span>
-                    </div>
-                    <div className="border-t border-slate-200/80 pt-3 flex justify-between items-center">
-                        <span
-                            className={`text-sm font-bold ${
-                                vatSummary.netVatBalance >= 0 ? 'text-blue-600' : 'text-emerald-600'
-                            }`}
-                        >
-                            {vatBalanceLabel}{' '}
-                            <span className="font-normal text-[10px] opacity-70">(After credit)</span>
-                        </span>
-                        <span
-                            className={`text-lg font-black ${
-                                vatSummary.netVatBalance >= 0 ? 'text-blue-600' : 'text-emerald-600'
-                            }`}
-                        >
-                            KES {formatTaxAmount(vatBalanceValue)}
-                        </span>
+                        <p className="mt-1 text-[10px] text-slate-400">Auto-extracted from KRA portal</p>
                     </div>
                 </div>
 
@@ -281,6 +211,7 @@ export function VatClientView({
                         sales={vatSummary.sales}
                         purchases={vatSummary.purchases}
                         previousCredit={vatSummary.previousCredit}
+                        withholdingAmount={vatSummary.withholdingAmount}
                         netVatBalance={vatSummary.netVatBalance}
                     />
                 ) : null}
@@ -288,14 +219,8 @@ export function VatClientView({
                 {/* Prepared artifacts warning */}
                 {vatHasPreparedArtifacts && (
                     <div className="flex flex-col gap-2 rounded-lg border border-slate-200/70 bg-slate-100 p-3 text-[11px] text-slate-600">
-                        <span
-                            className={`font-semibold ${
-                                vatCreditMatchesPrepared ? 'text-emerald-600' : 'text-[#ff0613]'
-                            }`}
-                        >
-                            {vatCreditMatchesPrepared
-                                ? 'VAT summary is ready. File VAT when you are satisfied with the figures.'
-                                : 'The VAT credit input changed after generation. Regenerate VAT ZIP before filing VAT.'}
+                        <span className="font-semibold text-emerald-600">
+                            VAT summary is ready. File VAT when you are satisfied with the figures.
                         </span>
                     </div>
                 )}
@@ -304,9 +229,10 @@ export function VatClientView({
                 <div className="flex flex-wrap items-center gap-3 pt-2">
                     <button
                         onClick={() => void onPrepareVat(client)}
-                        disabled={isPendingFilingJob(relevantJob as any)}
+                        disabled={isPendingFilingJob(relevantJob as any) || vatPeriodAlreadyFiled}
+                        title={vatPeriodAlreadyFiled ? `VAT for ${vatPeriodKey} has already been filed` : undefined}
                         className={`inline-flex items-center gap-2 rounded-xl border px-5 py-2.5 text-xs font-bold transition shadow-sm ${
-                            isPendingFilingJob(relevantJob as any)
+                            isPendingFilingJob(relevantJob as any) || vatPeriodAlreadyFiled
                                 ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
                                 : 'bg-blue-50 border-blue-500/20 text-blue-600 hover:bg-blue-100 hover:text-blue-500'
                         }`}
@@ -321,12 +247,13 @@ export function VatClientView({
                         disabled={
                             isPendingFilingJob(relevantJob as any) ||
                             !vatHasPreparedArtifacts ||
-                            !vatCreditMatchesPrepared
+                            vatPeriodAlreadyFiled
                         }
+                        title={vatPeriodAlreadyFiled ? `VAT for ${vatPeriodKey} has already been filed` : undefined}
                         className={`inline-flex items-center gap-2 rounded-xl border px-5 py-2.5 text-xs font-bold transition shadow-sm ${
                             isPendingFilingJob(relevantJob as any) ||
                             !vatHasPreparedArtifacts ||
-                            !vatCreditMatchesPrepared
+                            vatPeriodAlreadyFiled
                                 ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed'
                                 : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-500'
                         }`}

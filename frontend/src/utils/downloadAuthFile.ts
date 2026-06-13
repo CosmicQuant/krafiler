@@ -2,15 +2,29 @@ import { apiFetch } from '../services/api';
 
 /**
  * Download a receipt (or any auth-protected file) using the authenticated API client.
- * Falls back to window.open for public URLs (e.g. signed GCS URLs).
+ * Handles signed GCS URLs by downloading directly, and API routes via authenticated fetch.
  */
 export async function downloadAuthFile(url: string, fallbackFilename = 'receipt.pdf') {
     if (!url) return;
-    // If it's a full public URL (not our API), just open it
+    
+    // If it's a signed GCS URL (storage.googleapis.com), download directly
+    if (url.includes('storage.googleapis.com')) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fallbackFilename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+    }
+    
+    // If it's a full public URL (not our API), open it
     if (url.startsWith('http')) {
         window.open(url, '_blank');
         return;
     }
+    
     try {
         // apiFetch already prepends /api, so strip it if the URL already has it
         const apiUrl = url.replace(/^\/api/, '');

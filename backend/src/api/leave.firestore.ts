@@ -27,7 +27,7 @@ router.get('/:clientId/leave-types', async (req: AuthenticatedRequest, res) => {
             .orderBy('name', 'asc')
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching leave types from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -125,7 +125,7 @@ router.get('/:clientId/leave', async (req: AuthenticatedRequest, res) => {
             .orderBy('createdAt', 'desc')
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching leave requests from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

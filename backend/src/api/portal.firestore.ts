@@ -54,7 +54,7 @@ router.get('/dashboard', async (req: PortalRequest, res) => {
             .where('employeeId', '==', employeeId)
             .orderBy('createdAt', 'desc')
             .get();
-        const leaveRequests = leaveSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const leaveRequests = leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
         const leaveSummary = {
             total: leaveRequests.length,
             pending: leaveRequests.filter((l: any) => l.status === 'Pending').length,
@@ -71,13 +71,13 @@ router.get('/dashboard', async (req: PortalRequest, res) => {
             .where('employeeId', '==', employeeId)
             .orderBy('createdAt', 'desc')
             .get();
-        const loans = loanSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const loans = loanSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
         const loanSummary = {
             total: loans.length,
             active: loans.filter((l: any) => l.status === 'Active' || l.status === 'Approved').length,
             paid: loans.filter((l: any) => l.status === 'Paid').length,
-            totalPrincipal: loans.reduce((sum, l: any) => sum + (l.principal || 0), 0),
-            outstandingBalance: loans.reduce((sum, l: any) => sum + ((l.totalRepayable || 0) - (l.amountPaid || 0)), 0),
+            totalPrincipal: loans.reduce((sum: any, l: any) => sum + (l.principal || 0), 0),
+            outstandingBalance: loans.reduce((sum: any, l: any) => sum + ((l.totalRepayable || 0) - (l.amountPaid || 0)), 0),
         };
 
         // Attendance summary (last 30 days)
@@ -91,7 +91,7 @@ router.get('/dashboard', async (req: PortalRequest, res) => {
             .where('date', '>=', thirtyDaysAgo.toISOString().split('T')[0])
             .orderBy('date', 'desc')
             .get();
-        const attendance = attendanceSnapshot.docs.map((d) => d.data());
+        const attendance = attendanceSnapshot.docs.map((d: any) => d.data());
         const attendanceSummary = {
             total: attendance.length,
             present: attendance.filter((a: any) => a.status === 'Present').length,
@@ -108,9 +108,9 @@ router.get('/dashboard', async (req: PortalRequest, res) => {
             .where('clientId', '==', clientId)
             .where('employeeId', '==', employeeId)
             .get();
-        const payrollEntries = payrollSnapshot.docs.map((d) => d.data());
-        const totalUnpaidLeaveDays = payrollEntries.reduce((sum, e: any) => sum + (e.unpaidLeaveDays || 0), 0);
-        const totalLoanDeduction = payrollEntries.reduce((sum, e: any) => sum + (e.loanDeduction || 0), 0);
+        const payrollEntries = payrollSnapshot.docs.map((d: any) => d.data());
+        const totalUnpaidLeaveDays = payrollEntries.reduce((sum: any, e: any) => sum + (e.unpaidLeaveDays || 0), 0);
+        const totalLoanDeduction = payrollEntries.reduce((sum: any, e: any) => sum + (e.loanDeduction || 0), 0);
 
         res.json({
             employee: {
@@ -746,7 +746,7 @@ router.get('/documents', async (req: PortalRequest, res) => {
             .orderBy('uploadedAt', 'desc')
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching portal documents from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

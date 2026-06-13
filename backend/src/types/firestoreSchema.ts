@@ -88,6 +88,17 @@ export interface ClientDoc {
     masterFile?: { url: string; uploadedAt: Timestamp; label: string };
     payStructure: 'fixed' | 'prorated';
     defaultWorkScheduleId?: string;
+    /** Per-obligation filing period overrides (month 1-12) */
+    vatPeriodMonth?: number;
+    vatPeriodYear?: number;
+    payePeriodMonth?: number;
+    payePeriodYear?: number;
+    totPeriodMonth?: number;
+    totPeriodYear?: number;
+    mriPeriodMonth?: number;
+    mriPeriodYear?: number;
+    /** Track which periods have been filed per obligation (e.g. { vat: ['2026-04', '2026-05'] }) */
+    filedPeriods?: Record<TaxObligationType, string[]>;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }

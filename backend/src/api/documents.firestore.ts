@@ -24,7 +24,7 @@ router.get('/:clientId/employees/:employeeId/documents', async (req: Authenticat
             .where('employeeId', '==', employeeId)
             .orderBy('uploadedAt', 'desc')
             .get();
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching documents from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

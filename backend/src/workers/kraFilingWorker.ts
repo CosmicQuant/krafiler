@@ -25,11 +25,12 @@ import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { JobContext } from '../types';
 import { adminDb } from '../lib/firebaseAdmin';
+import { FieldValue } from 'firebase-admin/firestore';
 import * as jobStore from '../services/jobStore';
 // import { decrypt } from '../utils/encryption';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
-import { uploadFile, uploadBuffer, receiptPath as gcsReceiptPath } from '../lib/cloudStorage';
+import { uploadFile, uploadBuffer, receiptPath as gcsReceiptPath, getSignedDownloadUrl } from '../lib/cloudStorage';
 import type { PrnConfig } from '../utils/kra-prn-generator';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { PayeFilingService } from './services/PayeFilingService';
@@ -219,6 +220,12 @@ const VAT_SUBMISSION_ERROR_PATTERNS = [
     /invalid\s+file/i,
     /error\s+occurred\s+while\s+uploading/i,
     /selected\s+tax\s+obligation/i,
+    /not\s+declared/i,
+    /credit\s+note/i,
+    /error\s+description/i,
+    /validation\s+failed/i,
+    /invalid\s+(invoice|return|data|period)/i,
+    /failed\s+to\s+(submit|file|upload)/i,
 ];
 
 const VAT_DOWNLOAD_TRIGGER_SELECTORS = [
@@ -804,34 +811,65 @@ async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
     const imageBuffer = await fs.readFile(screenshotPath);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
 
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: [{
-                parts: [
-                    { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
-                    {
-                        inline_data: {
-                            mime_type: 'image/png',
-                            data: imageBuffer.toString('base64'),
-                        },
-                    },
-                ],
-            }],
-            generationConfig: {
-                maxOutputTokens: 128,
-                temperature: 0,
-            },
-        }),
-    });
+    const maxRetries = 3;
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        if (attempt > 0) {
+            const delayMs = 1000 * Math.pow(2, attempt - 1);
+            console.log(`[Captcha] Gemma 4 request failed, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
 
-    if (!response.ok) {
-        throw new Error(`Gemma 4 request failed (${response.status}): ${await response.text()}`);
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
+                            {
+                                inline_data: {
+                                    mime_type: 'image/png',
+                                    data: imageBuffer.toString('base64'),
+                                },
+                            },
+                        ],
+                    }],
+                    generationConfig: {
+                        maxOutputTokens: 128,
+                        temperature: 0,
+                    },
+                }),
+            });
+
+            if (response.ok) {
+                const payload = await response.json();
+                const answer = extractGemma4CaptchaAnswer(payload);
+                if (answer) return answer;
+                throw new Error(`Gemma 4 returned an unexpected captcha format: ${JSON.stringify(payload.candidates?.[0]?.content?.parts ?? [])}`);
+            }
+
+            const errorText = await response.text();
+            lastError = new Error(`Gemma 4 request failed (${response.status}): ${errorText}`);
+            // Only retry on 5xx or 429; fail fast on 4xx (except 429)
+            if (response.status < 500 && response.status !== 429) {
+                throw lastError;
+            }
+        } catch (err: any) {
+            lastError = err;
+            if (err.message && err.message.includes('fetch failed')) {
+                // Network errors are retriable
+                continue;
+            }
+            if (attempt === maxRetries - 1) throw err;
+        }
     }
 
-    const payload = await response.json();
+    throw lastError ?? new Error('Gemma 4 captcha solving failed after retries');
+}
 
+function extractGemma4CaptchaAnswer(payload: any): string | null {
     // Gemma 4 returns a two-part response:
     // parts[0] = { text: "... reasoning ...", thought: true }
     // parts[1] = { text: "126", thought: false }  ← answer
@@ -852,7 +890,7 @@ async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
         return fallbackNumbers[fallbackNumbers.length - 1];
     }
 
-    throw new Error(`Gemma 4 returned an unexpected captcha format: "${rawText}" (full response: ${JSON.stringify(parts)})`);
+    return null;
 }
 
 async function selectOptionByTextPatterns(
@@ -1523,7 +1561,7 @@ async function handleMobileVerification(
     });
 }
 
-async function extractVatCreditBroughtForward(page: any, job: JobContext): Promise<number> {
+async function extractVatCreditBroughtForward(page: any, browserContext: any, job: JobContext): Promise<number> {
     const { jobId } = job.data;
 
     await appendJobLog(job, 'Navigating to View Filed Returns to extract credit brought forward...', { progress: 46 });
@@ -1536,12 +1574,16 @@ async function extractVatCreditBroughtForward(page: any, job: JobContext): Promi
     await returnsMenu.hover();
     await page.waitForTimeout(1_500);
 
-    const viewFiledReturns = page.locator('a:has-text("View Filed Returns"), a[href*="showReturns"], a[href*="viewReturns"]').first();
-    if (await viewFiledReturns.count() === 0) {
-        throw new Error('View Filed Returns link not found');
-    }
-    await viewFiledReturns.click();
-    await page.waitForTimeout(3_000);
+    await page.evaluate(() => {
+        const links = document.querySelectorAll('a');
+        for (const link of Array.from(links)) {
+            if (link.textContent?.includes('View Filed Return')) {
+                link.click();
+                break;
+            }
+        }
+    });
+    await page.waitForTimeout(5_000);
     await appendJobLog(job, 'Clicked View Filed Returns', { progress: 46 });
 
     // Step 2: Select VAT from Tax Obligation dropdown
@@ -1568,104 +1610,79 @@ async function extractVatCreditBroughtForward(page: any, job: JobContext): Promi
     await appendJobLog(job, 'Selected VAT from Tax Obligation dropdown', { progress: 46 });
     await page.waitForTimeout(1_000);
 
-    // Step 3: Click Consult button
-    const consultBtn = page.locator('input[value="Consult"], button:has-text("Consult"), a:has-text("Consult"]').first();
-    if (await consultBtn.count() === 0) {
-        throw new Error('Consult button not found');
-    }
-    await consultBtn.click();
+    // Step 3: Set up dialog handler and click Consult button
+    let dialogHandled = false;
+    page.on('dialog', async (dialog: any) => {
+        dialogHandled = true;
+        const msg = dialog.message();
+        await appendJobLog(job, `KRA dialog: "${msg}" (type: ${dialog.type()})`, { progress: 46 });
+        if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+            await dialog.accept();
+        } else {
+            await dialog.dismiss();
+        }
+    });
+
+    await page.evaluate(() => {
+        const btn = document.querySelector('input[value="Consult"]') as HTMLInputElement;
+        if (btn) {
+            btn.focus();
+            btn.click();
+        }
+    });
     await appendJobLog(job, 'Clicked Consult button', { progress: 46 });
+    await page.waitForTimeout(5_000);
+    page.removeAllListeners('dialog');
+
+    // Wait for table to load
+    let tableFound = false;
+    for (let i = 0; i < 10; i++) {
+        await page.waitForTimeout(5_000);
+        const tableCount = await page.locator('table').count();
+        if (tableCount > 0) {
+            tableFound = true;
+            await appendJobLog(job, `Found ${tableCount} table(s) on page`, { progress: 46 });
+            break;
+        }
+    }
+    if (!tableFound) {
+        throw new Error('No filed returns table found after clicking Consult');
+    }
+
+    // Step 4: Click "View" on the most recent filing (first row) — opens in new window
+    const viewLinks = await page.locator('table a:has-text("View"), table input[value="View"], table a[href*="view"]').all();
+    if (viewLinks.length === 0) {
+        throw new Error('No View links found in filed returns table');
+    }
+
+    const newPagePromise = browserContext.waitForEvent('page', { timeout: 30_000 });
+    await viewLinks[0].click();
+    await appendJobLog(job, 'Clicked View on most recent filing, waiting for new window...', { progress: 46 });
+
+    const newPage = await newPagePromise;
+    await newPage.waitForLoadState('domcontentloaded', { timeout: 30_000 });
+    await appendJobLog(job, `New window opened: ${newPage.url()}`, { progress: 46 });
+    await newPage.waitForTimeout(3_000);
+
+    // Use new page for credit extraction
+    page = newPage;
+
+    // Step 5: Scroll to bottom and find credit value
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(2_000);
 
-    // Step 4: Handle confirmation dialog
-    try {
-        const dialog = await page.waitForEvent('dialog', { timeout: 5_000 });
-        const dialogMsg = dialog.message();
-        await appendJobLog(job, `KRA dialog: "${dialogMsg}"`, { progress: 46 });
-        await dialog.accept();
-        await page.waitForTimeout(2_000);
-    } catch {
-        // No dialog appeared
-    }
-
-    // Step 5: Click "View" on the most recent filing (first row)
-    const viewLinks = await page.locator('a:has-text("View"), a[href*="view"], input[value="View"]').all();
-    if (viewLinks.length === 0) {
-        throw new Error('No View links found in filed returns list');
-    }
-    await viewLinks[0].click();
-    await appendJobLog(job, 'Clicked View on most recent filing', { progress: 46 });
-    await page.waitForTimeout(3_000);
-
-    // Step 6: Scroll down to find "Net VAT Payable / Credit Carried Forward"
-    await appendJobLog(job, 'Scrolling to find Net VAT Payable / Credit Carried Forward...', { progress: 46 });
-
-    // Try to find the element by text
-    const creditRow = page.locator('tr:has-text("Net VAT Payable / Credit Carried Forward"), tr:has-text("Net VAT Payable"), tr:has-text("Credit Carried Forward"), td:has-text("Net VAT Payable"), td:has-text("Credit Carried Forward")').first();
-
+    const creditRow = page.locator('tr:has-text("Net VAT Payable / Credit Carried Forward")').first();
     let creditValue: number | null = null;
 
     if (await creditRow.count() > 0) {
-        // Try to extract the value from the adjacent cell
-        try {
-            const cells = await creditRow.locator('td').all();
-            for (const cell of cells) {
-                const text = await cell.textContent();
-                const match = text?.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
-                if (match) {
-                    const num = parseFloat(match[0].replace(/,/g, ''));
-                    if (num !== 0) {
-                        creditValue = num;
-                        break;
-                    }
-                }
+        const cells = await creditRow.locator('td').all();
+        if (cells.length > 0) {
+            const lastCell = cells[cells.length - 1];
+            const text = await lastCell.textContent();
+            const match = text?.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
+            if (match) {
+                creditValue = parseFloat(match[0].replace(/,/g, ''));
             }
-        } catch {}
-    }
-
-    // If direct extraction failed, take screenshot and use Gemma 4
-    if (creditValue === null) {
-        await appendJobLog(job, 'Could not extract value via DOM, taking screenshot for AI analysis...', { progress: 46 });
-        const screenshotPath = path.join(TMP_DIR, `vat-credit-${jobId}.png`);
-        await page.screenshot({ path: screenshotPath, fullPage: true });
-
-        const imageBuffer = await fs.readFile(screenshotPath);
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
-
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [
-                        { text: 'Find the value next to "Net VAT Payable / Credit Carried Forward" in this VAT return page. If the number is negative, that is the credit carried forward. Return ONLY the numeric value (including the negative sign if present). No explanation.' },
-                        {
-                            inline_data: {
-                                mime_type: 'image/png',
-                                data: imageBuffer.toString('base64'),
-                            },
-                        },
-                    ],
-                }],
-                generationConfig: {
-                    maxOutputTokens: 50,
-                    temperature: 0,
-                },
-            }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Gemma 4 request failed (${response.status})`);
-        }
-
-        const payload = await response.json();
-        const parts = payload.candidates?.[0]?.content?.parts ?? [];
-        const answerParts = parts.filter((p: any) => !p.thought && typeof p.text === 'string');
-        const rawText = answerParts.length > 0 ? answerParts[answerParts.length - 1].text : '';
-
-        const match = rawText.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
-        if (match) {
-            creditValue = parseFloat(match[0].replace(/,/g, ''));
         }
     }
 
@@ -1678,11 +1695,128 @@ async function extractVatCreditBroughtForward(page: any, job: JobContext): Promi
 
     await appendJobLog(job, `Extracted credit carried forward: KES ${credit}`, { progress: 46 });
 
-    // Navigate back to dashboard for the main flow
-    await page.goto('https://itax.kra.go.ke/KRA-Portal/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await navigationDelay();
+    // Close new window and switch back to original page
+    await newPage.close();
+    await appendJobLog(job, 'Closed new window, switched back to original page', { progress: 46 });
 
     return credit;
+}
+
+async function extractVatWithholding(page: any, job: JobContext, periodFrom: string): Promise<number> {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+    const periodDate = new Date(periodFrom);
+    const targetMonth = monthNames[periodDate.getMonth()];
+    const targetYear = String(periodDate.getFullYear());
+
+    await appendJobLog(job, `Checking VAT withholding for ${targetMonth} ${targetYear}...`, { progress: 46 });
+
+    // Hover Certificates menu
+    const certificatesMenu = page.locator('a:has-text("Certificates")').first();
+    await certificatesMenu.hover();
+    await page.waitForTimeout(1_500);
+
+    // Click Reprint VAT Withholding Certificate
+    await page.evaluate(() => {
+        const links = document.querySelectorAll('a');
+        for (const link of Array.from(links)) {
+            if (link.textContent?.includes('Reprint VAT Withholding Certificate')) {
+                link.click();
+                break;
+            }
+        }
+    });
+    await page.waitForTimeout(5_000);
+    await appendJobLog(job, 'Clicked Reprint VAT Withholding Certificate', { progress: 46 });
+
+    // Select Month and Year from dropdowns
+    let monthSelected = false;
+    let yearSelected = false;
+
+    for (let i = 0; i < 5; i++) {
+        const select = page.locator('select').nth(i);
+        const count = await select.count();
+        if (count === 0) continue;
+
+        const options = await select.evaluate((el: HTMLSelectElement) =>
+            Array.from(el.options).map(o => ({ text: o.text, value: o.value }))
+        );
+
+        const hasMonths = options.some((o: any) => monthNames.some(m => o.text.includes(m) || o.value.includes(m)));
+        if (hasMonths && !monthSelected) {
+            await select.selectOption({ label: targetMonth });
+            await appendJobLog(job, `Selected month: ${targetMonth}`, { progress: 46 });
+            monthSelected = true;
+            continue;
+        }
+
+        const hasYears = options.some((o: any) => /^\d{4}$/.test(o.text) || /^\d{4}$/.test(o.value));
+        if (hasYears && !yearSelected) {
+            await select.selectOption({ label: targetYear });
+            await appendJobLog(job, `Selected year: ${targetYear}`, { progress: 46 });
+            yearSelected = true;
+        }
+    }
+
+    if (!monthSelected || !yearSelected) {
+        await appendJobLog(job, 'WARNING: Could not select month/year for withholding check', { progress: 46, level: 'warn' });
+        return 0;
+    }
+
+    await page.waitForTimeout(1_000);
+
+    // Set up dialog handler BEFORE clicking Consult
+    let dialogHandled = false;
+    page.on('dialog', async (dialog: any) => {
+        dialogHandled = true;
+        const msg = dialog.message();
+        await appendJobLog(job, `KRA withholding dialog: "${msg}" (type: ${dialog.type()})`, { progress: 46 });
+        if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+            await dialog.accept();
+        } else {
+            await dialog.dismiss();
+        }
+    });
+
+    // Click Consult button
+    await page.evaluate(() => {
+        const btn = document.querySelector('input[value="Consult"]') as HTMLInputElement;
+        if (btn) {
+            btn.focus();
+            btn.click();
+        }
+    });
+    await appendJobLog(job, 'Clicked Consult button for withholding', { progress: 46 });
+    await page.waitForTimeout(5_000);
+    page.removeAllListeners('dialog');
+
+    if (dialogHandled) {
+        await appendJobLog(job, 'Dialog handled, waiting for results...', { progress: 46 });
+    }
+    await page.waitForTimeout(10_000);
+
+    // Check for "Records Not Found"
+    const pageText = await page.evaluate(() => document.body.innerText || '');
+    if (pageText.includes('Records Not Found')) {
+        await appendJobLog(job, 'No withholding records found for this period', { progress: 46 });
+        return 0;
+    }
+
+    // Try to extract Total VAT Withholding Amount from DOM
+    let withholdingAmount: number | null = null;
+    const totalMatch = pageText.match(/Total VAT Withholding Amount\s*[:\-]?\s*([\d,]+\.?\d*)/i);
+    if (totalMatch) {
+        withholdingAmount = parseFloat(totalMatch[1].replace(/,/g, ''));
+        await appendJobLog(job, `Extracted withholding amount from DOM: ${withholdingAmount}`, { progress: 46 });
+    }
+
+    if (withholdingAmount === null) {
+        await appendJobLog(job, 'Could not extract withholding amount, defaulting to 0', { progress: 46 });
+        withholdingAmount = 0;
+    }
+
+    await appendJobLog(job, `Total VAT Withholding Amount: KES ${withholdingAmount}`, { progress: 46 });
+    return withholdingAmount;
 }
 
 async function resolveUploadArtifactPath(
@@ -1893,7 +2027,17 @@ export async function processFilingJob(job: JobContext): Promise<{
             await appendJobLog(job, `Updated client NSSF last filed tracking`, { progress: 95 });
         }
 
-        return { receiptPath: receiptGcsPath || undefined, receiptNumber: null, credentialUpdate };
+        // Generate a signed URL for the NSSF receipt so the frontend can download it
+        let nssfReceiptUrl: string | undefined;
+        try {
+            if (receiptGcsPath) {
+                nssfReceiptUrl = await getSignedDownloadUrl(receiptGcsPath, 60 * 24 * 7); // 7 days
+            }
+        } catch (e: any) {
+            console.error(`[Worker][${jobId}] Failed to generate NSSF receipt signed URL:`, e.message);
+        }
+
+        return { receiptPath: nssfReceiptUrl || receiptGcsPath || undefined, receiptNumber: null, credentialUpdate };
     }
 
     await fs.mkdir(TMP_DIR, { recursive: true });
@@ -2119,13 +2263,15 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
 
         if (printPrnOnly) {
-               const prnTargetDate = new Date();
-               const prnConfig: PrnConfig = {
-                   taxType: taxObligationType,
-                   periodYear: prnTargetDate.getFullYear().toString(),
-                   periodMonth: prnTargetDate.toLocaleString('default', { month: 'long' })
-               };
-             
+            // Use the requested filing period (periodFrom) for PRN generation, not today's date
+            const prnPeriodFrom = payload.periodFrom || '';
+            const prnTargetDate = prnPeriodFrom ? new Date(prnPeriodFrom) : new Date();
+            const prnConfig: PrnConfig = {
+                taxType: taxObligationType,
+                periodYear: prnTargetDate.getFullYear().toString(),
+                periodMonth: prnTargetDate.toLocaleString('default', { month: 'long' })
+            };
+
             await setJobStep(job, 80, `Generating standalone Payment Slip (PRN)...`);
             const prnResult = await prnService.generate(prnConfig);
 
@@ -2136,7 +2282,17 @@ export async function processFilingJob(job: JobContext): Promise<{
             if (context) await context.close();
             if (browser) await browser.close();
 
-            return { receiptPath: '', receiptNumber: null, credentialUpdate, prnPath: prnResult.prnPath };
+            // Generate a signed URL for the standalone PRN so the frontend can download it
+            let prnUrl = prnResult.prnPath?.replace(/\\/g, '/');
+            try {
+                if (prnResult.prnGcsPath) {
+                    prnUrl = await getSignedDownloadUrl(prnResult.prnGcsPath, 60 * 24 * 7); // 7 days
+                }
+            } catch (e: any) {
+                console.error(`[Worker][${jobId}] Failed to generate standalone PRN signed URL:`, e.message);
+            }
+
+            return { receiptPath: '', receiptNumber: null, credentialUpdate, prnPath: prnUrl };
         }
 
         const isNilReturnExplicit = (payload as any).isNil === true;
@@ -2150,16 +2306,26 @@ export async function processFilingJob(job: JobContext): Promise<{
                         ? 'VAT return obligation page ready'
                     : 'Nil return obligation page ready';
 
-        // ── For VAT preparation: extract credit brought forward from portal ──
+        // ── For VAT preparation: extract credit and withholding from portal ──
         let creditBroughtForward = 0;
+        let withholdingAmount = 0;
         if (isVatPrepareOnly || isVatUpload) {
             try {
-                creditBroughtForward = await extractVatCreditBroughtForward(page, job);
+                creditBroughtForward = await extractVatCreditBroughtForward(page, context, job);
                 if (creditBroughtForward !== 0) {
                     await appendJobLog(job, `Extracted VAT credit brought forward from portal: KES ${creditBroughtForward}`, { progress: 47 });
                 }
             } catch (e: any) {
                 await appendJobLog(job, `Could not extract credit from portal: ${e.message}`, { progress: 47, level: 'warn' });
+            }
+
+            try {
+                withholdingAmount = await extractVatWithholding(page, job, periodFrom);
+                if (withholdingAmount !== 0) {
+                    await appendJobLog(job, `Extracted VAT withholding from portal: KES ${withholdingAmount}`, { progress: 47 });
+                }
+            } catch (e: any) {
+                await appendJobLog(job, `Could not extract withholding from portal: ${e.message}`, { progress: 47, level: 'warn' });
             }
         }
 
@@ -2378,10 +2544,12 @@ export async function processFilingJob(job: JobContext): Promise<{
         await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
 
     if (!isNilReturnExplicit && isVatPrepareOnly) {
-        // Use credit brought forward from portal if available, otherwise fall back to frontend value
-        const effectivePreviousCredit = creditBroughtForward !== 0 ? creditBroughtForward : vatPreviousCredit;
-        if (creditBroughtForward !== 0) {
-            await appendJobLog(job, `Using portal-extracted credit brought forward: KES ${effectivePreviousCredit}`, { progress: 70 });
+        // Use credit brought forward + withholding from portal if available, otherwise fall back to frontend value
+        const effectivePreviousCredit = (creditBroughtForward + withholdingAmount) !== 0
+            ? (creditBroughtForward + withholdingAmount)
+            : vatPreviousCredit;
+        if (creditBroughtForward !== 0 || withholdingAmount !== 0) {
+            await appendJobLog(job, `Using portal-extracted credit: KES ${effectivePreviousCredit} (credit: ${creditBroughtForward}, withholding: ${withholdingAmount})`, { progress: 70 });
         }
 
         const preparedVat = await vatFilingService.prepareFromPortal({
@@ -2392,6 +2560,12 @@ export async function processFilingJob(job: JobContext): Promise<{
             previousCredit: effectivePreviousCredit,
             sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
         });
+
+        // Add withholding amount to the summary
+        const vatSummaryWithWithholding = {
+            ...preparedVat.vatSummary,
+            withholdingAmount,
+        };
 
         if (context) {
             await context.close();
@@ -2407,7 +2581,7 @@ export async function processFilingJob(job: JobContext): Promise<{
             receiptPath: '',
             receiptNumber: null,
             credentialUpdate,
-            vatSummary: preparedVat.vatSummary,
+            vatSummary: vatSummaryWithWithholding,
             generatedZipUrl: preparedVat.generatedZipUrl,
             generatedZipLabel: preparedVat.generatedZipLabel,
             sourcePackageUrl: preparedVat.sourcePackageUrl,
@@ -2715,6 +2889,18 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
 
         if (!downloadMeta) {
+            // KRA may have returned a validation error instead of the receipt page.
+            // Scan for visible error text so the user gets a meaningful message.
+            const errorText = await page.$$eval(
+                '.error-message, #errorDiv, [id*="error"], .errormessage, .validation-message, .alert-danger, .text-danger',
+                (els: HTMLElement[]) => els.map((el) => (el.textContent || '').trim()).filter(Boolean).join(' | ')
+            ).catch(() => '');
+
+            if (errorText) {
+                await appendJobLog(job, `KRA validation error prevented filing: ${errorText}`, { progress: 80, level: 'error' });
+                throw new Error(`KRA rejected the VAT return: ${errorText}`);
+            }
+
             await appendJobLog(job, `No download link found on the receipt page. Available links: ${JSON.stringify(receiptPageLinks)}`, { progress: 80, level: 'error' });
             throw new Error('Could not locate the receipt download link on the KRA receipt page');
         }
@@ -2753,60 +2939,60 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         let receiptDownloaded = false;
         try {
-            const [download] = await Promise.all([
-                page.waitForEvent('download', { timeout: 60_000 }),
-                // Use JS click to bypass visibility checks on hidden tab/menu links
-                page.evaluate((sel) => {
-                    const el = document.querySelector(sel) as HTMLElement;
-                    if (el) { el.click(); return true; }
-                    return false;
-                }, downloadSelector),
-            ]);
-            await download.saveAs(receiptPath);
-            receiptDownloaded = true;
-            console.log(`[Worker][${jobId}] Receipt saved: ${receiptPath}`);
+            // KRA's receipt link uses href="javascript:downloadReturnsReceipt()" which does not
+            // trigger Playwright's download event. Intercept the PDF/form-post response instead.
+            let resolved = false;
+            const pdfResponsePromise = new Promise<any>((resolve) => {
+                const handler = async (response: any) => {
+                    const contentType = (await response.headerValue('content-type') || '').toLowerCase();
+                    const url = response.url().toLowerCase();
+                    const isPdf = contentType.includes('pdf') ||
+                        contentType.includes('octet-stream') ||
+                        url.includes('downloadreturnsreceipt') ||
+                        url.includes('downloadreceipt');
+                    if (isPdf) {
+                        resolved = true;
+                        page.off('response', handler);
+                        resolve(response);
+                    }
+                };
+                page.on('response', handler);
+                // Safety timeout so we don't hang if no response matches
+                setTimeout(() => {
+                    if (!resolved) {
+                        page.off('response', handler);
+                        resolve(null);
+                    }
+                }, 60_000);
+            });
+
+            // Use JS click to bypass visibility checks on hidden tab/menu links
+            const clicked = await page.evaluate((sel) => {
+                const el = document.querySelector(sel) as HTMLElement;
+                if (el) { el.click(); return true; }
+                return false;
+            }, downloadSelector);
+
+            if (!clicked) {
+                throw new Error('Receipt download link not found or not clickable');
+            }
+
+            const pdfResponse = await pdfResponsePromise;
+            if (pdfResponse) {
+                const buffer = await pdfResponse.body();
+                await fs.writeFile(receiptPath, buffer);
+                receiptDownloaded = true;
+                console.log(`[Worker][${jobId}] Receipt saved via response interception: ${receiptPath}`);
+            } else {
+                throw new Error('No PDF response detected after clicking receipt link');
+            }
         } catch (downloadErr: any) {
             console.warn(`[Worker][${jobId}] Receipt download failed (continuing without receipt):`, downloadErr.message);
             await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'info' });
         }
 
-        // Clean up browser resources before network I/O
-        if (context) {
-            await context.close();
-        }
-        if (browser) {
-            await browser.close();
-        }
-        context = undefined;
-        browser = undefined;
-
-        // ── Step 13: Store receipt in the workspace ───────────────────────────────
-        let storedReceiptPath: string | null = null;
-        let receiptRelativePath: string | null = null;
-        if (receiptDownloaded) {
-            await setJobStep(job, 94, 'Storing the receipt in the workspace');
-            const result = await storeReceiptLocally(receiptPath, jobId);
-            storedReceiptPath = result.receiptPath;
-            receiptRelativePath = result.relativePath.replace(/\\/g, '/');
-            await appendJobLog(job, `Receipt stored locally at ${result.relativePath}`, { progress: 94 });
-
-            // Upload receipt to Cloud Storage so the API can serve it
-            try {
-                const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(storedReceiptPath));
-                await uploadFile(storedReceiptPath, receiptGcsPath, { contentType: 'application/pdf' });
-                await jobStore.updateJob(jobId, {
-                    'artifacts.receiptGcsPath': receiptGcsPath,
-                } as any);
-                await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
-            } catch (uploadErr: any) {
-                console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
-                await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
-            }
-        } else {
-            await appendJobLog(job, 'No receipt was downloaded — skipping local storage and Cloud Storage upload', { progress: 94, level: 'info' });
-        }
-
-        // ── Step 14: Inline PRN generation after successful filing ───────────────────
+        // ── Step 13: Inline PRN generation after successful filing ───────────────────
+        // MUST happen before closing the browser because PRN generation uses the page.
         let prnResults: Array<{ taxType: TaxObligationType; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
         if (!isNilReturnExplicit && (isPayeUpload || isTotReturn || isMriReturn || isVatUpload)) {
             await setJobStep(job, 96, 'Generating Payment Registration Number (PRN) inline');
@@ -2830,6 +3016,53 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
         }
 
+        // Clean up browser resources before network I/O
+        if (context) {
+            await context.close();
+        }
+        if (browser) {
+            await browser.close();
+        }
+        context = undefined;
+        browser = undefined;
+
+        // ── Step 14: Store receipt in the workspace ───────────────────────────────
+        let storedReceiptPath: string | null = null;
+        let receiptRelativePath: string | null = null;
+        let receiptGcsPath: string | null = null;
+        let receiptSignedUrl: string | undefined;
+        if (receiptDownloaded) {
+            await setJobStep(job, 94, 'Storing the receipt in the workspace');
+            const result = await storeReceiptLocally(receiptPath, jobId);
+            storedReceiptPath = result.receiptPath;
+            receiptRelativePath = result.relativePath.replace(/\\/g, '/');
+            await appendJobLog(job, `Receipt stored locally at ${result.relativePath}`, { progress: 94 });
+
+            // Upload receipt to Cloud Storage so the API can serve it
+            try {
+                receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(storedReceiptPath));
+                await uploadFile(storedReceiptPath, receiptGcsPath, { contentType: 'application/pdf' });
+                await jobStore.updateJob(jobId, {
+                    'artifacts.receiptGcsPath': receiptGcsPath,
+                } as any);
+                await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
+            } catch (uploadErr: any) {
+                console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
+                await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+            }
+        } else {
+            await appendJobLog(job, 'No receipt was downloaded — skipping local storage and Cloud Storage upload', { progress: 94, level: 'info' });
+        }
+
+        // Generate signed URL for the receipt so the frontend can download it
+        try {
+            if (receiptGcsPath) {
+                receiptSignedUrl = await getSignedDownloadUrl(receiptGcsPath, 60 * 24 * 7); // 7 days
+            }
+        } catch (signedUrlErr: any) {
+            console.error(`[Worker][${jobId}] Failed to generate receipt signed URL:`, signedUrlErr.message);
+        }
+
         try {
             let obligationCol = '';
             if (taxObligationType === 'turnover_tax') obligationCol = 'tot';
@@ -2848,8 +3081,10 @@ export async function processFilingJob(job: JobContext): Promise<{
                 };
 
                 // Persist receipt URL so the dashboard can show a download link
-                // Convert local relative path to a frontend API path that apiFetch can resolve
-                if (receiptRelativePath) {
+                // Prefer the GCS signed URL; fall back to the local API path only in dev
+                if (receiptSignedUrl) {
+                    clientUpdate[`${obligationCol}ReceiptUrl`] = receiptSignedUrl;
+                } else if (receiptRelativePath) {
                     const apiReceiptUrl = receiptRelativePath.replace(/^data\/receipts\//, '/api/receipts/');
                     clientUpdate[`${obligationCol}ReceiptUrl`] = apiReceiptUrl;
                 }
@@ -2860,10 +3095,15 @@ export async function processFilingJob(job: JobContext): Promise<{
                     if (successfulPrns.length > 0) {
                         // Store the first successful PRN URL as the primary one
                         const primaryPrn = successfulPrns[0];
-                        const prnUrl = primaryPrn.prnGcsPath
-                            ? `/api/clients/${payload.clientId}/receipts/${taxObligationType}_prn`
-                            : primaryPrn.prnPath!.replace(/\\/g, '/');
-                        clientUpdate[`${obligationCol}PrnUrl`] = prnUrl;
+                        let prnUrl: string | undefined;
+                        try {
+                            if (primaryPrn.prnGcsPath) {
+                                prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                            }
+                        } catch (e: any) {
+                            console.error(`[Worker][${jobId}] Failed to generate client PRN signed URL:`, e.message);
+                        }
+                        clientUpdate[`${obligationCol}PrnUrl`] = prnUrl || primaryPrn.prnPath!.replace(/\\/g, '/');
                         // Store all PRN results in a sub-field for multi-PRN tracking (e.g. PAYE)
                         clientUpdate[`${obligationCol}PrnResults`] = successfulPrns.map(r => ({
                             taxType: r.taxType,
@@ -2878,7 +3118,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                 if (periodFrom) {
                     const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
                     if (periodMatch) {
-                        clientUpdate[`${obligationCol}Period`] = `${periodMatch[1]}-${periodMatch[2]}`;
+                        const periodKey = `${periodMatch[1]}-${periodMatch[2]}`;
+                        clientUpdate[`${obligationCol}Period`] = periodKey;
+                        // Append to filedPeriods array if not already present
+                        const filedPeriodsField = `filedPeriods.${obligationCol}`;
+                        clientUpdate[filedPeriodsField] = FieldValue.arrayUnion(periodKey);
                     }
                 }
 
@@ -2902,17 +3146,29 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
 
         // Determine the primary PRN path for the return value
-        const primaryPrnPath = prnResults.length > 0
-            ? prnResults.find(r => r.prnPath && !r.error)?.prnPath
+        const primaryPrn = prnResults.length > 0
+            ? prnResults.find(r => r.prnPath && !r.error)
             : undefined;
+
+        // Generate signed URL for the primary PRN so the frontend can download it
+        let prnUrl: string | undefined;
+        try {
+            if (primaryPrn?.prnGcsPath) {
+                prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+            } else if (primaryPrn?.prnPath) {
+                prnUrl = primaryPrn.prnPath.replace(/\\/g, '/');
+            }
+        } catch (signedUrlErr: any) {
+            console.error(`[Worker][${jobId}] Failed to generate PRN signed URL:`, signedUrlErr.message);
+        }
 
         await setJobStep(job, 100, 'Job completed successfully');
         console.log(`[Worker][${jobId}] Job completed. Receipt path: ${storedReceiptPath}`);
         return {
-            receiptPath: receiptRelativePath || undefined,
+            receiptPath: receiptSignedUrl || receiptRelativePath || undefined,
             receiptNumber,
             credentialUpdate,
-            prnPath: primaryPrnPath,
+            prnPath: prnUrl,
         };
     } catch (err) {
         const error = err as Error;

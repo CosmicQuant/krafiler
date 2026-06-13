@@ -17,7 +17,7 @@ router.get('/:clientId/departments', async (req: AuthenticatedRequest, res) => {
             .where('clientId', '==', clientId)
             .orderBy('name', 'asc')
             .get();
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching departments from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

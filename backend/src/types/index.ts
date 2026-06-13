@@ -78,7 +78,7 @@ export interface FilingStepLog {
     timestamp: string;
     message: string;
     progress: number | null;
-    level: 'info' | 'error';
+    level: 'info' | 'warn' | 'error';
 }
 
 export interface CredentialUpdate {

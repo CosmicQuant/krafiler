@@ -139,7 +139,7 @@ export default function PricingSection() {
 
             <div className="mx-auto max-w-6xl px-6 grid gap-8 lg:grid-cols-3">
                 {currentPlans.map((plan, idx) => (
-                    <motion.div 
+                    <motion.div
                         key={plan.name}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -147,6 +147,7 @@ export default function PricingSection() {
                         viewport={{ once: true }}
                         transition={{ delay: idx * 0.1, duration: 0.4 }}
                         className="relative flex flex-col rounded-[2rem] border border-slate-200 bg-white p-8 shadow-[0_8px_30px_rgba(15,23,42,0.04)]"
+                        {...({} as any)}
                     >
                         {plan.name === 'Growth' || plan.name === 'Pro' ? (
                             <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-[#ff0613] px-4 py-1 text-xs font-bold text-white">

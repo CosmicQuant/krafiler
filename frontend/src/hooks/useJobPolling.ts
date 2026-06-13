@@ -24,7 +24,14 @@ export function useJobPolling(
           if (!res.ok) continue;
           const data = await res.json();
 
-          const newMessage = data.lastStep?.message ?? data.message ?? currentJobs[clientId].message ?? 'Processing...';
+          const nextStepLogs: FilingStepLog[] | undefined = Array.isArray(data.stepLogs) && data.stepLogs.length > 0
+            ? data.stepLogs
+            : currentJobs[clientId].stepLogs;
+          // Always show the most recent log message as the current status
+          const latestLogMessage = nextStepLogs && nextStepLogs.length > 0
+            ? nextStepLogs[nextStepLogs.length - 1].message
+            : undefined;
+          const newMessage = latestLogMessage ?? data.lastStep?.message ?? data.message ?? currentJobs[clientId].message ?? 'Processing...';
           const nextProgress = typeof data.progress === 'number' ? data.progress : currentJobs[clientId].progress;
           const resultReceiptUrl = buildStoredArtifactUrl(data.result?.receiptPath);
           const resultPrnUrl = buildStoredArtifactUrl(data.result?.prnPath);
@@ -34,9 +41,6 @@ export function useJobPolling(
             data.result?.vatSummary && typeof data.result.vatSummary === 'object'
               ? (data.result.vatSummary as VatPreparationSummary)
               : undefined;
-          const nextStepLogs: FilingStepLog[] | undefined = Array.isArray(data.stepLogs) && data.stepLogs.length > 0
-            ? data.stepLogs
-            : currentJobs[clientId].stepLogs;
 
           if (
             currentJobs[clientId].state !== data.state ||
@@ -75,11 +79,16 @@ export function useJobPolling(
           const obligationType = currentJobs[clientId].obligationType;
 
           if (data.state === 'completed') {
+            // Determine the period that was filed from the job payload
+            const filedPeriod = data.processedOn ? data.processedOn.slice(0, 7) : undefined;
+            const obligationKey = obligationType === 'turnover_tax' ? 'tot' : obligationType === 'monthly_rental_income' ? 'mri' : obligationType;
+
             if (obligationType === 'vat' && resultReceiptUrl) {
               clientUpdates[clientId] = {
                 ...(clientUpdates[clientId] ?? {}),
                 vat: 'filed',
                 vatReceiptUrl: resultReceiptUrl,
+                vatPrnUrl: resultPrnUrl,
                 vatLastFiledDate: finishedAt,
               };
             }
@@ -97,6 +106,7 @@ export function useJobPolling(
                 ...(clientUpdates[clientId] ?? {}),
                 tot: 'filed',
                 totReceiptUrl: resultReceiptUrl,
+                totPrnUrl: resultPrnUrl,
                 totLastFiledDate: finishedAt,
               };
             }
@@ -105,7 +115,19 @@ export function useJobPolling(
                 ...(clientUpdates[clientId] ?? {}),
                 mri: 'filed',
                 mriReceiptUrl: resultReceiptUrl,
+                mriPrnUrl: resultPrnUrl,
                 mriLastFiledDate: finishedAt,
+              };
+            }
+
+            // Track filed period so the UI can disable re-filing
+            if (filedPeriod && obligationKey) {
+              clientUpdates[clientId] = {
+                ...(clientUpdates[clientId] ?? {}),
+                filedPeriods: {
+                  ...(clientUpdates[clientId]?.filedPeriods ?? {}),
+                  [obligationKey]: Array.from(new Set([...(clientUpdates[clientId]?.filedPeriods?.[obligationKey] ?? []), filedPeriod])),
+                },
               };
             }
           }
@@ -125,6 +147,7 @@ export function useJobPolling(
               vatUpdate.vatInputVat = resultVatSummary.inputVat;
               vatUpdate.vatOutputVat = resultVatSummary.outputVat;
               vatUpdate.vatPreviousCredit = resultVatSummary.previousCredit;
+              vatUpdate.vatWithholdingAmount = resultVatSummary.withholdingAmount ?? 0;
               vatUpdate.vatPayableVat = resultVatSummary.payableVat;
               vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
             }

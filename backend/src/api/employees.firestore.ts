@@ -34,7 +34,7 @@ router.get('/:clientId/employees', async (req: AuthenticatedRequest, res) => {
             .get();
 
         const employees = snapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .map((doc: any) => ({ id: doc.id, ...doc.data() }))
             .sort((a: any, b: any) => (a.employeeName || '').localeCompare(b.employeeName || ''));
         res.json(employees);
     } catch (err) {
@@ -851,7 +851,7 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             .where('period', '<=', `${yearPrefix}-12`)
             .get();
 
-        const runs = runsSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
         // Build month-indexed data
         const monthlyData: P9MonthData[] = [];

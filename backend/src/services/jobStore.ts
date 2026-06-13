@@ -91,7 +91,7 @@ export async function getPendingJobsByUser(ownerUid: string): Promise<{ id: stri
         .where('status', 'in', ['waiting', 'active', 'processing'])
         .get();
 
-    return snapshot.docs.map((d) => ({ id: d.id, doc: d.data() as JobStoreDoc }));
+    return snapshot.docs.map((d: any) => ({ id: d.id, doc: d.data() as JobStoreDoc }));
 }
 
 export async function getJobLogs(jobId: string, limit = 200): Promise<FilingStepLog[]> {
@@ -103,7 +103,7 @@ export async function getJobLogs(jobId: string, limit = 200): Promise<FilingStep
         .limit(limit)
         .get();
 
-    return snapshot.docs.map((d) => {
+    return snapshot.docs.map((d: any) => {
         const data = d.data();
         return {
             timestamp: data.timestamp || data.createdAt?.toDate?.()?.toISOString?.() || new Date().toISOString(),

@@ -36,7 +36,7 @@ async function generateEntriesForRun(
         .where('employmentStatus', '==', 'Active')
         .get();
 
-    const employees = employeesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+    const employees = employeesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })) as any[];
 
     if (employees.length === 0) throw new Error('No active employees found');
 
@@ -62,7 +62,7 @@ async function generateEntriesForRun(
         .where('clientId', '==', clientId)
         .get();
     const holidays = holidaysSnapshot.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
+        .map((d: any) => ({ id: d.id, ...d.data() }))
         .filter((h: any) => h.date?.startsWith(`${yearStr}-`) || h.isRecurring) as any[];
 
     // Fetch active loans
@@ -120,7 +120,7 @@ async function generateEntriesForRun(
         .where('date', '>=', periodStartStr)
         .where('date', '<=', periodEndStr)
         .get();
-    const attendanceRecords = attendanceSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const attendanceRecords = attendanceSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
     // Compute attendance-adjusted pay using actual hours worked (matches frontend grid)
     const totalStdHoursMap = new Map<string, number>();
@@ -155,7 +155,7 @@ async function generateEntriesForRun(
         }
         if (arData.status === 'On Leave') {
             leaveCountMap.set(arData.employeeId, (leaveCountMap.get(arData.employeeId) || 0) + 1);
-            const leaveInfo = (leaveSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[])
+            const leaveInfo = (leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })) as any[])
                 .find((lr: any) => lr.employeeId === arData.employeeId && lr.status === 'Approved' && arData.date >= lr.startDate && arData.date <= lr.endDate);
             if (leaveInfo && (leaveInfo.isPaid === true || leaveInfo.isPaid === 1)) {
                 paidLeaveHoursMap.set(arData.employeeId, (paidLeaveHoursMap.get(arData.employeeId) || 0) + (leaveInfo.hours || dailyHours));
@@ -190,7 +190,7 @@ async function generateEntriesForRun(
     }
 
     // Add paid leave hours for approved leave without attendance records
-    for (const lv of leaveSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    for (const lv of leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }))) {
         const lvData = lv as any;
         if (lvData.status !== 'Approved') continue;
         const isUnpaid = lvData.isPaid === false || lvData.isPaid === 0 || (lvData.leaveType || '').toLowerCase().includes('unpaid');
@@ -357,7 +357,7 @@ async function generateEntriesForRun(
         }
 
         let unpaidLeaveHours = 0;
-        for (const lv of leaveSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+        for (const lv of leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }))) {
             const lvData = lv as any;
             if (lvData.employeeId !== emp.id) continue;
             if (lvData.status !== 'Approved') continue;
@@ -499,7 +499,7 @@ router.get('/:clientId/payroll-runs', async (req: AuthenticatedRequest, res) => 
             .get();
 
         const runs = snapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
         res.json(runs);
     } catch (err) {
@@ -596,7 +596,7 @@ router.get('/:clientId/payroll-runs/debug', async (req: AuthenticatedRequest, re
             .where('employmentStatus', '==', 'Active')
             .get();
 
-        const raw = snapshot.docs.map((d) => {
+        const raw = snapshot.docs.map((d: any) => {
             const e = d.data() as any;
             return {
                 id: d.id,
@@ -679,7 +679,7 @@ router.get('/:clientId/payroll-runs/:id/entries', async (req: AuthenticatedReque
             .get();
 
         const entriesWithOverrides = snapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (a.employeeName || '').localeCompare(b.employeeName || ''))
             .map((entry: any) => {
             const merged = { ...entry };
@@ -773,7 +773,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
                 .where('clientId', '==', clientId)
                 .get();
             const holidays = holidaysSnapshot.docs
-                .map((d) => d.data())
+                .map((d: any) => d.data())
                 .filter((h: any) => h.date?.startsWith(`${runYear}-`) || h.isRecurring) as any[];
 
             const adjustmentsSnapshot = await adminDb
@@ -781,7 +781,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
                 .where('payrollRunId', '==', runId)
                 .where('employeeId', '==', employeeId)
                 .get();
-            const adjList = adjustmentsSnapshot.docs.map((d) => {
+            const adjList = adjustmentsSnapshot.docs.map((d: any) => {
                 const a = d.data() as any;
                 return { type: a.type as 'allowance' | 'deduction', amount: a.amount, isStatutory: !!a.isStatutory };
             });
@@ -1221,7 +1221,7 @@ router.get('/:clientId/payroll-runs/:id/overtime', async (req: AuthenticatedRequ
             .where('period', '==', period)
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching overtime from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -1243,7 +1243,7 @@ router.get('/:clientId/overtime-by-period', async (req: AuthenticatedRequest, re
             .where('period', '==', period)
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching overtime from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -1272,7 +1272,7 @@ router.get('/:clientId/p10', async (req: AuthenticatedRequest, res) => {
             .get();
 
         const runs = runsSnapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
@@ -1287,7 +1287,7 @@ router.get('/:clientId/p10', async (req: AuthenticatedRequest, res) => {
                     .where('clientId', '==', clientId)
                     .where('payrollRunId', 'in', chunk)
                     .get();
-                entries.push(...entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+                entries.push(...entriesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
             }
         }
 
@@ -1363,7 +1363,7 @@ router.get('/:clientId/p11/:kraPin', async (req: AuthenticatedRequest, res) => {
             .get();
 
         const runs = runsSnapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
@@ -1379,7 +1379,7 @@ router.get('/:clientId/p11/:kraPin', async (req: AuthenticatedRequest, res) => {
                     .where('payrollRunId', 'in', chunk)
                     .where('kraPin', '==', kraPin)
                     .get();
-                entries.push(...entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+                entries.push(...entriesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
             }
         }
 
@@ -1444,7 +1444,7 @@ router.get('/:clientId/p10/pdf', async (req: AuthenticatedRequest, res: Response
             .get();
 
         const runs = runsSnapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
@@ -1459,7 +1459,7 @@ router.get('/:clientId/p10/pdf', async (req: AuthenticatedRequest, res: Response
                     .where('clientId', '==', clientId)
                     .where('payrollRunId', 'in', chunk)
                     .get();
-                entries.push(...entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+                entries.push(...entriesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
             }
         }
 
@@ -1550,7 +1550,7 @@ router.get('/:clientId/p11/:kraPin/pdf', async (req: AuthenticatedRequest, res: 
             .get();
 
         const runs = runsSnapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .sort((a: any, b: any) => (a.period || '').localeCompare(b.period || ''));
         const runIds = runs.map((r: any) => r.id);
 
@@ -1566,7 +1566,7 @@ router.get('/:clientId/p11/:kraPin/pdf', async (req: AuthenticatedRequest, res: 
                     .where('payrollRunId', 'in', chunk)
                     .where('kraPin', '==', kraPin)
                     .get();
-                entries.push(...entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+                entries.push(...entriesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
             }
         }
 
@@ -1672,14 +1672,14 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
         if (entriesSnapshot.empty) {
             return res.status(400).json({ message: 'No payroll entries found for this run' });
         }
-        const entries = entriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const entries = entriesSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
         const employeesSnapshot = await adminDb
             .collection('employees')
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        const empMap = new Map(employeesSnapshot.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+        const empMap = new Map(employeesSnapshot.docs.map((d: any) => [d.id, { id: d.id, ...d.data() }]));
 
         const { generateComplianceFiles } = await import('../scripts/axon-extraction-engine');
         const { uploadFile, getSignedDownloadUrl } = await import('../lib/cloudStorage');
@@ -1917,7 +1917,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req: AuthenticatedRe
             .where('clientId', '==', clientId)
             .where('employmentStatus', '==', 'Active')
             .get();
-        const empMap = new Map(employeesSnapshot.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+        const empMap = new Map(employeesSnapshot.docs.map((d: any) => [d.id, { id: d.id, ...d.data() }]));
 
         const approvalsSnapshot = await adminDb
             .collection('attendancePayrollApprovals')
@@ -1925,7 +1925,7 @@ router.post('/:clientId/attendance-payroll-preview', async (req: AuthenticatedRe
             .where('clientId', '==', clientId)
             .where('period', '==', period)
             .get();
-        const approvalMap = new Map(approvalsSnapshot.docs.map((d) => [(d.data() as any).employeeId, { id: d.id, ...d.data() }]));
+        const approvalMap = new Map(approvalsSnapshot.docs.map((d: any) => [(d.data() as any).employeeId, { id: d.id, ...d.data() }]));
 
         const [yearStr, monthStr] = period.split('-');
         const year = parseInt(yearStr, 10);
@@ -2032,14 +2032,14 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        const empMap2 = new Map(employeesSnapshot.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+        const empMap2 = new Map(employeesSnapshot.docs.map((d: any) => [d.id, { id: d.id, ...d.data() }]));
 
         const schedulesSnapshot = await adminDb
             .collection('workSchedules')
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        const scheduleMap2 = new Map(schedulesSnapshot.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+        const scheduleMap2 = new Map(schedulesSnapshot.docs.map((d: any) => [d.id, { id: d.id, ...d.data() }]));
 
         // Clean up old auto-generated attendance records for this period
         const oldAutoGenSnapshot = await adminDb
@@ -2088,7 +2088,7 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
             .where('date', '>=', `${period}-01`)
             .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
             .get();
-        const effectiveExistingSet = new Set(existingAfterCleanup.docs.map((d) => {
+        const effectiveExistingSet = new Set(existingAfterCleanup.docs.map((d: any) => {
             const data = d.data() as any;
             return `${data.employeeId}-${data.date}`;
         }));
@@ -2397,7 +2397,7 @@ router.get('/:clientId/payroll-runs/:id/adjustments', async (req: AuthenticatedR
             .collection('payrollAdjustments')
             .where('payrollRunId', '==', payrollRunId)
             .get();
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err: any) {
         res.status(500).json({ message: 'Failed to load adjustments', error: err.message });
     }

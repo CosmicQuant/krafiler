@@ -151,6 +151,7 @@ export function useJobListener(
                             vatUpdate.vatInputVat = resultVatSummary.inputVat;
                             vatUpdate.vatOutputVat = resultVatSummary.outputVat;
                             vatUpdate.vatPreviousCredit = resultVatSummary.previousCredit;
+                            vatUpdate.vatWithholdingAmount = resultVatSummary.withholdingAmount ?? 0;
                             vatUpdate.vatPayableVat = resultVatSummary.payableVat;
                             vatUpdate.vatNetVatBalance = resultVatSummary.netVatBalance;
                         }

@@ -153,6 +153,7 @@ export function Desk20thView({
                   inputVat: ob.client.vatInputVat ?? relevantJob?.vatSummary?.inputVat ?? 0,
                   outputVat: ob.client.vatOutputVat ?? relevantJob?.vatSummary?.outputVat ?? 0,
                   previousCredit: ob.client.vatPreviousCredit ?? relevantJob?.vatSummary?.previousCredit ?? 0,
+                  withholdingAmount: ob.client.vatWithholdingAmount ?? relevantJob?.vatSummary?.withholdingAmount ?? 0,
                   payableVat: ob.client.vatPayableVat ?? relevantJob?.vatSummary?.payableVat ?? 0,
                   netVatBalance: ob.client.vatNetVatBalance ?? relevantJob?.vatSummary?.netVatBalance ?? 0,
                   sales: relevantJob?.vatSummary?.sales,
@@ -391,6 +392,7 @@ export function Desk20thView({
                                 sales={vatSummary.sales}
                                 purchases={vatSummary.purchases}
                                 previousCredit={vatSummary.previousCredit}
+                                withholdingAmount={vatSummary.withholdingAmount}
                                 netVatBalance={vatSummary.netVatBalance}
                               />
                             </div>

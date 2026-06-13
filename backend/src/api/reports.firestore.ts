@@ -12,10 +12,10 @@ async function generateReportData(clientId: string, uid: string) {
         .where('clientId', '==', clientId)
         .get();
 
-    const employeeStats = employeeSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const employeeStats = employeeSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
     const totalEmployees = employeeStats.length;
     const activeEmployees = employeeStats.filter((e: any) => e.employmentStatus === 'Active').length;
-    const totalBasicPay = employeeStats.reduce((sum, e: any) => sum + Number(e.basicPay || 0), 0);
+    const totalBasicPay = employeeStats.reduce((sum: any, e: any) => sum + Number(e.basicPay || 0), 0);
     const avgBasicPay = totalEmployees > 0 ? totalBasicPay / totalEmployees : 0;
 
     const deptMap = new Map<string, { count: number; totalPay: number }>();
@@ -35,7 +35,7 @@ async function generateReportData(clientId: string, uid: string) {
         .where('ownerUid', '==', uid)
         .where('clientId', '==', clientId)
         .get();
-    const leaveStats = leaveSnapshot.docs.map((d) => d.data());
+    const leaveStats = leaveSnapshot.docs.map((d: any) => d.data());
     const leaveByStatus = new Map<string, number>();
     const leaveByType = new Map<string, number>();
     leaveStats.forEach((l: any) => {
@@ -48,7 +48,7 @@ async function generateReportData(clientId: string, uid: string) {
         .where('ownerUid', '==', uid)
         .where('clientId', '==', clientId)
         .get();
-    const loanStats = loanSnapshot.docs.map((d) => d.data());
+    const loanStats = loanSnapshot.docs.map((d: any) => d.data());
     let totalLoansActive = 0, totalLoansPaid = 0;
     let totalPrincipal = 0, totalAmountPaid = 0;
     loanStats.forEach((l: any) => {
@@ -68,7 +68,7 @@ async function generateReportData(clientId: string, uid: string) {
         .where('clientId', '==', clientId)
         .where('date', '>=', dateStr)
         .get();
-    const attendanceStats = attendanceSnapshot.docs.map((d) => d.data());
+    const attendanceStats = attendanceSnapshot.docs.map((d: any) => d.data());
     const attendanceByStatus = new Map<string, number>();
     attendanceStats.forEach((a: any) => {
         attendanceByStatus.set(a.status, (attendanceByStatus.get(a.status) || 0) + 1);
@@ -173,7 +173,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        let employees = employeeSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        let employees = employeeSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
         if (department) employees = employees.filter((e: any) => e.department === department);
         const employeeIds = employees.map((e: any) => e.id);
 
@@ -185,7 +185,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let entries = entriesSnapshot.docs.map((d) => d.data());
+            let entries = entriesSnapshot.docs.map((d: any) => d.data());
 
             if (periodFrom) {
                 const runsSnapshot = await adminDb
@@ -195,7 +195,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                     .where('period', '>=', periodFrom)
                     .where('period', '<=', periodTo || periodFrom)
                     .get();
-                const runIds = runsSnapshot.docs.map((d) => d.id);
+                const runIds = runsSnapshot.docs.map((d: any) => d.id);
                 if (runIds.length > 0) {
                     entries = entries.filter((e: any) => runIds.includes(e.payrollRunId));
                 } else {
@@ -222,7 +222,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let records = otSnapshot.docs.map((d) => d.data());
+            let records = otSnapshot.docs.map((d: any) => d.data());
             if (periodFrom) {
                 records = records.filter((r: any) => r.period >= periodFrom && r.period <= (periodTo || periodFrom));
             }
@@ -235,7 +235,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            const records = loansSnapshot.docs.map((d) => d.data());
+            const records = loansSnapshot.docs.map((d: any) => d.data());
             const filtered = department ? records.filter((l: any) => employeeIds.includes(l.employeeId)) : records;
             result.rows = filtered;
             result.totals = {
@@ -248,7 +248,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let records = lvSnapshot.docs.map((d) => d.data());
+            let records = lvSnapshot.docs.map((d: any) => d.data());
             if (periodFrom) {
                 records = records.filter((l: any) => l.startDate >= periodFrom && l.startDate <= (periodTo || periodFrom));
             }
@@ -261,7 +261,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let records = attSnapshot.docs.map((d) => d.data());
+            let records = attSnapshot.docs.map((d: any) => d.data());
             if (periodFrom) {
                 records = records.filter((a: any) => a.date >= periodFrom && a.date <= (periodTo || periodFrom));
             }
@@ -275,7 +275,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let records = attSnapshot.docs.map((d) => d.data()).filter((a: any) => a.status === 'Late');
+            let records = attSnapshot.docs.map((d: any) => d.data()).filter((a: any) => a.status === 'Late');
             if (periodFrom) {
                 records = records.filter((r: any) => r.date >= periodFrom && r.date <= (periodTo || periodFrom));
             }
@@ -322,7 +322,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .get();
-            let entries = entriesSnapshot.docs.map((d) => d.data());
+            let entries = entriesSnapshot.docs.map((d: any) => d.data());
 
             if (periodFrom) {
                 const runsSnapshot = await adminDb
@@ -332,7 +332,7 @@ router.get('/:clientId/reports/custom', async (req: AuthenticatedRequest, res) =
                     .where('period', '>=', periodFrom)
                     .where('period', '<=', periodTo || periodFrom)
                     .get();
-                const runIds = runsSnapshot.docs.map((d) => d.id);
+                const runIds = runsSnapshot.docs.map((d: any) => d.id);
                 if (runIds.length > 0) {
                     entries = entries.filter((e: any) => runIds.includes(e.payrollRunId));
                 } else {

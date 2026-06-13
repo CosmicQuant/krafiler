@@ -48,6 +48,15 @@ function defaultStatus(): Record<TaxObligationType, FilingStatus> {
     };
 }
 
+function defaultFiledPeriods(): Record<TaxObligationType, string[]> {
+    return {
+        paye: [], nssf: [], sha: [], vat: [], tot: [], mri: [],
+        dst: [], eLevy: [], income_tax_resident_individual: [],
+        income_tax_non_resident_individual: [], income_tax_company: [],
+        excise_duty: [],
+    };
+}
+
 // ─── GET /api/clients ─────────────────────────────────────────────────────────
 router.get('/', async (req: AuthenticatedRequest, res) => {
     try {
@@ -58,7 +67,7 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
             .get();
 
         const clients = await Promise.all(
-            snapshot.docs.map(async (doc) => {
+            snapshot.docs.map(async (doc: any) => {
                 const data = doc.data() as any;
                 const client: any = {
                     id: doc.id,
@@ -145,7 +154,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
 router.post('/', async (req: AuthenticatedRequest, res) => {
     try {
         const uid = req.user!.uid;
-        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword } = req.body;
+        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword, vatPeriodMonth, vatPeriodYear, payePeriodMonth, payePeriodYear, totPeriodMonth, totPeriodYear, mriPeriodMonth, mriPeriodYear } = req.body;
 
         if (!name || !pin || !password) {
             return res.status(400).json({ message: 'Name, PIN, and password are required' });
@@ -198,6 +207,15 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
             masterFile: undefined,
             payStructure: payStructure || 'fixed',
             defaultWorkScheduleId: undefined,
+            vatPeriodMonth: vatPeriodMonth ? Number(vatPeriodMonth) : undefined,
+            vatPeriodYear: vatPeriodYear ? Number(vatPeriodYear) : undefined,
+            payePeriodMonth: payePeriodMonth ? Number(payePeriodMonth) : undefined,
+            payePeriodYear: payePeriodYear ? Number(payePeriodYear) : undefined,
+            totPeriodMonth: totPeriodMonth ? Number(totPeriodMonth) : undefined,
+            totPeriodYear: totPeriodYear ? Number(totPeriodYear) : undefined,
+            mriPeriodMonth: mriPeriodMonth ? Number(mriPeriodMonth) : undefined,
+            mriPeriodYear: mriPeriodYear ? Number(mriPeriodYear) : undefined,
+            filedPeriods: defaultFiledPeriods(),
             createdAt: Timestamp.now(),
             updatedAt: Timestamp.now(),
         };
@@ -227,7 +245,7 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
             return res.status(404).json({ message: 'Client not found' });
         }
 
-        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword, defaultWorkScheduleId } = req.body;
+        const { name, pin, password, email, phone, sector, obligations, payStructure, nssfNo, nssfPassword, shaLogin, shaPassword, helbLogin, helbPassword, defaultWorkScheduleId, vatPeriodMonth, vatPeriodYear, payePeriodMonth, payePeriodYear, totPeriodMonth, totPeriodYear, mriPeriodMonth, mriPeriodYear } = req.body;
         const updateData: any = { updatedAt: Timestamp.now() };
 
         if (name !== undefined) updateData.name = name.trim();
@@ -238,6 +256,14 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
         if (payStructure !== undefined) updateData.payStructure = payStructure;
         if (nssfNo !== undefined) updateData.nssfNo = nssfNo?.trim() || null;
         if (defaultWorkScheduleId !== undefined) updateData.defaultWorkScheduleId = defaultWorkScheduleId || null;
+        if (vatPeriodMonth !== undefined) updateData.vatPeriodMonth = vatPeriodMonth ? Number(vatPeriodMonth) : null;
+        if (vatPeriodYear !== undefined) updateData.vatPeriodYear = vatPeriodYear ? Number(vatPeriodYear) : null;
+        if (payePeriodMonth !== undefined) updateData.payePeriodMonth = payePeriodMonth ? Number(payePeriodMonth) : null;
+        if (payePeriodYear !== undefined) updateData.payePeriodYear = payePeriodYear ? Number(payePeriodYear) : null;
+        if (totPeriodMonth !== undefined) updateData.totPeriodMonth = totPeriodMonth ? Number(totPeriodMonth) : null;
+        if (totPeriodYear !== undefined) updateData.totPeriodYear = totPeriodYear ? Number(totPeriodYear) : null;
+        if (mriPeriodMonth !== undefined) updateData.mriPeriodMonth = mriPeriodMonth ? Number(mriPeriodMonth) : null;
+        if (mriPeriodYear !== undefined) updateData.mriPeriodYear = mriPeriodYear ? Number(mriPeriodYear) : null;
 
         const credUpdate: any = {};
         if (password !== undefined) credUpdate.kraPassword = password;
@@ -281,7 +307,7 @@ router.delete('/:id', async (req: AuthenticatedRequest, res) => {
         // Delete subcollections (employees, payrollRuns, etc.)
         const employees = await adminDb.collection('employees').where('clientId', '==', req.params.id).get();
         const batch = adminDb.batch();
-        employees.docs.forEach((d) => batch.delete(d.ref));
+        employees.docs.forEach((d: any) => batch.delete(d.ref));
         await batch.commit();
 
         await docRef.delete();
@@ -499,7 +525,7 @@ router.get('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
             'Amount of Insurance Relief (Q)', 'PAYE Tax (Ksh) (R)', 'Self Assessed PAYE Tax (Ksh) (S)',
         ];
 
-        const mapped = employeesSnapshot.docs.map((doc, i) => {
+        const mapped = employeesSnapshot.docs.map((doc: any, i: any) => {
             const emp = doc.data() as any;
             const totalCashPay = emp.basicPay || 0;
             const grossSalary = totalCashPay + (emp.carBenefit || 0) + (emp.mealsBenefit || 0) + (emp.nonCashBenefits || 0) + (emp.housingBenefit || 0) + (emp.otherBenefits || 0);
@@ -558,7 +584,7 @@ router.get('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
                 .get();
 
             if (!runsSnapshot.empty) {
-                const runIds = runsSnapshot.docs.map((d) => d.id);
+                const runIds = runsSnapshot.docs.map((d: any) => d.id);
                 const entryMap = new Map<string, any>();
                 // Firestore 'in' queries limited to 10 items; if more, query in chunks
                 const chunkSize = 10;
@@ -578,7 +604,7 @@ router.get('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
 
                 for (const m of mapped) {
                     const kraPin = String(m[headers[1]] || '');
-                    const empDoc = employeesSnapshot.docs.find((d) => (d.data() as any).kraPin === kraPin);
+                    const empDoc = employeesSnapshot.docs.find((d: any) => (d.data() as any).kraPin === kraPin);
                     if (empDoc && entryMap.has(empDoc.id)) {
                         const en = entryMap.get(empDoc.id)!;
                         m['OT Pay (read-only)'] = en.overtimePay || 0;
@@ -662,7 +688,7 @@ router.post('/:id/sync-master-csv', async (req: AuthenticatedRequest, res) => {
         csvLines.push('');
         csvLines.push(headers.join(','));
 
-        employeesSnapshot.docs.forEach((doc, i) => {
+        employeesSnapshot.docs.forEach((doc: any, i: any) => {
             const emp = doc.data() as any;
             const totalCashPay = emp.basicPay || 0;
             const grossSalary = totalCashPay + (emp.carBenefit || 0) + (emp.mealsBenefit || 0) + (emp.nonCashBenefits || 0) + (emp.housingBenefit || 0) + (emp.otherBenefits || 0);

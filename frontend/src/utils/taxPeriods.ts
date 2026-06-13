@@ -118,3 +118,22 @@ export function isPastDeadline(periodYYYYMM: string): boolean {
 export function getCurrentPeriodMmYyyy() {
     return getCurrentFilingPeriod().mmSlashYYYY;
 }
+
+export function getClientFilingPeriod(
+    client: { vatPeriodMonth?: number; vatPeriodYear?: number; payePeriodMonth?: number; payePeriodYear?: number; totPeriodMonth?: number; totPeriodYear?: number; mriPeriodMonth?: number; mriPeriodYear?: number },
+    obligation: 'vat' | 'paye' | 'tot' | 'mri'
+) {
+    const month = obligation === 'vat' ? client.vatPeriodMonth :
+        obligation === 'paye' ? client.payePeriodMonth :
+        obligation === 'tot' ? client.totPeriodMonth :
+        client.mriPeriodMonth;
+    const year = obligation === 'vat' ? client.vatPeriodYear :
+        obligation === 'paye' ? client.payePeriodYear :
+        obligation === 'tot' ? client.totPeriodYear :
+        client.mriPeriodYear;
+
+    if (month && year && month >= 1 && month <= 12) {
+        return periodFromRun(`${year}-${String(month).padStart(2, '0')}`);
+    }
+    return getCurrentFilingPeriod(obligation);
+}

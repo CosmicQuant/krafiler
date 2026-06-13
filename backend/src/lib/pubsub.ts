@@ -17,7 +17,7 @@ let pubsubInstance: PubSub | null = null;
 
 function getPubSub(): PubSub {
     if (!pubsubInstance) {
-        pubsubInstance = new PubSub({ projectId: PROJECT_ID });
+        pubsubInstance = new PubSub({ projectId: PROJECT_ID } as any);
     }
     return pubsubInstance;
 }

@@ -20,7 +20,7 @@ router.get('/:clientId/work-schedules', async (req: AuthenticatedRequest, res) =
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching work schedules from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

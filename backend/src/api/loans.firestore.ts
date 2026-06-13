@@ -21,7 +21,7 @@ router.get('/:clientId/loans', async (req: AuthenticatedRequest, res) => {
             .orderBy('createdAt', 'desc')
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching loans from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });

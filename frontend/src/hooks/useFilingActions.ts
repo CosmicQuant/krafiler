@@ -8,7 +8,7 @@
 import { useRef, useCallback } from 'react';
 import { apiFetch } from '../services/api';
 import { ClientObligation, FilingJobState, ActiveDashboardJob, TaxStatus } from '../types';
-import { getCurrentFilingPeriod } from '../utils/taxPeriods';
+import { getCurrentFilingPeriod, getClientFilingPeriod } from '../utils/taxPeriods';
 import { isPendingFilingJob, isTerminalFilingJob, markPayrollStatusesGenerated } from '../utils/dashboardUtils';
 
 export type DashboardNotice = { tone: 'success' | 'error' | 'info'; message: string } | null;
@@ -195,7 +195,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!activeClient.payeZipUrl) throw new Error("No PAYE ZIP available to upload.");
 
             console.log(`Dispatching KRA filing job for ${client.name}...`);
-            const { periodFrom, periodTo } = getCurrentFilingPeriod('paye');
+            const { periodFrom, periodTo } = getClientFilingPeriod(activeClient, 'paye');
             const payload = {
                 clientId: activeClient.id,
                 kraPin: activeClient.pin,
@@ -237,7 +237,13 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const sectionBWithoutPinSales = !vatSectionBWithoutPinVal.trim() ? 0 : parseFloat(vatSectionBWithoutPinVal);
             if (!Number.isFinite(sectionBWithoutPinSales) || sectionBWithoutPinSales < 0) throw new Error(`Enter a valid non-negative Section B Without PIN sales amount for ${client.name}.`);
 
-            const { periodFrom, periodTo } = getCurrentFilingPeriod('vat');
+            const { periodFrom, periodTo } = getClientFilingPeriod(client, 'vat');
+
+            // Prevent re-filing a period that is already filed
+            const periodKey = `${periodFrom.slice(0, 7)}`;
+            if (client.filedPeriods?.vat?.includes(periodKey)) {
+                throw new Error(`VAT for ${periodKey} has already been filed for ${client.name}.`);
+            }
 
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
@@ -295,7 +301,14 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const previousCredit = !vatPreviousCreditVal.trim() ? 0 : parseFloat(vatPreviousCreditVal);
             if (!Number.isFinite(previousCredit) || previousCredit < 0) throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
 
-            const { periodFrom, periodTo } = getCurrentFilingPeriod('vat');
+            const { periodFrom, periodTo } = getClientFilingPeriod(client, 'vat');
+
+            // Prevent re-filing a period that is already filed
+            const periodKey = `${periodFrom.slice(0, 7)}`;
+            if (client.filedPeriods?.vat?.includes(periodKey)) {
+                throw new Error(`VAT for ${periodKey} has already been filed for ${client.name}.`);
+            }
+
             console.log(`Filing VAT for ${client.name} with the generated ZIP.`);
 
             const res = await apiFetch('/tax/file-return', {
@@ -341,18 +354,24 @@ export function useFilingActions(deps: FilingActionsDeps) {
         const d = getD();
         console.log(`Queuing PRN Generation for ${client.name} (${type})...`);
         try {
-            const taxObligationMap: Record<string, string> = { 'PAYE': 'paye', 'TOT': 'turnover_tax', 'MRI': 'monthly_rental_income', 'VAT': 'vat' };
-            const { periodFrom, periodTo } = getCurrentFilingPeriod(taxObligationMap[type]);
+            const taxObligationMap: Record<string, 'paye' | 'turnover_tax' | 'monthly_rental_income' | 'vat'> = { 'PAYE': 'paye', 'TOT': 'turnover_tax', 'MRI': 'monthly_rental_income', 'VAT': 'vat' };
+            const normalizedType = type.toUpperCase();
+            const obligation = taxObligationMap[normalizedType];
+            if (!obligation) throw new Error(`Unsupported PRN type: ${type}`);
+            const periodObligation = obligation === 'turnover_tax' ? 'tot' : obligation === 'monthly_rental_income' ? 'mri' : obligation;
+            const { periodFrom, periodTo } = getClientFilingPeriod(client, periodObligation);
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     clientId: client.id,
+                    clientName: client.name,
                     kraPin: client.pin,
                     kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
                     taxObligationType: taxObligationMap[type],
+                    ownsRentalProperty: false,
                     printPrnOnly: true
                 }),
             });

@@ -16,7 +16,7 @@ router.get('/:clientId/kpi', async (req: AuthenticatedRequest, res) => {
             .where('clientId', '==', clientId)
             .get();
         const employeeCount = employeesSnapshot.size;
-        const activeEmployees = employeesSnapshot.docs.filter((d) => (d.data() as any).employmentStatus === 'Active').length;
+        const activeEmployees = employeesSnapshot.docs.filter((d: any) => (d.data() as any).employmentStatus === 'Active').length;
 
         // Count departments
         const deptsSnapshot = await adminDb
@@ -43,8 +43,8 @@ router.get('/:clientId/kpi', async (req: AuthenticatedRequest, res) => {
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
             .get();
-        const pendingLeaveRequests = leaveSnapshot.docs.filter((d) => (d.data() as any).status === 'Pending').length;
-        const approvedLeaveThisMonth = leaveSnapshot.docs.filter((d) => (d.data() as any).status === 'Approved').length;
+        const pendingLeaveRequests = leaveSnapshot.docs.filter((d: any) => (d.data() as any).status === 'Pending').length;
+        const approvedLeaveThisMonth = leaveSnapshot.docs.filter((d: any) => (d.data() as any).status === 'Approved').length;
 
         // Payroll runs
         const runsSnapshot = await adminDb
@@ -54,7 +54,7 @@ router.get('/:clientId/kpi', async (req: AuthenticatedRequest, res) => {
             .get();
         const payrollRunCount = runsSnapshot.size;
         const latestRunDoc = runsSnapshot.docs
-            .sort((a, b) => ((b.data() as any).createdAt?.toMillis?.() || 0) - ((a.data() as any).createdAt?.toMillis?.() || 0))[0];
+            .sort((a: any, b: any) => ((b.data() as any).createdAt?.toMillis?.() || 0) - ((a.data() as any).createdAt?.toMillis?.() || 0))[0];
         const latestRunPeriod = latestRunDoc ? (latestRunDoc.data() as any).period || null : null;
 
         let totalPayrollGross = 0;

@@ -56,6 +56,7 @@ export type PreparedVatReturnSummary = {
     inputVat: number;
     outputVat: number;
     previousCredit: number;
+    withholdingAmount: number;
     payableVat: number;
     netVatBalance: number;
     sales?: VatBreakdownItem[];
@@ -248,10 +249,6 @@ async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string
     const sections: { [key: string]: string[] } = {};
 
     for (const file of csvFiles) {
-        // Skip the non-VAT PIN file that should not be included in generation
-        if (/WITHOUT_PIN_AND_NON-VAT_PIN/i.test(file)) {
-            continue;
-        }
         // Match patterns like SEC_B_WITH_VAT_PIN1.CSV, SEC_D1_WITH_VAT_PIN1.CSV, SEC_H_ZERO_RATED_PIN1.CSV, etc.
         const match = file.match(/^SEC_([A-Z]\d*)_(.+?)(?:_PIN\d+)?\.CSV$/i);
         if (match) {
@@ -268,10 +265,11 @@ async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string
 
 function findAmountInRow(row: CsvRow): number {
     // Source CSVs place the amount at different positions.
-    // Scan from the right for the first positive numeric value.
+    // Scan from the right for the first non-zero numeric value.
+    // Credit notes appear as negative amounts and must be included.
     for (let i = row.length - 1; i >= 0; i--) {
         const val = parseAmount(row[i]);
-        if (val > 0) {
+        if (val !== 0 && !Number.isNaN(val)) {
             return val;
         }
     }
@@ -290,7 +288,7 @@ function mapSectionRows(params: {
 
     for (const row of rows) {
         const taxableAmount = findAmountInRow(row);
-        if (taxableAmount <= 0) {
+        if (taxableAmount === 0) {
             continue;
         }
 
@@ -674,18 +672,33 @@ function createVatUploadZip(destinationZipPath: string, files: Array<{ path: str
 
 async function copyArtifactToClientWorkspace(sourcePath: string, clientName: string, preferredFileName?: string): Promise<{ path: string; url: string; label: string }> {
     const safeClientName = sanitizeClientName(clientName);
-    const workspaceDir = path.join(WORKSPACE_ROOT, 'frontend', 'public', 'clients', safeClientName);
-    await ensureDirectory(workspaceDir);
-
     const fileName = preferredFileName || path.basename(sourcePath);
-    const destinationPath = path.join(workspaceDir, fileName);
-    await fs.copyFile(sourcePath, destinationPath);
-
-    return {
-        path: destinationPath,
-        url: `/clients/${encodeURIComponent(safeClientName)}/${fileName}`,
-        label: fileName,
-    };
+    
+    // Try Cloud Storage first, fall back to local disk
+    try {
+        const { uploadFile, getSignedDownloadUrl } = await import('../lib/cloudStorage');
+        const destination = `temp/vat/${safeClientName}/${fileName}`;
+        await uploadFile(sourcePath, destination, { contentType: 'application/zip' });
+        const signedUrl = await getSignedDownloadUrl(destination, 60); // 60-minute expiry
+        
+        return {
+            path: sourcePath,
+            url: signedUrl,
+            label: fileName,
+        };
+    } catch (err: any) {
+        // Fallback: copy to local workspace for dev mode
+        const workspaceDir = path.join(WORKSPACE_ROOT, 'frontend', 'public', 'clients', safeClientName);
+        await ensureDirectory(workspaceDir);
+        const destinationPath = path.join(workspaceDir, fileName);
+        await fs.copyFile(sourcePath, destinationPath);
+        
+        return {
+            path: destinationPath,
+            url: `/clients/${encodeURIComponent(safeClientName)}/${fileName}`,
+            label: fileName,
+        };
+    }
 }
 
 export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams): Promise<PreparedVatReturnArtifacts> {
@@ -908,6 +921,7 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
         inputVat: rTotalInputRounded,
         outputVat: round(rTotalSalesVat, 2),
         previousCredit: round(params.previousCredit, 2),
+        withholdingAmount: 0, // Will be populated by worker if withholding exists
         payableVat: rFinalTaxPayable,
         netVatBalance: rNetVatBalance,
         sales: [
@@ -915,14 +929,14 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
             { label: 'Taxable Sales (Other Rate)', base: round(rOtherSalesTotal, 2), vat: round(rOtherSalesVat, 2), rate: 0.08 },
             { label: 'Sales (Zero Rated)', base: round(rZeroRatedSalesTotal, 2), vat: round(rZeroRatedSalesVat, 2), rate: 0.00 },
             { label: 'Sales (Exempt)', base: round(rExemptSalesTotal, 2), vat: round(rExemptSalesVat, 2), rate: 0.00 },
-        ].filter((item) => item.base > 0 || item.vat > 0),
+        ],
         purchases: [
             { label: 'Taxable Purchases (General Rate)', base: round(fPurchases.totalBase, 2), vat: round(fPurchases.totalVat, 2), rate: 0.16 },
             { label: 'Taxable Purchases (Other Rate)', base: round(gPurchases.totalBase, 2), vat: round(gPurchases.totalVat, 2), rate: 0.08 },
             { label: 'Purchases (Zero Rated)', base: round(hPurchases.totalBase, 2), vat: round(hPurchases.totalVat, 2), rate: 0.00 },
             { label: 'Exempt Purchases', base: round(iPurchases.totalBase, 2), vat: round(iPurchases.totalVat, 2), rate: 0.00 },
             { label: 'Imported Services', base: round(jPurchases.totalBase, 2), vat: round(jPurchases.totalVat, 2), rate: 0.16 },
-        ].filter((item) => item.base > 0 || item.vat > 0),
+        ],
     };
 
     return {

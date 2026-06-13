@@ -88,7 +88,7 @@ export default function PracticeDashboard() {
   const [newClientPassword, setNewClientPassword] = useState('');
   const [mriInputVals, setMriInputVals] = useState<Record<string, string>>({});
   const [totInputVals, setTotInputVals] = useState<Record<string, string>>({});
-  const [vatPreviousCreditVals, setVatPreviousCreditVals] = useState<Record<string, string>>({});
+  const [vatPreviousCreditVals] = useState<Record<string, string>>({});
   const [vatSectionBWithoutPinVals, setVatSectionBWithoutPinVals] = useState<Record<string, string>>({});
   const [newClientMasterCsv, setNewClientMasterCsv] = useState<File | null>(null);
   const [newClientModalError, setNewClientModalError] = useState<string | null>(null);
@@ -439,8 +439,6 @@ export default function PracticeDashboard() {
               <VatClientView
                 clients={clients}
                 activeJobs={activeJobs}
-                vatPreviousCreditVals={vatPreviousCreditVals}
-                setVatPreviousCreditVals={setVatPreviousCreditVals}
                 vatSectionBWithoutPinVals={vatSectionBWithoutPinVals}
                 setVatSectionBWithoutPinVals={setVatSectionBWithoutPinVals}
                 onPrepareVat={filingActions.prepareVat}

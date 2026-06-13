@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { adminDb } from '../lib/firebaseAdmin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, Query } from 'firebase-admin/firestore';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
 
 const router = Router();
@@ -111,7 +111,7 @@ router.get('/:clientId/attendance', async (req: AuthenticatedRequest, res) => {
         const uid = req.user!.uid;
         const clientId = req.params.clientId;
 
-        let query: FirebaseFirestore.Query = adminDb
+        let query: Query = adminDb
             .collection(ATTENDANCE_COLLECTION)
             .where('ownerUid', '==', uid)
             .where('clientId', '==', clientId)
@@ -129,7 +129,7 @@ router.get('/:clientId/attendance', async (req: AuthenticatedRequest, res) => {
         }
 
         const snapshot = await query.get();
-        const records = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const records = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
         res.json(records);
     } catch (err) {
         console.error('Error fetching attendance records:', err);

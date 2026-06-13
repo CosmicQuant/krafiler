@@ -16,10 +16,11 @@ FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
 
-# Copy built files, templates, and package files
+# Copy built files, templates, package files, and VAT template
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/VAT3_Return_XLSM.xlsm ./VAT3_Return_XLSM.xlsm
 
 # Install production dependencies directly in the target image
 RUN npm install --production

@@ -20,6 +20,7 @@ export type VatPreparationSummary = {
     inputVat: number;
     outputVat: number;
     previousCredit: number;
+    withholdingAmount: number;
     payableVat: number;
     netVatBalance: number;
     sales?: VatBreakdownItem[];
@@ -66,6 +67,7 @@ export type ClientObligation = {
     vatInputVat?: number;
     vatOutputVat?: number;
     vatPreviousCredit?: number;
+    vatWithholdingAmount?: number;
     vatSectionBWithoutPinSales?: number;
     vatPayableVat?: number;
     vatNetVatBalance?: number;
@@ -102,6 +104,21 @@ export type ClientObligation = {
     vatReceiptUrl?: string;
     vatPrnUrl?: string;
     vatPeriod?: string;
+    vatPeriodMonth?: number;
+    vatPeriodYear?: number;
+    payePeriodMonth?: number;
+    payePeriodYear?: number;
+    totPeriodMonth?: number;
+    totPeriodYear?: number;
+    mriPeriodMonth?: number;
+    mriPeriodYear?: number;
+    filedPeriods?: Record<string, string[]>;
+    nssfError?: string;
+    nssfErrorType?: string;
+    payeError?: string;
+    payeErrorType?: string;
+    shaError?: string;
+    shaErrorType?: string;
     totLastFiledDate?: string;
     totReceiptUrl?: string;
     totPrnUrl?: string;

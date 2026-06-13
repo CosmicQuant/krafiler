@@ -2,8 +2,6 @@
  * test-vat-local.ts
  *
  * Local VAT filing test script that mirrors the worker's prepareVatOnly flow.
- * Uses the same login logic as kraFilingWorker.ts but is self-contained to
- * avoid module import issues.
  */
 
 import 'dotenv/config';
@@ -12,7 +10,6 @@ import path from 'path';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
-// Apply stealth plugin
 chromium.use(StealthPlugin());
 
 const TMP_DIR = path.join(
@@ -32,73 +29,91 @@ const VAT_PREVIOUS_CREDIT = 0;
 
 const jobId = `local-${Date.now()}`;
 
-// ── Log helper ───────────────────────────────────────────────────────────────
-async function log(message: string, meta?: { progress?: number; level?: string }) {
+async function log(message: string) {
     const ts = new Date().toISOString();
-    const line = `[${ts}] [${jobId}] ${message}${meta?.progress ? ` (progress: ${meta.progress}%)` : ''}`;
+    const line = `[${ts}] [${jobId}] ${message}`;
     console.log(line);
     const logPath = path.join(TMP_DIR, `${jobId}.log`);
     await fs.mkdir(TMP_DIR, { recursive: true });
     await fs.appendFile(logPath, line + '\n');
 }
 
-// ── Gemma 4 captcha solver ───────────────────────────────────────────────────
-async function solveCaptchaWithGemma4(imagePath: string): Promise<string> {
-    const imageBuffer = await fs.readFile(imagePath);
-    const base64 = imageBuffer.toString('base64');
+async function solveCaptchaWithGemma4(screenshotPath: string): Promise<string> {
+    const imageBuffer = await fs.readFile(screenshotPath);
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
 
-    const prompt = `You are solving a KRA captcha. Look at the image carefully. It shows numbers and a math operator (+, -, ×, or *). Solve the arithmetic and return ONLY the final number as digits. No words, no punctuation, no explanation. Example: if the image shows "12 + 34", return "46". Example: if the image shows "8 - 3", return "5".`;
-
-    const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMMA4_MODEL}:generateContent?key=${GEMMA4_API_KEY}`,
-        {
+    // Try up to 3 times with better prompts
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [
-                    {
-                        parts: [
-                            { text: prompt },
-                            {
-                                inlineData: {
-                                    mimeType: 'image/png',
-                                    data: base64,
-                                },
-                            },
-                        ],
-                    },
-                ],
-                generationConfig: {
-                    maxOutputTokens: 100,
-                    temperature: 0,
-                },
+                contents: [{
+                    parts: [
+                        { text: 'You are solving a KRA iTax login captcha. The image shows a simple arithmetic math problem with two numbers and an operator (+ or -).\n\nCRITICAL INSTRUCTIONS:\n1. Look at the image and identify the arithmetic expression\n2. Solve the math problem\n3. Return ONLY the final numeric answer as a plain number\n4. Do NOT include any explanation, text, or formatting\n5. Do NOT describe the image or the problem\n6. Just return the number, nothing else\n\nExample: if the image shows "24 - 11", return "13"\nExample: if the image shows "68 + 13", return "81"' },
+                        { inline_data: { mime_type: 'image/png', data: imageBuffer.toString('base64') } },
+                    ],
+                }],
+                generationConfig: { maxOutputTokens: 100, temperature: 0 },
             }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Gemma 4 request failed (${response.status}): ${await response.text()}`);
         }
-    );
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemma 4 API error: ${response.status} ${errorText}`);
+        const payload = await response.json();
+        const parts = payload.candidates?.[0]?.content?.parts ?? [];
+        
+        // Log all parts for debugging
+        await log(`Gemma 4 response parts: ${JSON.stringify(parts)}`);
+        
+        // Try non-thought parts first
+        let rawText = parts.filter((p: any) => !p.thought && typeof p.text === 'string').map((p: any) => p.text).join(' ').trim();
+        
+        // If no answer, try thought parts
+        if (!rawText) {
+            rawText = parts.filter((p: any) => p.thought && typeof p.text === 'string').map((p: any) => p.text).join(' ').trim();
+        }
+        
+        // If still no answer, just use all parts
+        if (!rawText) {
+            rawText = parts.map((p: any) => p.text).join(' ').trim();
+        }
+
+        // Try to parse a math expression from the text and calculate it ourselves
+        // Sometimes Gemma 4 returns the expression like "24 - 11" instead of the answer
+        const expressionMatch = rawText.match(/(\d+)\s*([+\-×x*])\s*(\d+)/);
+        if (expressionMatch) {
+            const a = parseInt(expressionMatch[1], 10);
+            const op = expressionMatch[2];
+            const b = parseInt(expressionMatch[3], 10);
+            let answer: number;
+            if (op === '+' || op === '×' || op === 'x' || op === '*') {
+                answer = a + b;
+            } else if (op === '-') {
+                answer = a - b;
+            } else {
+                answer = 0;
+            }
+            await log(`Gemma 4 parsed expression: ${a} ${op} ${b} = ${answer} (attempt ${attempt})`);
+            return String(answer);
+        }
+
+        // Extract the first number from the text (the answer should be the first thing if it followed instructions)
+        const numbers = rawText.match(/^\d{1,4}/);
+        if (numbers && numbers.length > 0) {
+            const answer = numbers[0];
+            await log(`Gemma 4 solved captcha: ${answer} (attempt ${attempt})`);
+            return answer;
+        }
+        
+        await log(`Gemma 4 attempt ${attempt} returned invalid: "${rawText}"`);
     }
 
-    const data = await response.json();
-    const parts = data?.candidates?.[0]?.content?.parts ?? [];
-    // Gemma 4 returns "thought" parts (reasoning) and regular answer parts.
-    // We must only take text from non-thought parts to avoid concatenating
-    // reasoning numbers with the final answer.
-    const answerParts = parts.filter((p: any) => !p.thought);
-    const text = answerParts.map((p: any) => p.text).join(' ').trim();
-    if (!text) {
-        throw new Error(`Gemma 4 returned no answer parts. Full response: ${JSON.stringify(data)}`);
-    }
-    const cleaned = text.replace(/\D/g, '');
-    if (!cleaned) {
-        throw new Error(`Gemma 4 returned no numeric answer: "${text}"`);
-    }
-    return cleaned;
+    throw new Error(`Gemma 4 failed to solve captcha after 3 attempts`);
 }
 
-// ── Browser launch ───────────────────────────────────────────────────────────
 async function launchBrowser() {
     const launchOptions = {
         headless: false,
@@ -111,24 +126,17 @@ async function launchBrowser() {
             '--disable-blink-features=AutomationControlled',
         ],
     };
-
     const contextOptions = {
-        userAgent:
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         viewport: null,
         acceptDownloads: true,
         locale: 'en-KE',
         timezoneId: 'Africa/Nairobi',
     };
-
     const candidates = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     ];
-
     for (const exe of candidates) {
         try {
             await fs.access(exe);
@@ -139,20 +147,13 @@ async function launchBrowser() {
             );
             await log('Browser launched');
             const page = context.pages()[0] ?? (await context.newPage());
-            return { context, page, close: async () => context.close() };
-        } catch {
-            continue;
-        }
+            return { browserContext: context, page, close: async () => context.close() };
+        } catch { continue; }
     }
     throw new Error('No local browser found');
 }
 
-// ── KRA Login (exact same logic as worker) ─────────────────────────────────────
-async function performKraLogin(
-    page: any,
-    kraPin: string,
-    kraPassword: string
-): Promise<void> {
+async function performKraLogin(page: any, kraPin: string, kraPassword: string): Promise<void> {
     await log('Waiting for login page...');
     await page.waitForSelector('#logid', { timeout: 15_000 });
     await log('Login page ready');
@@ -161,45 +162,17 @@ async function performKraLogin(
     await page.fill('#logid', kraPin);
 
     await log('Clicking Continue...');
-    const continueFound = await page.$('a[href="javascript:CheckPIN();"]');
-    if (continueFound) {
-        await continueFound.click();
+    const continueBtn = await page.$('a[href="javascript:CheckPIN();"]');
+    if (continueBtn) {
+        await continueBtn.click();
     } else {
-        await log('Continue <a> not found, calling CheckPIN() via JS...');
         await page.evaluate(() => { (globalThis as any).CheckPIN(); });
     }
 
-    // Check for PIN error dialogs
-    const dialogMessage = await Promise.race([
-        new Promise<string | null>((resolve) => {
-            const handler = async (dialog: any) => {
-                const msg = dialog.message();
-                await dialog.dismiss();
-                resolve(msg);
-            };
-            page.once('dialog', handler);
-            setTimeout(() => {
-                page.off('dialog', handler);
-                resolve(null);
-            }, 1000);
-        }),
-    ]);
-
-    if (dialogMessage) {
-        await log(`KRA dialog after PIN: "${dialogMessage}"`);
-    }
-
-    // Wait for password field
     await log('Waiting for password field...');
-    const passwordVisible = await page.waitForSelector('input[type="password"]:visible', { timeout: 18_000 })
-        .then(() => true)
-        .catch(() => false);
-
+    const passwordVisible = await page.waitForSelector('input[type="password"]:visible', { timeout: 30_000 }).then(() => true).catch(() => false);
     if (!passwordVisible) {
-        const errMsg = dialogMessage
-            ?? await page.$eval('#errorDiv, .error-message, [id*="error"]', (el: any) => el.textContent?.trim()).catch(() => null)
-            ?? 'Password section did not appear after CheckPIN().';
-        throw new Error(`PIN validation failed: ${errMsg}`);
+        throw new Error('Password section did not appear after CheckPIN()');
     }
     await log('Password field appeared');
 
@@ -214,53 +187,35 @@ async function performKraLogin(
 
     // Try DOM text first
     try {
-        const stampText = await page.$eval(
-            '#securityStamp, .security-stamp, [id*="stamp"], img[src*="SecurityStamp"]',
-            (el: any) => el.textContent?.trim() ?? ''
-        );
-        if (stampText) {
-            const match = stampText.match(/(\d+)\s*([+\-×x*])\s*(\d+)/);
-            if (match) {
-                const a = parseInt(match[1], 10);
-                const op = match[2];
-                const b = parseInt(match[3], 10);
-                if (op === '+' || op === '×' || op === 'x' || op === '*') {
-                    captchaAnswer = String(a + b);
-                } else if (op === '-') {
-                    captchaAnswer = String(a - b);
-                }
-                await log(`DOM arithmetic captcha: ${a} ${op} ${b} = ${captchaAnswer}`);
+        const bodyText = await page.evaluate(() => document.body.innerText || '');
+        const match = bodyText.match(/(\d+)\s*([+\-×x*])\s*(\d+)\s*\?/);
+        if (match) {
+            const a = parseInt(match[1], 10);
+            const op = match[2];
+            const b = parseInt(match[3], 10);
+            if (op === '+' || op === '×' || op === 'x' || op === '*') {
+                captchaAnswer = String(a + b);
+            } else if (op === '-') {
+                captchaAnswer = String(a - b);
             }
+            await log(`DOM arithmetic captcha: ${a} ${op} ${b} = ${captchaAnswer}`);
         }
-    } catch {
-        // Continue to screenshot
-    }
+    } catch { /* continue to screenshot */ }
 
     // Screenshot + Gemma 4 fallback
     if (!captchaAnswer) {
-        const captchaSelectors = [
-            '#loginCaptcha',
-            '#captchaImg',
-            '#captcha_img',
-            'img[id*="captcha"]',
-            'img[src*="GenerateCaptcha"]',
-            'img[src*="captcha"]',
-        ];
-        let usedElement = false;
-        for (const sel of captchaSelectors) {
-            const el = await page.$(sel);
-            if (!el) continue;
+        const el = await page.$('#loginCaptcha, #captchaImg, img[src*="captcha"], img[src*="GenerateCaptcha"]');
+        if (el) {
             const box = await el.boundingBox();
-            if (!box || box.width < 10 || box.height < 10) continue;
-            await el.screenshot({ path: screenPath, type: 'png' });
-            usedElement = true;
-            await log(`Captcha screenshot saved: ${screenPath}`);
-            break;
-        }
-        if (!usedElement) {
+            if (box && box.width >= 10 && box.height >= 10) {
+                await el.screenshot({ path: screenPath, type: 'png' });
+            } else {
+                await page.screenshot({ path: screenPath, type: 'png' });
+            }
+        } else {
             await page.screenshot({ path: screenPath, type: 'png' });
-            await log(`Viewport screenshot saved: ${screenPath}`);
         }
+        await log(`Captcha screenshot saved: ${screenPath}`);
 
         try {
             captchaAnswer = await solveCaptchaWithGemma4(screenPath);
@@ -271,59 +226,20 @@ async function performKraLogin(
     }
 
     await page.fill('input[name="captcahText"]', captchaAnswer);
-
     await log('Submitting login...');
     await page.click('#loginButton');
 
-    // Wait for post-login outcome
+    // Wait for dashboard
     const dashboardSelectors = [
-        '#mainNav',
-        '#sideNav',
-        '.dashboard',
         'a[href="eReturns.htm"]',
         'a[href="logout.htm"]',
         'a[href="javascript:logout()"]',
-        'a[href*="logout"]',
         '#logout',
-        '#logoutBtn',
         'text=Dashboard',
         'text=Returns',
-        'text=My Profile',
-        'text=Compliance',
-        'text=My Ledger',
-        'text=Audit & Assessment',
-        'text=Payments',
-        'text=Refunds',
-        'text=Objection & Appeal',
-        'text=Taxpayer Information Update',
     ];
-
-    const passwordChangeSelectors = [
-        'input[name="oldPassword"]',
-        'input[name="newPassword"]',
-        'input[name="confirmPassword"]',
-        'text=Change Password',
-        'text=Password Reset',
-        'text=Reset Password',
-    ];
-
-    const mobileVerificationSelectors = [
-        'input[name="otpCode"]',
-        'input[name="otp"]',
-        'text=Mobile Verification',
-        'text=Enter OTP',
-        'text=One Time Password',
-        'text=Verification Code',
-        'text=Verify Mobile',
-    ];
-
     const deadline = Date.now() + 18_000;
     while (Date.now() < deadline) {
-        const url = page.url();
-        if (url.includes('login.htm') && url.includes('error')) {
-            throw new Error('Login rejected by KRA');
-        }
-
         for (const sel of dashboardSelectors) {
             const visible = await page.locator(sel).first().isVisible().catch(() => false);
             if (visible) {
@@ -331,83 +247,413 @@ async function performKraLogin(
                 return;
             }
         }
-
-        for (const sel of passwordChangeSelectors) {
-            const visible = await page.locator(sel).first().isVisible().catch(() => false);
-            if (visible) {
-                throw new Error('Password expired — needs reset');
-            }
-        }
-
-        for (const sel of mobileVerificationSelectors) {
-            const visible = await page.locator(sel).first().isVisible().catch(() => false);
-            if (visible) {
-                throw new Error('Mobile verification required — provide OTP');
-            }
-        }
-
         await new Promise(r => setTimeout(r, 250));
     }
-
-    await log('Post-login timeout — dashboard not detected');
-    throw new Error('Post-login dashboard did not expose the expected UI controls');
+    throw new Error('Post-login dashboard did not appear');
 }
 
-// ── VAT download (exact same as worker) ──────────────────────────────────────
+async function extractVatCreditBroughtForward(page: any, browserContext: any): Promise<number> {
+    await log('Navigating to View Filed Returns to extract credit brought forward...');
+
+    // Hover Returns menu and click View Filed Return
+    const returnsMenu = page.locator('a:has-text("Returns")').first();
+    await returnsMenu.hover();
+    await page.waitForTimeout(1_500);
+
+    await page.evaluate(() => {
+        const links = document.querySelectorAll('a');
+        for (const link of Array.from(links)) {
+            if (link.textContent?.includes('View Filed Return')) {
+                link.click();
+                break;
+            }
+        }
+    });
+    await page.waitForTimeout(5_000);
+    await log('Clicked View Filed Return');
+
+    // Select VAT from Tax Obligation dropdown
+    const allSelects = await page.locator('select').all();
+    let obligationSelect: any = null;
+    for (const sel of allSelects) {
+        const isDisabled = await sel.isDisabled().catch(() => true);
+        if (isDisabled) continue;
+        try {
+            const options = await sel.evaluate((el: HTMLSelectElement) => Array.from(el.options).map(o => o.text));
+            if (options.some((o: string) => o.includes('Value Added Tax'))) {
+                obligationSelect = sel;
+                break;
+            }
+        } catch { continue; }
+    }
+    if (!obligationSelect) {
+        throw new Error('Could not find Tax Obligation dropdown with VAT option');
+    }
+    await obligationSelect.selectOption({ label: 'Value Added Tax (VAT)' });
+    await log('Selected VAT from Tax Obligation dropdown');
+    await page.waitForTimeout(1_000);
+
+    // Set up dialog handler BEFORE clicking — KRA shows "Do you want to view returns?"
+    let dialogHandled = false;
+    page.on('dialog', async (dialog: any) => {
+        dialogHandled = true;
+        const msg = dialog.message();
+        await log(`KRA dialog: "${msg}" (type: ${dialog.type()})`);
+        if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+            await dialog.accept();
+            await log('Accepted dialog');
+        } else {
+            await dialog.dismiss();
+        }
+    });
+
+    // Click Consult button via JavaScript
+    await page.evaluate(() => {
+        const btn = document.querySelector('input[value="Consult"]') as HTMLInputElement;
+        if (btn) {
+            btn.focus();
+            btn.click();
+            return true;
+        }
+        return false;
+    });
+    await log('Clicked Consult button via JS');
+    await page.waitForTimeout(5_000);
+
+    // Remove dialog handler
+    page.removeAllListeners('dialog');
+
+    if (dialogHandled) {
+        await log('Dialog handled, waiting for table to load...');
+    } else {
+        await log('No dialog appeared, waiting for table to load...');
+    }
+
+    // Wait for table to load with retry logic
+    let tableFound = false;
+    let tableCount = 0;
+    for (let attempt = 0; attempt < 10; attempt++) {
+        await page.waitForTimeout(5_000);
+        tableCount = await page.locator('table').count();
+        if (tableCount > 0) {
+            tableFound = true;
+            await log(`Found ${tableCount} table(s) on page after ${(attempt + 1) * 5}s`);
+            break;
+        }
+        await log(`Table not found yet, waiting... (attempt ${attempt + 1}/10)`);
+    }
+
+    if (!tableFound) {
+        // Take screenshot for debugging
+        const debugPath = path.join(TMP_DIR, `vat-table-missing-${jobId}.png`);
+        await page.screenshot({ path: debugPath, fullPage: true });
+        await log(`Table missing screenshot: ${debugPath}`);
+        throw new Error('No filed returns table found after clicking Consult');
+    }
+
+    // Click View on most recent filing (first row) — scope to table only
+    await log('Looking for View links in filed returns table...');
+    const viewLinks = await page.locator('table a:has-text("View"), table input[value="View"], table a[href*="view"]').all();
+    if (viewLinks.length === 0) {
+        throw new Error('No View links found in filed returns table');
+    }
+    await log(`Found ${viewLinks.length} View link(s) in table`);
+
+    // Listen for new window BEFORE clicking View
+    await log('Clicking View on most recent filing...');
+    const newPagePromise = browserContext.waitForEvent('page', { timeout: 30_000 });
+    await viewLinks[0].click({ force: true });
+    await log('Waiting for new window to open...');
+    const newPage = await newPagePromise;
+    await newPage.waitForLoadState('domcontentloaded', { timeout: 30_000 });
+    await log(`New window opened: ${newPage.url()}`);
+    await newPage.waitForTimeout(3_000);
+
+    // Use new page for credit extraction
+    page = newPage;
+
+    // Scroll to bottom and find credit value
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(2_000);
+
+    // Take screenshot of the new window for debugging
+    const creditScreenshotPath = path.join(TMP_DIR, `vat-credit-${jobId}.png`);
+    await page.screenshot({ path: creditScreenshotPath, fullPage: true });
+    await log(`Credit extraction screenshot saved: ${creditScreenshotPath}`);
+
+    const creditRow = page.locator('tr:has-text("Net VAT Payable / Credit Carried Forward")').first();
+    let creditValue: number | null = null;
+
+    if (await creditRow.count() > 0) {
+        // Get all cells in the row
+        const cells = await creditRow.locator('td').all();
+        if (cells.length > 0) {
+            // The value is in the LAST cell (rightmost column - Amount)
+            const lastCell = cells[cells.length - 1];
+            const text = await lastCell.textContent();
+            await log(`Credit row last cell text: "${text}"`);
+            const match = text?.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
+            if (match) {
+                creditValue = parseFloat(match[0].replace(/,/g, ''));
+                await log(`Extracted raw credit value from last cell: ${creditValue}`);
+            }
+        }
+    } else {
+        await log('Credit row not found, trying fallback selectors...');
+        // Try alternative selectors
+        const altRow = page.locator('td:has-text("Net VAT Payable / Credit Carried Forward")').first();
+        if (await altRow.count() > 0) {
+            const parentRow = altRow.locator('..');
+            const cells = await parentRow.locator('td').all();
+            if (cells.length > 0) {
+                const lastCell = cells[cells.length - 1];
+                const text = await lastCell.textContent();
+                const match = text?.match(/-?\d{1,3}(,\d{3})*(\.\d+)?/);
+                if (match) {
+                    creditValue = parseFloat(match[0].replace(/,/g, ''));
+                }
+            }
+        }
+    }
+
+    if (creditValue === null) {
+        throw new Error('Could not extract credit carried forward value');
+    }
+
+    // Only use negative values as credit (positive means payable, not credit)
+    const credit = creditValue < 0 ? Math.abs(creditValue) : 0;
+
+    await log(`Extracted credit carried forward: KES ${credit}`);
+
+    // Close new window and switch back to original page
+    await newPage.close();
+    await log('Closed new window, switched back to original page');
+
+    return credit;
+}
+
+async function extractVatWithholding(page: any): Promise<number> {
+    await log('Navigating to Reprint VAT Withholding Certificate...');
+
+    // Parse period to get month and year
+    const periodDate = new Date(PERIOD_FROM);
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+    const targetMonth = monthNames[periodDate.getMonth()];
+    const targetYear = String(periodDate.getFullYear());
+
+    await log(`Looking for withholding for ${targetMonth} ${targetYear}`);
+
+    // Hover Certificates menu
+    const certificatesMenu = page.locator('a:has-text("Certificates")').first();
+    await certificatesMenu.hover();
+    await page.waitForTimeout(1_500);
+
+    // Click Reprint VAT Withholding Certificate
+    await page.evaluate(() => {
+        const links = document.querySelectorAll('a');
+        for (const link of Array.from(links)) {
+            if (link.textContent?.includes('Reprint VAT Withholding Certificate')) {
+                link.click();
+                break;
+            }
+        }
+    });
+    await page.waitForTimeout(5_000);
+    await log('Clicked Reprint VAT Withholding Certificate');
+
+    // Take screenshot to see the page state
+    const debugPath = path.join(TMP_DIR, `vat-withholding-debug-${jobId}.png`);
+    await page.screenshot({ path: debugPath, fullPage: true });
+    await log(`Withholding page screenshot: ${debugPath}`);
+
+    // Select Month and Year from dropdowns - use Playwright locators
+    let monthSelected = false;
+    let yearSelected = false;
+
+    // Try to find month dropdown by looking for options with month names
+    for (let i = 0; i < 5; i++) {
+        const select = page.locator('select').nth(i);
+        const count = await select.count();
+        if (count === 0) continue;
+
+        const options = await select.evaluate((el: HTMLSelectElement) =>
+            Array.from(el.options).map(o => ({ text: o.text, value: o.value }))
+        );
+
+        // Check if this is a month dropdown
+        const hasMonths = options.some((o: any) => monthNames.some(m => o.text.includes(m) || o.value.includes(m)));
+        if (hasMonths && !monthSelected) {
+            await select.selectOption({ label: targetMonth });
+            await log(`Selected month: ${targetMonth} (dropdown index ${i})`);
+            monthSelected = true;
+            continue;
+        }
+
+        // Check if this is a year dropdown
+        const hasYears = options.some((o: any) => /^\d{4}$/.test(o.text) || /^\d{4}$/.test(o.value));
+        if (hasYears && !yearSelected) {
+            await select.selectOption({ label: targetYear });
+            await log(`Selected year: ${targetYear} (dropdown index ${i})`);
+            yearSelected = true;
+        }
+    }
+
+    if (!monthSelected || !yearSelected) {
+        await log('WARNING: Could not detect month/year dropdowns, trying fallback selectors');
+        // Try specific selectors
+        const monthSel = page.locator('select[name*="month" i], select[id*="month" i], select[name*="mon" i]').first();
+        const yearSel = page.locator('select[name*="year" i], select[id*="year" i], select[name*="yr" i]').first();
+
+        if (await monthSel.count() > 0 && !monthSelected) {
+            await monthSel.selectOption({ label: targetMonth });
+            await log(`Selected month via fallback: ${targetMonth}`);
+            monthSelected = true;
+        }
+        if (await yearSel.count() > 0 && !yearSelected) {
+            await yearSel.selectOption({ label: targetYear });
+            await log(`Selected year via fallback: ${targetYear}`);
+            yearSelected = true;
+        }
+    }
+
+    await page.waitForTimeout(1_000);
+
+    if (!monthSelected || !yearSelected) {
+        await log('ERROR: Failed to select month or year, reloading page and retrying...');
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+        await page.waitForTimeout(3_000);
+        // Return 0 and let the main flow continue
+        return 0;
+    }
+
+    // Set up dialog handler BEFORE clicking Consult
+    let dialogHandled = false;
+    page.on('dialog', async (dialog: any) => {
+        dialogHandled = true;
+        const msg = dialog.message();
+        await log(`KRA withholding dialog: "${msg}" (type: ${dialog.type()})`);
+        if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+            await dialog.accept();
+            await log('Accepted dialog');
+        } else {
+            await dialog.dismiss();
+        }
+    });
+
+    // Click Consult button
+    await page.evaluate(() => {
+        const btn = document.querySelector('input[value="Consult"]') as HTMLInputElement;
+        if (btn) {
+            btn.focus();
+            btn.click();
+            return true;
+        }
+        return false;
+    });
+    await log('Clicked Consult button for withholding');
+
+    // Wait for navigation to complete
+    await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
+    await page.waitForTimeout(5_000);
+
+    // Remove dialog handler
+    page.removeAllListeners('dialog');
+
+    if (dialogHandled) {
+        await log('Dialog handled, waiting for results...');
+    } else {
+        await log('No dialog appeared, waiting for results...');
+    }
+    await page.waitForTimeout(10_000);
+
+    // Check for "Records Not Found"
+    const pageText = await page.evaluate(() => document.body.innerText || '').catch(() => '');
+    if (pageText.includes('Records Not Found')) {
+        await log('No withholding records found for this period');
+        return 0;
+    }
+
+    // Try to extract Total VAT Withholding Amount from DOM
+    let withholdingAmount: number | null = null;
+
+    // Look for text containing "Total VAT Withholding Amount"
+    const totalMatch = pageText.match(/Total VAT Withholding Amount\s*[:\-]?\s*([\d,]+\.?\d*)/i);
+    if (totalMatch) {
+        withholdingAmount = parseFloat(totalMatch[1].replace(/,/g, ''));
+        await log(`Extracted withholding amount from DOM: ${withholdingAmount}`);
+    }
+
+    if (withholdingAmount === null) {
+        // Fallback: screenshot + Gemma 4
+        const screenshotPath = path.join(TMP_DIR, `vat-withholding-${jobId}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        await log(`Withholding screenshot saved: ${screenshotPath}`);
+
+        try {
+            const imageBuffer = await fs.readFile(screenshotPath);
+            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMMA4_MODEL)}:generateContent?key=${encodeURIComponent(GEMMA4_API_KEY)}`;
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        parts: [
+                            { text: 'Find the "Total VAT Withholding Amount" value in this screenshot. Return ONLY the numeric value. If no records found, return "0".' },
+                            { inline_data: { mime_type: 'image/png', data: imageBuffer.toString('base64') } },
+                        ],
+                    }],
+                    generationConfig: { maxOutputTokens: 50, temperature: 0 },
+                }),
+            });
+            if (!response.ok) {
+                await log(`Gemma 4 request failed: ${response.status}`);
+            } else {
+                const payload = await response.json();
+                const parts = payload.candidates?.[0]?.content?.parts ?? [];
+                const rawText = parts.filter((p: any) => !p.thought && typeof p.text === 'string').map((p: any) => p.text).join(' ').trim();
+                const match = rawText.match(/\d{1,3}(,\d{3})*(\.\d+)?/);
+                if (match) {
+                    withholdingAmount = parseFloat(match[0].replace(/,/g, ''));
+                    await log(`Extracted withholding amount from Gemma 4: ${withholdingAmount}`);
+                }
+            }
+        } catch (e: any) {
+            await log(`Gemma 4 error: ${e.message}`);
+        }
+    }
+
+    if (withholdingAmount === null) {
+        withholdingAmount = 0;
+        await log('Could not extract withholding amount, defaulting to 0');
+    }
+
+    await log(`Total VAT Withholding Amount: KES ${withholdingAmount}`);
+    return withholdingAmount;
+}
+
 async function downloadVatAutoPopulatedReturn(page: any, kraPin: string): Promise<string> {
-    // Set up dialog handler
+    // Set up dialog handler BEFORE clicking
     let dialogAccepted = false;
     const dialogHandler = async (dialog: any) => {
         const message = dialog.message();
-        await log(`KRA dialog: "${message}" (type: ${dialog.type()})`);
+        await log(`KRA download dialog: "${message}" (type: ${dialog.type()})`);
         if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
             await dialog.accept();
             dialogAccepted = true;
+            await log('Accepted download dialog');
         } else {
             await dialog.dismiss();
         }
     };
     page.on('dialog', dialogHandler);
 
-    // Find download button
-    const exactSelectors = [
-        '#dwnlod_btn_tims',
-        'input[type="button"][value*="Autopopulated" i]',
-        'button:has-text("Autopopulated")',
-        'button:has-text("Download"):has-text("VAT")',
-        'input[type="button"][value*="Download" i][value*="VAT" i]',
-    ];
-
-    let trigger: any = null;
-    let matchedSelector = '';
-    for (const sel of exactSelectors) {
-        const candidate = page.locator(sel).filter({ visible: true }).first();
-        const count = await candidate.count().catch(() => 0);
-        if (count > 0) {
-            trigger = candidate;
-            matchedSelector = sel;
-            break;
-        }
-    }
-
-    if (!trigger) {
-        page.off('dialog', dialogHandler);
-        throw new Error('Could not locate the VAT auto-populated return download control');
-    }
-
-    const triggerLabel = await trigger.evaluate((element: HTMLElement) => {
-        if (element instanceof HTMLInputElement) {
-            return element.value || element.id || 'download button';
-        }
-        return element.textContent?.trim() || element.id || 'download button';
-    }).catch(() => 'download button');
-    await log(`Found download button: "${triggerLabel}" (selector: ${matchedSelector})`);
-
     const sourceZipPath = path.join(TMP_DIR, `${Date.now()}_${kraPin}_VAT_source.zip`);
 
-    // Try native download
+    // Try native browser download capture first
     let download: any = null;
     try {
+        const trigger = page.locator('#dwnlod_btn_tims').first();
         [download] = await Promise.all([
             page.waitForEvent('download', { timeout: 60_000 }),
             trigger.click({ force: true }).catch(() => trigger.click()),
@@ -417,7 +663,7 @@ async function downloadVatAutoPopulatedReturn(page: any, kraPin: string): Promis
         page.off('dialog', dialogHandler);
         return sourceZipPath;
     } catch (primaryErr: any) {
-        await log(`Primary download failed: ${primaryErr.message}. Trying fallback...`);
+        await log(`Primary download capture failed: ${primaryErr.message}. Trying JS fallback...`);
     }
 
     // Fallback: trigger via JS and capture response
@@ -438,7 +684,7 @@ async function downloadVatAutoPopulatedReturn(page: any, kraPin: string): Promis
                 capturedFilename = filenameMatch[1].replace(/[:\/\\*?"<>|]/g, '_');
             }
             captured = true;
-            await log(`Captured response: ${buffer.length} bytes`);
+            await log(`Captured VAT download response: ${buffer.length} bytes`);
         } catch {}
     };
     page.on('response', responseHandler);
@@ -460,7 +706,7 @@ async function downloadVatAutoPopulatedReturn(page: any, kraPin: string): Promis
                 }
             }
         });
-        await log('Triggered download via JS');
+        await log('Triggered VAT download via JS fallback');
 
         const deadline = Date.now() + 30_000;
         while (!captured && Date.now() < deadline) {
@@ -469,62 +715,67 @@ async function downloadVatAutoPopulatedReturn(page: any, kraPin: string): Promis
     } catch (jsErr: any) {
         page.off('response', responseHandler);
         page.off('dialog', dialogHandler);
-        throw new Error(`Download JS fallback failed: ${jsErr.message}`);
+        throw new Error(`VAT download JS fallback failed: ${jsErr.message}`);
     }
 
     page.off('response', responseHandler);
     page.off('dialog', dialogHandler);
 
     if (!captured || !capturedBuffer) {
-        throw new Error('Download capture failed after both attempts');
+        throw new Error('VAT download capture failed after both attempts');
     }
 
     const finalBuffer = capturedBuffer as Buffer;
     const fallbackPath = path.join(TMP_DIR, capturedFilename);
     await fs.writeFile(fallbackPath, finalBuffer);
-    await log(`Downloaded via fallback: ${fallbackPath} (${finalBuffer.length} bytes)`);
+    await log(`Downloaded VAT package via fallback: ${fallbackPath} (${finalBuffer.length} bytes)`);
     return fallbackPath;
 }
 
-// ── Main test ─────────────────────────────────────────────────────────────────
 async function runLocalVatTest() {
     await fs.mkdir(TMP_DIR, { recursive: true });
     await log('=== Local VAT Test Started ===');
 
-    const { context, page, close } = await launchBrowser();
+    const { browserContext, page, close } = await launchBrowser();
 
     try {
-        // Navigate to KRA
         await log('Navigating to KRA portal...');
-        await page.goto('https://itax.kra.go.ke/KRA-Portal/', {
-            waitUntil: 'domcontentloaded',
-            timeout: 90_000,
-        });
+        await page.goto('https://itax.kra.go.ke/KRA-Portal/', { waitUntil: 'domcontentloaded', timeout: 90_000 });
         await log('KRA portal loaded');
 
-        // Login using worker logic
         await performKraLogin(page, KRA_PIN, KRA_PASSWORD);
         await log('Login successful');
         await page.waitForTimeout(3000);
 
-        // Navigate to eReturns via the Returns menu
+        // Extract credit brought forward
+        const creditBroughtForward = await extractVatCreditBroughtForward(page, browserContext);
+        await log(`Credit brought forward from portal: KES ${creditBroughtForward}`);
+
+        // Extract VAT withholding for the period
+        const withholdingAmount = await extractVatWithholding(page);
+        await log(`VAT withholding for period: KES ${withholdingAmount}`);
+
+        // Navigate to eReturns
         await log('Hovering over Returns menu...');
-        const returnsMenu = page.locator('a:has-text("Returns"), a[href*="Returns"], a[onclick*="showReturns"]').first();
+        const returnsMenu = page.locator('a:has-text("Returns")').first();
         await returnsMenu.hover();
         await page.waitForTimeout(1000);
-        await log('Returns menu hovered');
 
-        // Click "File Return" from the dropdown
         await log('Clicking File Return...');
-        const fileReturn = page.locator('a:has-text("File Return"), a[href*="FileReturn"], a[href*="showEReturns"]').first();
-        await fileReturn.click({ force: true });
-        await log('File Return clicked');
+        await page.evaluate(() => {
+            const links = document.querySelectorAll('a');
+            for (const link of Array.from(links)) {
+                if (link.textContent?.includes('File Return')) {
+                    link.click();
+                    break;
+                }
+            }
+        });
         await page.waitForTimeout(3000);
         await log(`Current URL after File Return: ${page.url()}`);
 
-        // Select VAT obligation from the dropdown
+        // Select VAT obligation
         await log('Selecting VAT obligation from dropdown...');
-        // Find the dropdown that contains the VAT option (not the disabled Type dropdown)
         const allSelects = await page.locator('select').all();
         let taxObligationSelect: any = null;
         for (const sel of allSelects) {
@@ -540,35 +791,37 @@ async function runLocalVatTest() {
             throw new Error('Could not find the Tax Obligation dropdown with VAT option');
         }
         await taxObligationSelect.selectOption({ label: 'Value Added Tax (VAT)' });
-        await log('VAT obligation selected from dropdown');
+        await log('VAT obligation selected');
         await page.waitForTimeout(1000);
 
         // Click Next
-        await log('Clicking Next on obligation form...');
-        const nextBtn = page.locator('input[name="nextBtn"], input[type="button"][value*="Next"], button:has-text("Next")').first();
+        await log('Clicking Next...');
+        const nextBtn = page.locator('input[name="nextBtn"], input[type="button"][value*="Next" i], button:has-text("Next")').first();
+        if (await nextBtn.count() === 0) {
+            throw new Error('Next button not found');
+        }
         await nextBtn.click();
-        await log('Clicked Next');
         await page.waitForTimeout(3000);
-        await log(`Current URL after Next: ${page.url()}`);
 
-        // Wait for the VAT return form to load (Download button should appear)
+        // Wait for download button
         await log('Waiting for VAT return form...');
-        await page.waitForSelector('#dwnlod_btn_tims, input[type="button"][value*="Autopopulated"], button:has-text("Autopopulated")', {
-            timeout: 20_000,
-        });
+        await page.waitForSelector('#dwnlod_btn_tims', { timeout: 20_000 });
         await log('VAT return form loaded');
 
-        // Download auto-populated VAT return
+        // Download
         await log('Downloading auto-populated VAT return...');
         const sourceZipPath = await downloadVatAutoPopulatedReturn(page, KRA_PIN);
         await log(`Downloaded VAT package: ${sourceZipPath}`);
 
-        // Close browser
         await close();
         await log('Browser closed');
 
         // Generate VAT ZIP
         await log('Generating VAT ZIP...');
+        const effectivePreviousCredit = (creditBroughtForward + withholdingAmount) !== 0
+            ? (creditBroughtForward + withholdingAmount)
+            : VAT_PREVIOUS_CREDIT;
+        await log(`Effective previous credit (credit + withholding): KES ${effectivePreviousCredit}`);
         const { prepareVatReturnArtifacts } = await import('../scripts/vat-return-generator');
         const artifacts = await prepareVatReturnArtifacts({
             sourceZipPath,
@@ -576,13 +829,12 @@ async function runLocalVatTest() {
             taxpayerPin: KRA_PIN,
             periodFrom: PERIOD_FROM,
             periodTo: PERIOD_TO,
-            previousCredit: VAT_PREVIOUS_CREDIT,
+            previousCredit: effectivePreviousCredit,
         });
 
         await log(`VAT ZIP generated: ${artifacts.generatedZipPath}`);
         await log(`Summary: inputVat=${artifacts.summary.inputVat}, outputVat=${artifacts.summary.outputVat}, netVatBalance=${artifacts.summary.netVatBalance}`);
 
-        // Copy to output
         const outputDir = path.join(TMP_DIR, 'vat-output');
         await fs.mkdir(outputDir, { recursive: true });
         const finalZipPath = path.join(outputDir, `${jobId}_VAT_Generated.zip`);
@@ -602,9 +854,7 @@ async function runLocalVatTest() {
             await page.screenshot({ path: failScreenshot, fullPage: true });
             console.log(`Screenshot: ${failScreenshot}`);
         } catch {}
-        try {
-            await close();
-        } catch {}
+        try { await close(); } catch {}
         process.exit(1);
     }
 }

@@ -15,6 +15,8 @@ export function normalizeClientObligation(value: string) {
     return normalized;
 }
 
+export { getClientFilingPeriod } from './taxPeriods';
+
 export function buildStoredArtifactUrl(resultPath?: string) {
     if (!resultPath) {
         return undefined;

@@ -25,7 +25,7 @@ router.get('/:clientId/holidays', async (req: AuthenticatedRequest, res) => {
             .get();
 
         const holidays = snapshot.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((d: any) => ({ id: d.id, ...d.data() }))
             .filter((h: any) => h.date?.startsWith(`${year}-`) || h.isRecurring);
 
         holidays.sort((a: any, b: any) => (a.date || '').localeCompare(b.date || ''));
@@ -47,7 +47,7 @@ router.get('/:clientId/holidays/all', async (req: AuthenticatedRequest, res) => 
             .where('clientId', '==', clientId)
             .orderBy('date', 'asc')
             .get();
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching all holidays from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -166,7 +166,7 @@ router.post('/:clientId/holidays/seed-kenyan', async (req: AuthenticatedRequest,
             .where('clientId', '==', clientId)
             .get();
         const existingKeys = new Set(
-            allExistingSnapshot.docs.map((d) => {
+            allExistingSnapshot.docs.map((d: any) => {
                 const data = d.data() as any;
                 return `${data.name}|${data.date}`;
             })

@@ -22,7 +22,7 @@ router.get('/:clientId/email/history', async (req: AuthenticatedRequest, res) =>
             .limit(100)
             .get();
 
-        res.json(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+        res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching email history from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -44,7 +44,7 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
             .where('clientId', '==', clientId);
 
         const employeeSnapshot = await query.get();
-        let employees = employeeSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        let employees = employeeSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
         if (Array.isArray(employeeIds) && employeeIds.length > 0) {
             employees = employees.filter((e: any) => employeeIds.includes(e.id));
@@ -147,7 +147,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
             .where('clientId', '==', clientId);
 
         const employeeSnapshot = await query.get();
-        let employees = employeeSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        let employees = employeeSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
         if (Array.isArray(employeeIds) && employeeIds.length > 0) {
             employees = employees.filter((e: any) => employeeIds.includes(e.id));

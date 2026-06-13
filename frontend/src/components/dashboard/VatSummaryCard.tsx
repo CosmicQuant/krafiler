@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowUpRight, Calculator, Receipt, TrendingDown, TrendingUp } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Calculator, TrendingDown, TrendingUp } from 'lucide-react';
 
 export type VatBreakdownItem = {
   label: string;
@@ -11,6 +11,7 @@ export type VatSummaryCardProps = {
   sales?: VatBreakdownItem[];
   purchases?: VatBreakdownItem[];
   previousCredit: number;
+  withholdingAmount: number;
   netVatBalance: number;
 };
 
@@ -82,17 +83,20 @@ function SectionTable({
 
 function SectionDTable({
   previousCredit,
+  withholdingAmount,
   outputVat,
   inputVat,
   netVatBalance,
 }: {
   previousCredit: number;
+  withholdingAmount: number;
   outputVat: number;
   inputVat: number;
   netVatBalance: number;
 }) {
   const isPayable = netVatBalance >= 0;
   const taxBeforeCredit = outputVat - inputVat;
+  const totalCredit = previousCredit + withholdingAmount;
 
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-900/60 overflow-hidden">
@@ -118,6 +122,14 @@ function SectionDTable({
             <td className="px-4 py-2.5 text-slate-300 font-medium">Less: Credit Brought Forward</td>
             <td className="px-4 py-2.5 text-right text-slate-300 font-semibold tabular-nums">- KES {formatMoney(previousCredit)}</td>
           </tr>
+          <tr className="hover:bg-slate-800/40 transition">
+            <td className="px-4 py-2.5 text-slate-300 font-medium">Less: VAT Withholding</td>
+            <td className="px-4 py-2.5 text-right text-slate-300 font-semibold tabular-nums">- KES {formatMoney(withholdingAmount)}</td>
+          </tr>
+          <tr className="hover:bg-slate-800/40 transition bg-slate-800/20">
+            <td className="px-4 py-2.5 text-slate-300 font-bold">Total Credit Applied</td>
+            <td className="px-4 py-2.5 text-right text-white font-bold tabular-nums">- KES {formatMoney(totalCredit)}</td>
+          </tr>
           <tr className="bg-slate-800/40 border-t border-slate-700/60">
             <td className="px-4 py-3 text-white font-bold">
               {isPayable ? 'Net VAT Payable' : 'Net VAT Credit'}
@@ -132,11 +144,12 @@ function SectionDTable({
   );
 }
 
-export function VatSummaryCard({ sales = [], purchases = [], previousCredit, netVatBalance }: VatSummaryCardProps) {
+export function VatSummaryCard({ sales = [], purchases = [], previousCredit, withholdingAmount, netVatBalance }: VatSummaryCardProps) {
   const totalSalesBase = sales.reduce((sum, s) => sum + s.base, 0);
   const totalSalesVat = sales.reduce((sum, s) => sum + s.vat, 0);
   const totalPurchasesBase = purchases.reduce((sum, p) => sum + p.base, 0);
   const totalPurchasesVat = purchases.reduce((sum, p) => sum + p.vat, 0);
+  const totalCredit = previousCredit + withholdingAmount;
 
   const isPayable = netVatBalance >= 0;
   const balanceLabel = isPayable ? 'VAT Payable' : 'Credit Balance';
@@ -176,12 +189,23 @@ export function VatSummaryCard({ sales = [], purchases = [], previousCredit, net
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <SectionDTable
           previousCredit={previousCredit}
+          withholdingAmount={withholdingAmount}
           outputVat={totalSalesVat}
           inputVat={totalPurchasesVat}
           netVatBalance={netVatBalance}
         />
         <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-slate-700/50 bg-slate-900/60 px-4 py-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Credit Brought Forward</div>
+              <div className="text-sm font-bold text-slate-300 tabular-nums">KES {formatMoney(previousCredit)}</div>
+            </div>
+            <div className="rounded-lg border border-slate-700/50 bg-slate-900/60 px-4 py-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">VAT Withholding</div>
+              <div className="text-sm font-bold text-slate-300 tabular-nums">KES {formatMoney(withholdingAmount)}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-slate-700/50 bg-slate-900/60 px-4 py-3 text-center">
               <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Output VAT</div>
               <div className="text-sm font-bold text-rose-400 tabular-nums">KES {formatMoney(totalSalesVat)}</div>
@@ -190,10 +214,10 @@ export function VatSummaryCard({ sales = [], purchases = [], previousCredit, net
               <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Input VAT</div>
               <div className="text-sm font-bold text-emerald-400 tabular-nums">KES {formatMoney(totalPurchasesVat)}</div>
             </div>
-            <div className="rounded-lg border border-slate-700/50 bg-slate-900/60 px-4 py-3 text-center">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Previous Credit</div>
-              <div className="text-sm font-bold text-slate-300 tabular-nums">KES {formatMoney(previousCredit)}</div>
-            </div>
+          </div>
+          <div className="rounded-lg border border-slate-700/50 bg-slate-900/60 px-4 py-3 text-center">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Total Credit Applied</div>
+            <div className="text-sm font-bold text-indigo-400 tabular-nums">KES {formatMoney(totalCredit)}</div>
           </div>
           <div className={`flex items-center justify-between rounded-xl border px-5 py-4 ${balanceBg}`}>
             <div className="flex items-center gap-2">

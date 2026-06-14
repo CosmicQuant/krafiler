@@ -2518,11 +2518,30 @@ export async function processFilingJob(job: JobContext): Promise<{
             ]
             : isMriReturn
                 ? ['#txtPeriodFrom', '#txtPeriodTo', 'button:has-text("Next")', 'input[value="Next"]']
-                : ['#txtPeriodFrom', '#txtPeriodTo', '#submitBtn', 'input[name="txtPeriodFrom"]'];
+                : [
+                    '#txtPeriodFrom',
+                    '#txtPeriodTo',
+                    'input[name="txtPeriodFrom"]',
+                    'input[name="txtPeriodTo"]',
+                    'input[name*="periodFrom" i]',
+                    'input[name*="periodTo" i]',
+                    'input[placeholder*="dd/mm/yyyy" i]',
+                    'input[placeholder*="dd-mm-yyyy" i]',
+                    'select[name*="month" i]',
+                    'select[name*="year" i]',
+                    'select[name*="period" i]',
+                    'select[name*="obligation" i]',
+                    'input[type="radio"]',
+                    '#btnSubmit',
+                    '#submitBtn',
+                    'input[value="Submit"]',
+                    'input[value="Next"]',
+                    'button:has-text("Next")',
+                ];
 
         try {
             await waitForPortalReadyWithReload(page, job, {
-                description: isTotReturn ? 'ToT upload page' : isPayeUpload ? 'PAYE upload page' : isVatPrepareOnly ? 'VAT preparation page' : isVatUpload ? 'VAT upload page' : isMriReturn ? 'MRI return details page' : 'Nil return details page',
+                description: !isNilReturnExplicit && isTotReturn ? 'ToT upload page' : !isNilReturnExplicit && isPayeUpload ? 'PAYE upload page' : !isNilReturnExplicit && isVatPrepareOnly ? 'VAT preparation page' : !isNilReturnExplicit && isVatUpload ? 'VAT upload page' : isMriReturn ? 'MRI return details page' : 'Nil return details page',
                 selectors: uploadPageSelectors,
                 timeout: 60_000,
                 reloadAttempts: 0,
@@ -2541,7 +2560,7 @@ export async function processFilingJob(job: JobContext): Promise<{
         await navigationDelay();
 
         // ── Step 10: Fill return details ─────────────────────────────────────────
-        await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : 'Confirming the return period and rental-property answer');
+        await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : isNilReturnExplicit ? 'Confirming the nil return period and rental-property answer' : 'Confirming the return period and rental-property answer');
 
     if (!isNilReturnExplicit && isVatPrepareOnly) {
         // Use credit brought forward + withholding from portal if available, otherwise fall back to frontend value
@@ -2629,6 +2648,36 @@ export async function processFilingJob(job: JobContext): Promise<{
             if (!isNilReturnExplicit && isMriReturn) {
                 await mriFilingService.execute(periodFrom, periodTo, rentalIncomeAmount ?? Number.NaN);
             } else {
+                // Some nil forms (e.g. ToT) use month/year dropdowns instead of date text fields.
+                if (isNilReturnExplicit && (payload as any).totYear && (payload as any).totMonth) {
+                    const monthSelect = page.locator('select[name*="month" i], select[id*="month" i]').first();
+                    const yearSelect = page.locator('select[name*="year" i], select[id*="year" i]').first();
+                    if (await monthSelect.count() > 0) {
+                        const monthVal = String((payload as any).totMonth).padStart(2, '0');
+                        await monthSelect.selectOption({ value: monthVal }).catch(async () => {
+                            await monthSelect.selectOption({ label: new Date(2000, (payload as any).totMonth - 1, 1).toLocaleString('en-US', { month: 'long' }) }).catch(() => undefined);
+                        });
+                        await appendJobLog(job, `Selected nil return month: ${monthVal}`, { progress: 70 });
+                    }
+                    if (await yearSelect.count() > 0) {
+                        await yearSelect.selectOption({ value: String((payload as any).totYear) }).catch(() => undefined);
+                        await appendJobLog(job, `Selected nil return year: ${(payload as any).totYear}`, { progress: 70 });
+                    }
+                }
+
+                // If a nil-return checkbox or zero-turnover field is present, set it.
+                if (isNilReturnExplicit) {
+                    const nilCheckbox = page.locator('input[type="checkbox"][name*="nil" i], input[type="checkbox"][id*="nil" i]').first();
+                    if (await nilCheckbox.count() > 0 && !await nilCheckbox.isChecked().catch(() => true)) {
+                        await nilCheckbox.check().catch(() => undefined);
+                        await appendJobLog(job, 'Checked nil-return indicator', { progress: 70 });
+                    }
+                    const turnoverInput = page.locator('input[name*="turnover" i], input[id*="turnover" i]').first();
+                    if (await turnoverInput.count() > 0) {
+                        await turnoverInput.fill('0').catch(() => undefined);
+                    }
+                }
+
                 const hasRadios = await page.$$eval('input[type="radio"]', els => els.length > 0).catch(() => false);
                 
                 if (hasRadios) {
@@ -2841,6 +2890,7 @@ export async function processFilingJob(job: JobContext): Promise<{
 
             // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
             // Skip mainMenu/nav links that are hidden in submenus — they match "receipt" text but are not visible.
+            const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|click here|print/i;
             downloadMeta = receiptPageLinks.find(
                 (link) =>
                     !link.className.toLowerCase().includes('mainmenu') &&
@@ -2848,8 +2898,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                     (link.onclick.toLowerCase().includes('download') ||
                      link.href.toLowerCase().includes('download') ||
                      link.id.toLowerCase().includes('download') ||
-                     link.text.toLowerCase().includes('download') ||
-                     link.text.toLowerCase().includes('receipt'))
+                     receiptLinkPatterns.test(link.text))
             );
 
             // Fallback: scan buttons and inputs if no anchor matched
@@ -2859,8 +2908,8 @@ export async function processFilingJob(job: JobContext): Promise<{
                     (els: (HTMLButtonElement | HTMLInputElement)[]) =>
                         els
                             .filter((el) => {
-                                const text = (el.textContent ?? el.getAttribute('value') ?? '').trim().toLowerCase();
-                                return text.includes('download') || text.includes('receipt');
+                                const text = (el.textContent ?? el.getAttribute('value') ?? '').trim();
+                                return receiptLinkPatterns.test(text);
                             })
                             .map((el) => ({
                                 id: el.id ?? '',
@@ -2872,6 +2921,24 @@ export async function processFilingJob(job: JobContext): Promise<{
 
                 if (buttonMeta) {
                     downloadMeta = buttonMeta as any;
+                }
+            }
+
+            // Last resort: if the page exposes a known KRA receipt download function, trigger it directly.
+            if (!downloadMeta) {
+                const hasReceiptFunction = await page.evaluate(() => {
+                    return typeof (window as any).downloadReturnsReceipt === 'function' ||
+                           typeof (window as any).downloadReceipt === 'function' ||
+                           typeof (window as any).printReturnsReceipt === 'function';
+                });
+                if (hasReceiptFunction) {
+                    downloadMeta = {
+                        id: '',
+                        href: '',
+                        onclick: 'downloadReturnsReceipt()',
+                        text: 'Direct receipt function',
+                        className: '',
+                    } as any;
                 }
             }
 
@@ -2967,11 +3034,34 @@ export async function processFilingJob(job: JobContext): Promise<{
             });
 
             // Use JS click to bypass visibility checks on hidden tab/menu links
-            const clicked = await page.evaluate((sel) => {
-                const el = document.querySelector(sel) as HTMLElement;
-                if (el) { el.click(); return true; }
-                return false;
-            }, downloadSelector);
+            let clicked = false;
+            if (downloadMeta.text === 'Direct receipt function') {
+                clicked = await page.evaluate(() => {
+                    try {
+                        if (typeof (window as any).downloadReturnsReceipt === 'function') {
+                            (window as any).downloadReturnsReceipt();
+                            return true;
+                        }
+                        if (typeof (window as any).downloadReceipt === 'function') {
+                            (window as any).downloadReceipt();
+                            return true;
+                        }
+                        if (typeof (window as any).printReturnsReceipt === 'function') {
+                            (window as any).printReturnsReceipt();
+                            return true;
+                        }
+                        return false;
+                    } catch {
+                        return false;
+                    }
+                });
+            } else {
+                clicked = await page.evaluate((sel) => {
+                    const el = document.querySelector(sel) as HTMLElement;
+                    if (el) { el.click(); return true; }
+                    return false;
+                }, downloadSelector);
+            }
 
             if (!clicked) {
                 throw new Error('Receipt download link not found or not clickable');

@@ -31,19 +31,27 @@ export class PrnService {
             return { error: errorMessage };
         }
 
-        // Store locally for backward compatibility
+        // Read the PRN PDF into memory before moving it, then store locally for backward compatibility.
+        let prnBuffer: Buffer;
+        try {
+            prnBuffer = await fs.readFile(prnResult.filePath);
+        } catch (readErr: any) {
+            console.error(`[PRN] Failed to read generated PRN file:`, readErr.message);
+            await appendJobLog(this.job, `PRN read failed: ${readErr.message}`, { progress: 90, level: 'error' });
+            return { error: `PRN file could not be read: ${readErr.message}` };
+        }
+
         const { relativePath } = await storeReceiptLocally(prnResult.filePath, this.job.data.jobId);
         const prnPath = relativePath.replace(/\\/g, '/');
 
         // Upload to Cloud Storage so the file persists in Cloud Run
         let prnGcsPath: string | undefined;
         try {
-            const buf = await fs.readFile(prnResult.filePath);
             const userId = this.job.data.userId || 'dev-user';
             const clientId = this.job.data.payload.clientId || 'unknown';
             const jobId = this.job.data.jobId;
             prnGcsPath = gcsReceiptPath(userId, clientId, jobId, prnFileName);
-            await uploadBuffer(buf, prnGcsPath, { contentType: 'application/pdf' });
+            await uploadBuffer(prnBuffer, prnGcsPath, { contentType: 'application/pdf' });
             await appendJobLog(this.job, `PRN uploaded to Cloud Storage: ${prnGcsPath}`, { progress: 90 });
         } catch (uploadErr: any) {
             console.error(`[PRN] Failed to upload PRN to GCS:`, uploadErr.message);

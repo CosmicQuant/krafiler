@@ -370,7 +370,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
                     kraPassword: client.password || client.iTaxPassword || '',
                     periodFrom,
                     periodTo,
-                    taxObligationType: taxObligationMap[type],
+                    taxObligationType: obligation,
                     ownsRentalProperty: false,
                     printPrnOnly: true
                 }),

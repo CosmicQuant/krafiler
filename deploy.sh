@@ -44,7 +44,7 @@ gcloud run deploy "${API_SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars "NODE_ENV=production,USE_PUBSUB=true,PUBSUB_TOPIC=filing-jobs,TEMP_DIR=/tmp" \
+  --set-env-vars "NODE_ENV=production,USE_PUBSUB=true,PUBSUB_TOPIC=filing-jobs,TEMP_DIR=/tmp,RECEIPTS_DIR=/data/receipts,CLOUD_STORAGE_BUCKET=taxpulse,JWT_SECRET=99a8917c4ca99856f71403091907ce69205d99fbc42c53f03077adaef7709bae,ALLOWED_ORIGIN=https://taxpulse-498006.web.app,PLAYWRIGHT_HEADLESS=true" \
   --memory 1Gi \
   --cpu 1 \
   --concurrency 80 \
@@ -63,8 +63,8 @@ gcloud run deploy "${WORKER_SERVICE}" \
   --image "${WORKER_IMAGE}:latest" \
   --region "${REGION}" \
   --platform managed \
-  --no-allow-unauthenticated \
-  --set-env-vars "NODE_ENV=production,PORT=8080,TEMP_DIR=/tmp" \
+  --allow-unauthenticated \
+  --update-env-vars "NODE_ENV=production,TEMP_DIR=/tmp" \
   --memory 4Gi \
   --cpu 2 \
   --concurrency 1 \
@@ -110,9 +110,9 @@ echo "Worker (Cloud Run):  ${WORKER_URL}"
 echo "Frontend (Firebase): https://${PROJECT_ID}.web.app"
 echo ""
 echo "IMPORTANT NEXT STEPS:"
-echo "  1. Add GEMINI_API_KEY to the Worker:"
+echo "  1. Add GEMMA4_API_KEY to the Worker (if not already set via --update-env-vars):"
 echo "     gcloud run services update ${WORKER_SERVICE} --region ${REGION} \"
-echo "       --set-env-vars GEMINI_API_KEY=<your-key>"
+echo "       --update-env-vars GEMMA4_API_KEY=<your-key>"
 echo "  2. Grant Pub/Sub service account permission to invoke the worker:"
 echo "     gcloud run services add-iam-policy-binding ${WORKER_SERVICE} \"
 echo "       --region=${REGION} \"

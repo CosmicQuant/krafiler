@@ -66,6 +66,7 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
     // 2. Look up job and stream directly from GCS (avoids signed-URL IAM issues)
     const parts = sanitized.split('/');
     const possibleJobIds: string[] = [parts[0]]; // Legacy: first segment is jobId
+    const requestedFileName = parts[parts.length - 1] || '';
 
     // For GCS paths like "users/<uid>/clients/<id>/receipts/<jobId>/receipt.pdf"
     const receiptsIdx = parts.indexOf('receipts');
@@ -81,7 +82,17 @@ export async function serveReceipt(req: Request, res: Response): Promise<void> {
             const jobDoc = await adminDb.collection('jobs').doc(id).get();
             if (jobDoc.exists) {
                 const jobData = jobDoc.data() as any;
-                const gcsPath = jobData?.artifacts?.receiptGcsPath;
+                let gcsPath: string | undefined = jobData?.artifacts?.receiptGcsPath;
+
+                // PRN files are tracked in result.prnResults[].prnGcsPath
+                if (!gcsPath && requestedFileName.toLowerCase().includes('_prn')) {
+                    const prnResults: Array<{ prnGcsPath?: string; prnPath?: string; error?: string }> = jobData?.result?.prnResults || [];
+                    const matchingPrn = prnResults.find(
+                        (r) => r.prnGcsPath && (!requestedFileName || r.prnGcsPath.toLowerCase().endsWith(requestedFileName.toLowerCase()))
+                    ) || prnResults.find((r) => r.prnGcsPath);
+                    gcsPath = matchingPrn?.prnGcsPath;
+                }
+
                 logger.info({ jobId: id, gcsPath }, 'serveReceipt: found job');
                 if (gcsPath) {
                     logger.info({ gcsPath, bucket: BUCKET_NAME }, 'serveReceipt: streaming from GCS');

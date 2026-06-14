@@ -14,6 +14,7 @@ import {
 import {
   formatTaxAmount,
   getReceiptUrlForObligation,
+  getPrnUrlForObligation,
   getFilingStatusLabel,
   getFilingProgressTone,
   isPendingFilingJob,
@@ -145,7 +146,7 @@ export function Desk20thView({
                 const typeMap: Record<string, string> = { VAT: 'vat', TOT: 'turnover_tax', MRI: 'monthly_rental_income', PAYE: 'paye', NSSF: 'nssf' };
                 const relevantJob = !jobArtifacts?.obligationType || jobArtifacts.obligationType === typeMap[ob.type] ? jobArtifacts : undefined;
                 const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(ob.client, ob.type);
-                const latestPrnUrl = relevantJob?.prnUrl;
+                const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(ob.client, ob.type);
                 const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
                 const vatGeneratedZipUrl = ob.client.vatZipUrl ?? relevantJob?.generatedZipUrl;
                 const vatSourcePackageUrl = ob.client.vatSourcePackageUrl ?? relevantJob?.sourcePackageUrl;

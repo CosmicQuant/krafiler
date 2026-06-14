@@ -14,6 +14,7 @@ import { VatSummaryCard } from '../VatSummaryCard';
 import {
     formatTaxAmount,
     getReceiptUrlForObligation,
+    getPrnUrlForObligation,
     isPendingFilingJob,
     isTerminalFilingJob,
     getClientFilingPeriod,
@@ -67,7 +68,7 @@ export function VatClientView({
     const relevantJob = !job?.obligationType || job.obligationType === 'vat' ? job : undefined;
 
     const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(client, 'VAT');
-    const latestPrnUrl = relevantJob?.prnUrl;
+    const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(client, 'VAT');
     const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
 
     const vatGeneratedZipUrl = client.vatZipUrl ?? relevantJob?.generatedZipUrl;

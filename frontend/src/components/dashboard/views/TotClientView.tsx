@@ -12,6 +12,7 @@ import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { StatusBadge } from '../StatusBadges';
 import {
     getReceiptUrlForObligation,
+    getPrnUrlForObligation,
     isPendingFilingJob,
     isTerminalFilingJob,
 } from '../../../utils/dashboardUtils';
@@ -57,7 +58,7 @@ export function TotClientView({
     const job = activeJobs[client.id];
     const relevantJob = !job?.obligationType || job.obligationType === 'turnover_tax' ? job : undefined;
     const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(client, 'TOT');
-    const latestPrnUrl = relevantJob?.prnUrl;
+    const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(client, 'TOT');
     const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
 
     return (

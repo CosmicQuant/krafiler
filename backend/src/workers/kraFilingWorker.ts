@@ -326,11 +326,13 @@ export async function generatePrnAfterFiling(
     const prnService = new PrnService(page, parentJob);
 
     for (const prnConfig of prnTypesToGenerate) {
-        const prnDate = new Date();
+        // Use the filing period so the PRN matches the return period (e.g. May 2026 VAT)
+        const prnDate = periodFrom ? new Date(periodFrom) : new Date();
         const prnConfigObj: PrnConfig = {
             taxType: prnConfig.taxType,
             periodYear: prnDate.getFullYear().toString(),
             periodMonth: prnDate.toLocaleString('default', { month: 'long' }),
+            periodFrom,
         };
 
         try {
@@ -1877,7 +1879,12 @@ async function ensureDeclarationAccepted(page: any): Promise<void> {
 async function extractReceiptNumber(page: any): Promise<string | null> {
     const bodyText = await page.locator('body').innerText().catch(() => '');
     const receiptMatch = bodyText.match(/(?:Acknowledg(?:e)?ment|Receipt)\s*(?:Number|No\.?|#)?\s*[:\-]?\s*([A-Z0-9\-/]+)/i);
-    return receiptMatch?.[1] ?? null;
+    const candidate = receiptMatch?.[1] ?? null;
+    // "Generated" is a status label, not a real receipt number
+    if (candidate && candidate.toLowerCase() === 'generated') {
+        return null;
+    }
+    return candidate;
 }
 
 // ─── Core Job Processor ───────────────────────────────────────────────────────
@@ -2872,34 +2879,79 @@ export async function processFilingJob(job: JobContext): Promise<{
                 continue;
             }
 
-            // Inspect all links on the receipt page to find the download link by its actual attributes
-            receiptPageLinks = await page.$$eval(
-                'a',
-                (els: HTMLAnchorElement[]) => els.map((el) => ({
-                    id: el.id ?? '',
-                    href: el.getAttribute('href') ?? '',
-                    onclick: el.getAttribute('onclick') ?? '',
-                    text: (el.textContent ?? '').trim(),
-                    className: el.className ?? '',
-                    tagName: 'a',
-                })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
-            );
-            if (KRA_DEBUG_ARTIFACTS) {
-                console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+            // Wait a moment for KRA to render the receipt/acknowledgment link
+            await page.waitForTimeout(1_500);
+
+            // First try Playwright locators for known KRA receipt link texts (more reliable than JS scanning)
+            const receiptLinkSelectors = [
+                'a:has-text("Download Returns Receipt")',
+                'a:has-text("Acknowledgment Receipt")',
+                'a:has-text("Acknowledgement Receipt")',
+                'a:has-text("Return Receipt")',
+                'a:has-text("Receipt")',
+                'a:has-text("Download")',
+                '#downloadReceipt',
+                'a[href*="downloadReturnsReceipt" i]',
+                'a[onclick*="downloadReturnsReceipt" i]',
+                'a[href*="downloadreceipt" i]',
+                'a[onclick*="downloadreceipt" i]',
+            ];
+
+            for (const selector of receiptLinkSelectors) {
+                try {
+                    const locator = page.locator(selector).filter({ visible: true }).first();
+                    if (await locator.count() > 0) {
+                        const el = await locator.evaluate((node: HTMLElement) => ({
+                            id: node.id ?? '',
+                            href: node.getAttribute('href') ?? '',
+                            onclick: node.getAttribute('onclick') ?? '',
+                            text: (node.textContent ?? '').trim(),
+                            className: node.className ?? '',
+                            tagName: node.tagName.toLowerCase(),
+                        }));
+                        downloadMeta = el;
+                        await appendJobLog(job, `Found receipt link via selector: ${selector}`, { progress: 85 });
+                        break;
+                    }
+                } catch {
+                    // try next selector
+                }
             }
 
-            // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
-            // Skip mainMenu/nav links that are hidden in submenus — they match "receipt" text but are not visible.
-            const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|click here|print/i;
-            downloadMeta = receiptPageLinks.find(
-                (link) =>
-                    !link.className.toLowerCase().includes('mainmenu') &&
-                    !link.className.toLowerCase().includes('nav') &&
-                    (link.onclick.toLowerCase().includes('download') ||
-                     link.href.toLowerCase().includes('download') ||
-                     link.id.toLowerCase().includes('download') ||
-                     receiptLinkPatterns.test(link.text))
-            );
+            // Inspect all links on the receipt page to find the download link by its actual attributes
+            if (!downloadMeta) {
+                receiptPageLinks = await page.$$eval(
+                    'a',
+                    (els: HTMLAnchorElement[]) => els.map((el) => ({
+                        id: el.id ?? '',
+                        href: el.getAttribute('href') ?? '',
+                        onclick: el.getAttribute('onclick') ?? '',
+                        text: (el.textContent ?? '').trim(),
+                        className: el.className ?? '',
+                        tagName: 'a',
+                    })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
+                );
+                if (KRA_DEBUG_ARTIFACTS) {
+                    console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+                }
+
+                // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
+                // Only skip obvious mainMenu/nav links that are hidden in submenus.
+                const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|click here|print/i;
+                downloadMeta = receiptPageLinks.find(
+                    (link) =>
+                        (!link.className.toLowerCase().includes('mainmenu') ||
+                         link.text.toLowerCase().includes('receipt') ||
+                         link.text.toLowerCase().includes('download')) &&
+                        !link.className.toLowerCase().includes('topmenu') &&
+                        (link.onclick.toLowerCase().includes('download') ||
+                         link.href.toLowerCase().includes('download') ||
+                         link.href.toLowerCase().includes('receipt') ||
+                         link.id.toLowerCase().includes('download') ||
+                         link.id.toLowerCase().includes('receipt') ||
+                         receiptLinkPatterns.test(link.text))
+                );
+            }
 
             // Fallback: scan buttons and inputs if no anchor matched
             if (!downloadMeta) {
@@ -2909,7 +2961,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                         els
                             .filter((el) => {
                                 const text = (el.textContent ?? el.getAttribute('value') ?? '').trim();
-                                return receiptLinkPatterns.test(text);
+                                return /download|receipt|acknowledg(?:e)?ment|print/i.test(text);
                             })
                             .map((el) => ({
                                 id: el.id ?? '',
@@ -3004,21 +3056,27 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
         console.log(`[Worker][${jobId}] Using download selector: ${downloadSelector}`);
 
-        let receiptDownloaded = false;
+            let receiptDownloaded = false;
         try {
-            // KRA's receipt link uses href="javascript:downloadReturnsReceipt()" which does not
-            // trigger Playwright's download event. Intercept the PDF/form-post response instead.
-            let resolved = false;
+            // KRA's receipt link may use href="javascript:downloadReturnsReceipt()" which does not
+            // trigger Playwright's download event. Intercept the PDF/form-post response AND listen
+            // for a native download event as a fallback.
+            let responseResolved = false;
+            let downloadResolved = false;
+
             const pdfResponsePromise = new Promise<any>((resolve) => {
                 const handler = async (response: any) => {
                     const contentType = (await response.headerValue('content-type') || '').toLowerCase();
                     const url = response.url().toLowerCase();
                     const isPdf = contentType.includes('pdf') ||
                         contentType.includes('octet-stream') ||
+                        url.includes('.pdf') ||
                         url.includes('downloadreturnsreceipt') ||
-                        url.includes('downloadreceipt');
+                        url.includes('downloadreceipt') ||
+                        url.includes('returnsreceipt') ||
+                        url.includes('receipt');
                     if (isPdf) {
-                        resolved = true;
+                        responseResolved = true;
                         page.off('response', handler);
                         resolve(response);
                     }
@@ -3026,11 +3084,27 @@ export async function processFilingJob(job: JobContext): Promise<{
                 page.on('response', handler);
                 // Safety timeout so we don't hang if no response matches
                 setTimeout(() => {
-                    if (!resolved) {
+                    if (!responseResolved) {
                         page.off('response', handler);
                         resolve(null);
                     }
                 }, 60_000);
+            });
+
+            const downloadEventPromise = new Promise<any>((resolve) => {
+                const timeout = setTimeout(() => {
+                    if (!downloadResolved) {
+                        page.off('download', downloadHandler);
+                        resolve(null);
+                    }
+                }, 60_000);
+                const downloadHandler = async (download: any) => {
+                    downloadResolved = true;
+                    clearTimeout(timeout);
+                    page.off('download', downloadHandler);
+                    resolve(download);
+                };
+                page.on('download', downloadHandler);
             });
 
             // Use JS click to bypass visibility checks on hidden tab/menu links
@@ -3055,6 +3129,26 @@ export async function processFilingJob(job: JobContext): Promise<{
                         return false;
                     }
                 });
+            } else if (downloadMeta.href && downloadMeta.href.toLowerCase().includes('downloadreturnsreceipt')) {
+                // Directly invoke the KRA receipt function when we know the href pattern
+                clicked = await page.evaluate(() => {
+                    try {
+                        if (typeof (window as any).downloadReturnsReceipt === 'function') {
+                            (window as any).downloadReturnsReceipt();
+                            return true;
+                        }
+                        return false;
+                    } catch {
+                        return false;
+                    }
+                });
+                if (!clicked) {
+                    clicked = await page.evaluate((sel) => {
+                        const el = document.querySelector(sel) as HTMLElement;
+                        if (el) { el.click(); return true; }
+                        return false;
+                    }, downloadSelector);
+                }
             } else {
                 clicked = await page.evaluate((sel) => {
                     const el = document.querySelector(sel) as HTMLElement;
@@ -3067,12 +3161,19 @@ export async function processFilingJob(job: JobContext): Promise<{
                 throw new Error('Receipt download link not found or not clickable');
             }
 
+            // Race response interception against native download event
             const pdfResponse = await pdfResponsePromise;
+            const downloadEvent = await downloadEventPromise;
+
             if (pdfResponse) {
                 const buffer = await pdfResponse.body();
                 await fs.writeFile(receiptPath, buffer);
                 receiptDownloaded = true;
                 console.log(`[Worker][${jobId}] Receipt saved via response interception: ${receiptPath}`);
+            } else if (downloadEvent) {
+                await downloadEvent.saveAs(receiptPath);
+                receiptDownloaded = true;
+                console.log(`[Worker][${jobId}] Receipt saved via download event: ${receiptPath}`);
             } else {
                 throw new Error('No PDF response detected after clicking receipt link');
             }

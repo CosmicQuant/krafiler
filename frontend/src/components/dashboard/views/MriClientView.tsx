@@ -12,6 +12,7 @@ import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { StatusBadge } from '../StatusBadges';
 import {
     getReceiptUrlForObligation,
+    getPrnUrlForObligation,
     isPendingFilingJob,
     isTerminalFilingJob,
 } from '../../../utils/dashboardUtils';
@@ -55,7 +56,7 @@ export function MriClientView({
     const job = activeJobs[client.id];
     const relevantJob = !job?.obligationType || job.obligationType === 'monthly_rental_income' ? job : undefined;
     const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(client, 'MRI');
-    const latestPrnUrl = relevantJob?.prnUrl;
+    const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(client, 'MRI');
     const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
 
     return (

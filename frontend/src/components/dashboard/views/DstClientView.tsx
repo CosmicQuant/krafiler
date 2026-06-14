@@ -12,6 +12,7 @@ import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
 import { StatusBadge } from '../StatusBadges';
 import {
     getReceiptUrlForObligation,
+    getPrnUrlForObligation,
     isPendingFilingJob,
     isTerminalFilingJob,
 } from '../../../utils/dashboardUtils';
@@ -51,7 +52,7 @@ export function DstClientView({
     const job = activeJobs[client.id];
     const relevantJob = !job?.obligationType || job.obligationType === 'dst' ? job : undefined;
     const latestReceiptUrl = relevantJob?.receiptUrl ?? getReceiptUrlForObligation(client, 'DST');
-    const latestPrnUrl = relevantJob?.prnUrl;
+    const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(client, 'DST');
     const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
 
     return (

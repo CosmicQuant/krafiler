@@ -18,7 +18,9 @@ export class PrnService {
     async generate(config: PrnConfig): Promise<{ prnPath?: string; prnGcsPath?: string; error?: string }> {
         await setJobStep(this.job, 80, `Generating Payment Slip (PRN) for ${config.taxType}...`);
 
-        const prnDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        // Use the requested period if provided, otherwise fall back to current date
+        const prnDate = config.periodFrom ? new Date(config.periodFrom) : new Date();
+        const prnDateStr = `${prnDate.getFullYear()}-${String(prnDate.getMonth() + 1).padStart(2, '0')}`;
         const prnFileName = `${prnDateStr}_${this.job.data.payload.kraPin}_${config.taxType}_PRN.pdf`;
         const tempPrnPath = process.platform === 'win32'
             ? `C:\\Temp\\kra-receipts\\${prnFileName}`

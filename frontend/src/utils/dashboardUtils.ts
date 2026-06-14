@@ -93,6 +93,35 @@ export function getReceiptUrlForObligation(client: ClientObligation, type: strin
     }
 }
 
+export function getPrnUrlForObligation(client: ClientObligation, type: string) {
+    switch (type) {
+        case 'VAT':
+            return client.vatPrnUrl;
+        case 'TOT':
+            return client.totPrnUrl;
+        case 'MRI':
+            return client.mriPrnUrl;
+        case 'DST':
+            return client.dstPrnUrl;
+        case 'PAYE':
+            return client.payePrnUrl;
+        case 'NSSF':
+            return client.nssfPrnUrl;
+        case 'SHA':
+            return client.shaPrnUrl;
+        case 'IT_RESIDENT_INDIVIDUAL':
+            return client.incomeTaxResidentIndividualPrnUrl;
+        case 'IT_NON_RESIDENT_INDIVIDUAL':
+            return client.incomeTaxNonResidentIndividualPrnUrl;
+        case 'IT_COMPANY':
+            return client.incomeTaxCompanyPrnUrl;
+        case 'EXCISE_DUTY':
+            return client.exciseDutyPrnUrl;
+        default:
+            return undefined;
+    }
+}
+
 export function isPendingFilingJob(job?: ActiveDashboardJob | null) {
     return !!job && (job.state === 'waiting' || job.state === 'active' || job.state === 'delayed' || job.state === 'cancelling');
 }

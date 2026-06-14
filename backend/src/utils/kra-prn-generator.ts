@@ -5,6 +5,7 @@ export interface PrnConfig {
     periodYear: string;
     periodMonth?: string;
     taxType: string;
+    periodFrom?: string;
 }
 
 const TAX_MAPPING: Record<string, { headRegex: RegExp, subHeadRegex: RegExp }> = {
@@ -218,8 +219,32 @@ export async function generatePRNSlip(
             }
         }
 
-        console.log(`[PRN] Filling out Tax Sub Head for ${config.taxType}...`);
-        const subHeadMatched = await page.evaluate(({ matchSource, matchFlags }) => {
+    console.log(`[PRN] Filling out Tax Sub Head for ${config.taxType}...`);
+
+    // Primary: try exact label selection via Playwright locator (matches the test script flow)
+    const subHeadLabelMap: Record<string, string> = {
+        'vat': '(0201) Value Added Tax (VAT)',
+        'turnover_tax': '(0111) Income Tax - Turnover Tax (ToT)',
+        'monthly_rental_income': '(0111) Income Tax - Rent Income (MRI)',
+        'paye': '(0111) Income Tax - Pay As You Earn (PAYE)',
+        'nita': 'Agency Revenue - NITA Levy',
+        'affordable_housing': 'Agency Revenue - Housing Levy',
+    };
+    let subHeadMatched = false;
+    const preferredSubHeadLabel = subHeadLabelMap[config.taxType];
+    if (preferredSubHeadLabel) {
+        try {
+            await page.locator('select#cmbTaxSubHead').selectOption({ label: preferredSubHeadLabel });
+            subHeadMatched = true;
+            console.log(`[PRN] Selected Tax Sub Head by label: ${preferredSubHeadLabel}`);
+        } catch (locatorErr: any) {
+            console.log(`[PRN] Locator subhead selection failed: ${locatorErr.message}, falling back to regex`);
+        }
+    }
+
+    // Fallback: regex match like before
+    if (!subHeadMatched) {
+        subHeadMatched = await page.evaluate(({ matchSource, matchFlags }) => {
             const regex = new RegExp(matchSource, matchFlags);
             const select = document.querySelector('select#cmbTaxSubHead') as HTMLSelectElement;
             if (select) {
@@ -233,14 +258,28 @@ export async function generatePRNSlip(
             }
             return false;
         }, { matchSource: mapping.subHeadRegex.source, matchFlags: mapping.subHeadRegex.flags });
-        
-        if (!subHeadMatched) {
-            console.warn(`[PRN] WARNING: Could not explicitly match Tax Sub Head using /${mapping.subHeadRegex.source}/i`);
-            console.warn(`[PRN] Available options: ${subHeadOptions.join(' | ')}`);
-        }
-        await page.waitForTimeout(3000);
+    }
 
-        console.log('[PRN] Filling out Payment Type...');
+    if (!subHeadMatched) {
+        console.warn(`[PRN] WARNING: Could not explicitly match Tax Sub Head using /${mapping.subHeadRegex.source}/i`);
+        console.warn(`[PRN] Available options: ${subHeadOptions.join(' | ')}`);
+    }
+    await page.waitForTimeout(3000);
+
+    console.log('[PRN] Filling out Payment Type...');
+    const paymentTypeLabels = ['Self Assessment Tax', 'Self Assessment'];
+    let paymentTypeMatched = false;
+    for (const label of paymentTypeLabels) {
+        try {
+            await page.locator('select#cmbPaymentType').selectOption({ label });
+            paymentTypeMatched = true;
+            console.log(`[PRN] Selected Payment Type by label: ${label}`);
+            break;
+        } catch {
+            // try next label
+        }
+    }
+    if (!paymentTypeMatched) {
         await page.evaluate(() => {
             const select = document.querySelector('select#cmbPaymentType') as HTMLSelectElement;
             if (select) {
@@ -253,7 +292,8 @@ export async function generatePRNSlip(
                 }
             }
         });
-        await page.waitForTimeout(3000);
+    }
+    await page.waitForTimeout(3000);
 
         // --- TAX PERIOD SELECTION ---
         console.log('[PRN] Selecting Tax Period...');
@@ -291,83 +331,35 @@ export async function generatePRNSlip(
         console.log(`[PRN] Selected period: ${targetYear} / ${targetMonth}`);
 
         // --- LIABILITY SELECTION ---
+        // Match the working test-script flow: if KRA shows a pending-liabilities table,
+        // select the first radio; otherwise just click Add to create a manual obligation row.
         console.log('[PRN] Searching for pending liabilities list (radio buttons)...');
         let hasLiabilities = false;
         try {
             await page.waitForFunction(() => {
                 const table = document.getElementById('LiablibilityTbl') as HTMLElement | null;
                 return !!table && table.style.display !== 'none' && !!document.querySelector('#LiablibilityTbl input[name="liabilityRadio"]');
-            }, { timeout: 15_000 });
+            }, { timeout: 8_000 });
             hasLiabilities = true;
         } catch (e: any) {
-            console.log('[PRN] No liabilities table found after 15s:', e.message);
+            console.log('[PRN] No liabilities table found:', e.message);
         }
 
         if (hasLiabilities) {
-            const selectionResult = await page.evaluate(() => {
+            await page.evaluate(() => {
                 const radio = (document.getElementById('liabilityRadio_0') as HTMLInputElement | null)
                     ?? (document.querySelector('#LiablibilityTbl input[name="liabilityRadio"]') as HTMLInputElement | null);
-                const onSelect = (window as any).onSelectliabilityRadio;
-                const subHeadSelect = document.getElementById('cmbTaxSubHead') as HTMLSelectElement | null;
-                const taxHeadSelect = document.getElementById('cmbTaxHead') as HTMLSelectElement | null;
-
-                if (!radio) {
-                    return { success: false, reason: 'No liability radio found in #LiablibilityTbl' };
-                }
-
-                radio.checked = true;
-
-                if (typeof onSelect === 'function') {
-                    onSelect(radio);
-                } else {
+                if (radio) {
+                    radio.checked = true;
                     radio.click();
                     radio.dispatchEvent(new Event('change', { bubbles: true }));
                 }
-
-                // KRA's Add validation expects these hidden fields to be populated.
-                const selectedSubHeadText = subHeadSelect?.selectedOptions?.[0]?.text?.trim() ?? '';
-                const selectedTaxHeadValue = taxHeadSelect?.value ?? '';
-                const taxTypeNameInput = document.getElementById('in_taxObligationTable_3') as HTMLInputElement | null;
-                const obligationTypeInput = document.getElementById('hidObligationType') as HTMLInputElement | null;
-                if (taxTypeNameInput && !taxTypeNameInput.value) {
-                    taxTypeNameInput.value = selectedSubHeadText;
-                }
-                if (obligationTypeInput && !obligationTypeInput.value) {
-                    obligationTypeInput.value = selectedTaxHeadValue;
-                }
-
-                const addLink = document.getElementById('a_taxObligationTable') as HTMLElement | null;
-                const obligationFieldSet = document.getElementById('ObligationDetailFieldSet') as HTMLElement | null;
-
-                return {
-                    success: true,
-                    radioId: radio.id,
-                    hidRadioValue: (document.getElementById('hidRadioValue') as HTMLInputElement | null)?.value ?? '',
-                    obligationId: (document.getElementById('in_taxObligationTable_7') as HTMLInputElement | null)?.value ?? '',
-                    fromDate: (document.getElementById('in_taxObligationTable_9') as HTMLInputElement | null)?.value ?? '',
-                    toDate: (document.getElementById('in_taxObligationTable_10') as HTMLInputElement | null)?.value ?? '',
-                    taxTypeName: (document.getElementById('in_taxObligationTable_3') as HTMLInputElement | null)?.value ?? '',
-                    obligationType: (document.getElementById('hidObligationType') as HTMLInputElement | null)?.value ?? '',
-                    addVisible: !!addLink && addLink.offsetParent !== null,
-                    fieldSetVisible: !!obligationFieldSet && obligationFieldSet.style.display !== 'none',
-                };
             });
-
-            if (!selectionResult.success) {
-                console.log('[PRN] Liability selection failed:', selectionResult.reason);
-            } else {
-                console.log(`[PRN] Selected liability radio ${selectionResult.radioId}; hidRadioValue=${selectionResult.hidRadioValue}; obligationId=${selectionResult.obligationId}; fromDate=${selectionResult.fromDate}; toDate=${selectionResult.toDate}; taxTypeName=${selectionResult.taxTypeName}; obligationType=${selectionResult.obligationType}; addVisible=${selectionResult.addVisible}; fieldSetVisible=${selectionResult.fieldSetVisible}`);
-            }
-
-            // Always try to add, even if selection result was partial
-            await page.locator('#a_taxObligationTable:visible').waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {
-                console.log('[PRN] Add link not visible, trying direct click');
-            });
-        } else {
-            console.log('[PRN] No liabilities available — proceeding to manual entry mode');
+            await page.waitForTimeout(1000);
         }
 
         // --- ADD LIABILITY ---
+        // Simplified, test-script style: click the visible Add button/link.
         console.log('[PRN] Adding Liability...');
         try {
             page.once('dialog', async (dialog) => {
@@ -375,95 +367,25 @@ export async function generatePRNSlip(
                 await dialog.accept();
             });
 
-            const addResult = await page.evaluate(() => {
-                const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
-                const rowsBefore = table?.rows.length ?? 0;
-                const addvalidation = (window as any).addvalidation;
-                const beforeAdd = (window as any).beforeAddIntotaxObligationTable;
-                const addrow = (window as any).addrow;
+            const addClicked = await page.evaluate(() => {
                 const addLink = document.getElementById('a_taxObligationTable') as HTMLElement | null;
-                let validationReturnValue = 'not-called';
-                let beforeAddReturnValue = 'not-called';
-
-                if (typeof beforeAdd === 'function') {
-                    beforeAddReturnValue = String(beforeAdd());
-                }
-
-                if (typeof addvalidation === 'function') {
-                    validationReturnValue = String(addvalidation());
-                }
-
-                const rowsAfterValidation = table?.rows.length ?? 0;
-
-                if (rowsAfterValidation > rowsBefore) {
-                    return {
-                        invoked: true,
-                        mode: 'beforeAdd+validation',
-                        returnValue: validationReturnValue,
-                        beforeAddReturnValue,
-                        rowsBefore,
-                        rowsAfterValidation,
-                    };
-                }
-
                 if (addLink) {
                     addLink.click();
-                    return {
-                        invoked: true,
-                        mode: 'beforeAdd+validation+click',
-                        returnValue: validationReturnValue,
-                        beforeAddReturnValue,
-                        rowsBefore,
-                        rowsAfterValidation,
-                    };
+                    return 'a_taxObligationTable';
                 }
-
-                if (typeof addrow === 'function') {
-                    const deleteFn = (document.getElementById('taxObligationTable_beforeDeleteFunction') as HTMLInputElement | null)?.value ?? '';
-                    const modifyFn = (document.getElementById('taxObligationTable_beforeModifyClickedFunction') as HTMLInputElement | null)?.value ?? '';
-                    addrow('taxObligationTable', '4', '9', '3', deleteFn, modifyFn, 'N', 'N');
-                    return {
-                        invoked: true,
-                        mode: 'beforeAdd+validation+addrow',
-                        returnValue: validationReturnValue,
-                        beforeAddReturnValue,
-                        rowsBefore,
-                        rowsAfterValidation,
-                    };
+                const addBtn = document.querySelector('input[value="Add"], button:has-text("Add"), a.subbuttonHome:has-text("Add")') as HTMLElement | null;
+                if (addBtn) {
+                    addBtn.click();
+                    return 'generic-add-button';
                 }
-
-                return {
-                    invoked: false,
-                    mode: 'none',
-                    returnValue: validationReturnValue,
-                    beforeAddReturnValue,
-                    rowsBefore,
-                    rowsAfterValidation,
-                };
+                return 'none';
             });
+            console.log(`[PRN] Add click target: ${addClicked}`);
 
-            console.log(`[PRN] Add attempt via ${addResult.mode}; beforeAdd returned ${addResult.beforeAddReturnValue}; addvalidation returned ${addResult.returnValue}; taxObligationTable rows before=${addResult.rowsBefore}, afterValidation=${addResult.rowsAfterValidation}`);
+            // Wait a moment for the row to be added
+            await page.waitForTimeout(3000);
 
-            // Wait for rows to increase
-            await page.waitForFunction(
-                (previousRows) => {
-                    const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
-                    return !!table && table.rows.length > previousRows;
-                },
-                addResult.rowsBefore,
-                { timeout: 10_000 }
-            ).catch(() => {
-                console.log('[PRN] Warning: Row count did not increase, proceeding anyway');
-            });
-
-            const rowsAfter = await page.evaluate(() => {
-                const table = document.getElementById('taxObligationTable') as HTMLTableElement | null;
-                return table?.rows.length ?? 0;
-            });
-            console.log(`[PRN] taxObligationTable rows after add: ${rowsAfter}`);
-
-            // Handle "Entered amount should be greater than 0" alert
-            console.log('[PRN] Checking for amount input in obligation table...');
+            // If KRA shows "Entered amount should be greater than 0", populate the amount field and re-add
             const amountSet = await page.evaluate(() => {
                 const amountInput = document.getElementById('in_taxObligationTable_11') as HTMLInputElement
                     || document.querySelector('input[name*="amount"], input[id*="amount"], input[id*="Amount"]') as HTMLInputElement;
@@ -475,12 +397,11 @@ export async function generatePRNSlip(
                 }
                 return false;
             });
-            console.log(`Amount input set: ${amountSet}`);
+            console.log(`[PRN] Amount input set: ${amountSet}`);
             if (amountSet) {
-                await page.waitForTimeout(2000);
-                // Re-click Add after setting amount
+                await page.waitForTimeout(1500);
                 await page.evaluate(() => {
-                    const addLink = document.getElementById('a_taxObligationTable') as HTMLElement;
+                    const addLink = document.getElementById('a_taxObligationTable') as HTMLElement | null;
                     if (addLink) addLink.click();
                 });
                 await page.waitForTimeout(3000);
@@ -489,7 +410,7 @@ export async function generatePRNSlip(
             console.log('[PRN] Failed to add liability row:', e.message);
             // Continue anyway — KRA may have auto-added
         }
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(2000);
 
         console.log('[PRN] Selecting Payment Mode (Other Payment Modes)...');
         await page.evaluate(() => {

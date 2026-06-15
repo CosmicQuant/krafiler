@@ -228,13 +228,13 @@ export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRef
   const handleDownloadPayslip = (entry: PayrollEntry) => {
     const [y, m] = (period || '').split('-');
     const periodParam = m && y ? `${m}${y}` : '';
-    const url = `/api/clients/${clientId}/payslip/${entry.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
+    const url = `/clients/${clientId}/payslip/${entry.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
     downloadBlob(url, `payslip-${entry.kraPin}.pdf`);
   };
 
   const handleDownloadP9 = (entry: PayrollEntry) => {
     const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
-    const url = `/api/clients/${clientId}/p9/${entry.kraPin}?year=${yearStr}`;
+    const url = `/clients/${clientId}/p9/${entry.kraPin}?year=${yearStr}`;
     downloadBlob(url, `P9-${entry.kraPin}-${yearStr}.pdf`);
   };
 
@@ -299,7 +299,7 @@ export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRef
 
   const handleBulkDownloadPayslips = () => {
     if (!runId) return;
-    downloadBlob(`/api/clients/${clientId}/payroll-runs/${runId}/payslips`, `payslips-${clientId}-${runId}.zip`);
+    downloadBlob(`/clients/${clientId}/payroll-runs/${runId}/payslips`, `payslips-${clientId}-${runId}.zip`);
   };
 
   const totals = useMemo(() => {

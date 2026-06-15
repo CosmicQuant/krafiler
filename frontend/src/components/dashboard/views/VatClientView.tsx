@@ -6,7 +6,8 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { apiFetch } from '../../../services/api';
 import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation, VatPreparationSummary } from '../../../types';
 import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
@@ -20,7 +21,7 @@ import {
     getClientFilingPeriod,
 } from '../../../utils/dashboardUtils';
 import JobStatusInline from '../JobStatusInline';
-import { StatusBadge } from '../StatusBadges';
+import { InteractiveStatusBadge } from '../StatusBadges';
 import { ActiveDashboardJob } from '../../../types';
 
 interface VatClientViewProps {
@@ -33,6 +34,7 @@ interface VatClientViewProps {
     onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
     onCancelJob?: (client: ClientObligation) => Promise<void>;
     cancellingClientIds?: Record<string, boolean>;
+    setClients?: React.Dispatch<React.SetStateAction<ClientObligation[]>>;
 }
 
 export function VatClientView({
@@ -45,6 +47,7 @@ export function VatClientView({
     onGeneratePrn,
     onCancelJob,
     cancellingClientIds,
+    setClients,
 }: VatClientViewProps) {
     const vatClients = useMemo(() => clients.filter((c) => c.vat !== 'na'), [clients]);
 
@@ -100,6 +103,36 @@ export function VatClientView({
     const vatPeriodKey = vatPeriod.period;
     const vatPeriodAlreadyFiled = client.filedPeriods?.vat?.includes(vatPeriodKey);
 
+    const [periodLoading, setPeriodLoading] = useState(false);
+
+    const changeVatPeriod = async (direction: 'prev' | 'next') => {
+        if (!client || periodLoading) return;
+        setPeriodLoading(true);
+        try {
+            const currentYear = client.vatPeriodYear ?? vatPeriod.year;
+            const currentMonth = client.vatPeriodMonth ?? vatPeriod.month;
+            let newMonth = direction === 'next' ? currentMonth + 1 : currentMonth - 1;
+            let newYear = currentYear;
+            if (newMonth > 12) { newMonth = 1; newYear += 1; }
+            if (newMonth < 1) { newMonth = 12; newYear -= 1; }
+
+            const res = await apiFetch(`/clients/${client.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vatPeriodMonth: newMonth, vatPeriodYear: newYear }),
+            });
+            if (!res.ok) throw new Error('Failed to update VAT period');
+            const updated = await res.json();
+            const updatedClient = { ...client, ...updated } as ClientObligation;
+            setSelectedClient(updatedClient);
+            setClients?.((current) => current.map((c) => (c.id === client.id ? updatedClient : c)));
+        } catch (e: any) {
+            alert(e.message || 'Failed to change VAT period');
+        } finally {
+            setPeriodLoading(false);
+        }
+    };
+
     return (
         <div className="mt-6 space-y-6">
             {/* Client Selector */}
@@ -113,13 +146,54 @@ export function VatClientView({
                     />
                 </div>
                 <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-slate-500">
+                    <button
+                        onClick={() => void changeVatPeriod('prev')}
+                        disabled={periodLoading}
+                        className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition disabled:opacity-50"
+                        title="Previous period"
+                    >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="text-xs font-medium text-slate-500 min-w-[110px] text-center">
                         Period: <span className="font-bold text-slate-700">{vatPeriodKey}</span>
                         {vatPeriodAlreadyFiled && (
                             <span className="ml-2 text-emerald-600">(filed)</span>
                         )}
                     </span>
-                    <StatusBadge status={client.vat} />
+                    <button
+                        onClick={() => void changeVatPeriod('next')}
+                        disabled={periodLoading}
+                        className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition disabled:opacity-50"
+                        title="Next period"
+                    >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                    <InteractiveStatusBadge
+                        status={client.vat}
+                        generatedAt={client.vatPreparedAt}
+                        lastFiledDate={client.vatLastFiledDate}
+                        receiptUrl={latestReceiptUrl}
+                        onUpdateStatus={async (newStatus) => {
+                            try {
+                                const res = await apiFetch(`/clients/${client.id}/status`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        field: 'vat',
+                                        status: newStatus,
+                                        period: vatPeriodKey,
+                                    }),
+                                });
+                                if (!res.ok) throw new Error('Failed to update status');
+                                const updated = await res.json();
+                                const updatedClient = { ...client, ...updated } as ClientObligation;
+                                setSelectedClient(updatedClient);
+                                setClients?.((current) => current.map((c) => (c.id === client.id ? updatedClient : c)));
+                            } catch (e: any) {
+                                alert(e.message || 'Failed to update VAT status');
+                            }
+                        }}
+                    />
                 </div>
             </div>
 

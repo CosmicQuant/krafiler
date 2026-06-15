@@ -680,26 +680,27 @@ export function useFilingActions(deps: FilingActionsDeps) {
         }
     }, []);
 
-    const updateSingleStatus = useCallback(async (clientId: string, field: 'paye' | 'nssf' | 'sha', newStatus: TaxStatus) => {
+    const updateSingleStatus = useCallback(async (clientId: string, field: 'paye' | 'nssf' | 'sha' | 'vat' | 'tot' | 'mri', newStatus: TaxStatus, period?: string) => {
         // Update backend first
         try {
             const res = await apiFetch(`/clients/${clientId}/status`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ field, status: newStatus }),
+                body: JSON.stringify({ field, status: newStatus, period }),
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data.message || data.error || 'Failed to update status');
             }
+            const updated = await res.json();
+            const d = getD();
+            d.setClients((current) => current.map((c) => (c.id === clientId ? { ...c, ...updated } : c)));
+            if (d.setSelectedClient) d.setSelectedClient((prev) => prev?.id === clientId ? { ...prev, ...updated } : prev);
+            d.setDashboardNotice({ tone: 'success', message: `Updated ${field.toUpperCase()} status.` });
         } catch (error) {
             const d = getD();
             d.setDashboardNotice({ tone: 'error', message: error instanceof Error ? error.message : 'Failed to update status' });
-            return;
         }
-        const d = getD();
-        d.setClients((current) => current.map((c) => (c.id === clientId ? { ...c, [field]: newStatus } : c)));
-        d.setDashboardNotice({ tone: 'success', message: `Updated ${field.toUpperCase()} status.` });
     }, []);
 
     const generatePayrollCompliance = useCallback(async (client: ClientObligation, runId: number) => {

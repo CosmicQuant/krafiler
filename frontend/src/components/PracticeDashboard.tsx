@@ -446,6 +446,7 @@ export default function PracticeDashboard() {
                 onGeneratePrn={filingActions.generatePrn}
                 onCancelJob={filingActions.cancelAutoFile}
                 cancellingClientIds={cancellingClientIds}
+                setClients={setClients}
               />
             )}
             {!selectedClient && view === 'tot' && (

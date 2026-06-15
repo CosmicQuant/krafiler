@@ -192,8 +192,9 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
          const data = await res.json(); if (res.ok) { setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, paye: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PAYE filing failed');
       } else if (type === 'prn') {
         const [ys, ms] = period.split('-');
-        const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: activeTab === 'paye' ? 'paye' : activeTab, periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(new Date(parseInt(ys), parseInt(ms), 0).getDate()).padStart(2, '0')}`, printPrnOnly: true }) });
-        const data = await res.json(); if (res.ok) { setSuccess(`PRN queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, prn: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PRN generation failed');
+        const taxType = activeTab === 'paye' ? 'paye' : activeTab;
+        const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: taxType, periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(new Date(parseInt(ys), parseInt(ms), 0).getDate()).padStart(2, '0')}`, printPrnOnly: true }) });
+        const data = await res.json(); if (res.ok) { setSuccess(`PRN queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, [activeTab]: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'PRN queued' } })); } else setError(data.message || 'PRN generation failed');
       }
     } catch { setError('Network error'); } finally { setFilingType(null); }
   };
@@ -277,7 +278,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
         return (
           <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: isError ? '#fca5a5' : '#bfdbfe', backgroundColor: isError ? '#fef2f2' : '#eff6ff', color: isError ? '#b91c1c' : '#1d4ed8' }}>
             <Clock className="h-3.5 w-3.5 animate-spin" />
-            <span className="font-semibold">{activeTab.toUpperCase()} filing:</span>
+            <span className="font-semibold">{activeTab.toUpperCase()} {job.message?.toLowerCase().includes('prn') ? 'PRN generation' : 'filing'}:</span>
             <span>{job.message || 'Processing...'}</span>
             {typeof job.progress === 'number' && job.progress > 0 && (
               <span className="ml-auto font-mono">{job.progress}%</span>
@@ -352,6 +353,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     <>
                       <a href={url} download className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition w-full"><FileSpreadsheet className="h-3.5 w-3.5" /> Download</a>
                       {isFinalized && activeConfig.key !== 'helb' && <button onClick={() => handleFile(activeConfig.key)} disabled={filingType === activeConfig.key} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 w-full">{filingType === activeConfig.key ? <Clock className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} File / Send</button>}
+                      {isFinalized && activeConfig.key === 'paye' && <button onClick={() => handleFile('prn')} disabled={filingType === 'prn'} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 transition disabled:opacity-40 w-full">{filingType === 'prn' ? <Clock className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Print PRN</button>}
                     </>
                   );
                 })()}

@@ -293,6 +293,46 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
     }
 });
 
+// ─── PUT /api/clients/:id/status ───────────────────────────────────────────────
+router.put('/:id/status', async (req: AuthenticatedRequest, res) => {
+    try {
+        const uid = req.user!.uid;
+        const { field, status, period } = req.body;
+
+        if (!field || !['vat', 'paye', 'nssf', 'sha', 'tot', 'mri'].includes(field)) {
+            return res.status(400).json({ message: 'Invalid status field' });
+        }
+        if (!status || !['due', 'generated', 'filed', 'paid', 'na', 'done'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid status value' });
+        }
+
+        const docRef = adminDb.collection(COLLECTION).doc(req.params.id);
+        const doc = await docRef.get();
+        if (!doc.exists || doc.data()?.ownerUid !== uid) {
+            return res.status(404).json({ message: 'Client not found' });
+        }
+
+        const updateData: any = {
+            [field]: status,
+            [`status.${field}`]: status,
+            updatedAt: Timestamp.now(),
+        };
+
+        // If resetting a filed period (e.g. filing was incorrect), remove it from filedPeriods
+        if (status !== 'filed' && status !== 'paid' && period) {
+            const currentFiledPeriods = doc.data()?.filedPeriods?.[field] || [];
+            updateData[`filedPeriods.${field}`] = currentFiledPeriods.filter((p: string) => p !== period);
+        }
+
+        await docRef.update(updateData);
+        const updated = await docRef.get();
+        res.json({ id: updated.id, ...updated.data() });
+    } catch (err) {
+        console.error('Error updating client status:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 // ─── DELETE /api/clients/:id ──────────────────────────────────────────────────
 router.delete('/:id', async (req: AuthenticatedRequest, res) => {
     try {

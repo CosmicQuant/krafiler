@@ -403,14 +403,14 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     if (!employee?.kraPin) return;
     const [y, m] = (period || '').split('-');
     const periodParam = m && y ? `${m}${y}` : '';
-    const url = `/api/clients/${clientId}/payslip/${employee.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
+    const url = `/clients/${clientId}/payslip/${employee.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
     downloadBlob(url, `payslip-${employee.kraPin}.pdf`);
   };
 
   const handleDownloadP9 = () => {
     if (!employee?.kraPin) return;
     const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
-    const url = `/api/clients/${clientId}/p9/${employee.kraPin}?year=${yearStr}`;
+    const url = `/clients/${clientId}/p9/${employee.kraPin}?year=${yearStr}`;
     downloadBlob(url, `P9-${employee.kraPin}-${yearStr}.pdf`);
   };
 

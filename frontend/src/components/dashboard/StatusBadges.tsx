@@ -64,31 +64,49 @@ export function InteractiveStatusBadge({
     receiptUrl?: string;
     onUpdateStatus: (newStatus: TaxStatus) => void 
 }) {
-    if (status === 'na' || status === 'done' || status === 'due') {
-        return <StatusBadge status={status} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />;
-    }
-
     return (
         <div className="group relative inline-flex flex-col items-center justify-center">
             <div className="cursor-pointer transition" role="button" tabIndex={0}>
                 <StatusBadge status={status} generatedAt={generatedAt} lastFiledDate={lastFiledDate} receiptUrl={receiptUrl} />
             </div>
-            <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 hidden flex-col w-32 scale-95 opacity-0 group-hover:flex group-hover:scale-100 group-hover:opacity-100 items-center justify-center transition-all origin-top duration-200">
+            <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 z-50 hidden flex-col w-36 scale-95 opacity-0 group-hover:flex group-hover:scale-100 group-hover:opacity-100 items-center justify-center transition-all origin-top duration-200">
                 <div className="rounded-xl border border-slate-700 bg-slate-800 shadow-2xl p-1.5 text-xs overflow-hidden flex flex-col gap-1 w-full">
-                    <button 
-                        onClick={() => onUpdateStatus('filed')}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-indigo-400 hover:bg-indigo-500/20"
-                    >
-                        <CheckCircle2 className="h-3 w-3" /> Mark Filed
-                    </button>
-                    <button 
-                        onClick={() => onUpdateStatus('paid')}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-emerald-400 hover:bg-emerald-500/20"
-                    >
-                        <CheckCircle2 className="h-3 w-3" /> Mark Paid
-                    </button>
+                    {status !== 'filed' && status !== 'paid' && status !== 'done' && (
+                        <button 
+                            onClick={() => onUpdateStatus('filed')}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-indigo-400 hover:bg-indigo-500/20"
+                        >
+                            <CheckCircle2 className="h-3 w-3" /> Mark Filed
+                        </button>
+                    )}
+                    {status !== 'paid' && status !== 'done' && (
+                        <button 
+                            onClick={() => onUpdateStatus('paid')}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-emerald-400 hover:bg-emerald-500/20"
+                        >
+                            <CheckCircle2 className="h-3 w-3" /> Mark Paid
+                        </button>
+                    )}
+                    {status !== 'due' && status !== 'na' && (
+                        <button 
+                            onClick={() => onUpdateStatus('due')}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-amber-400 hover:bg-amber-500/20"
+                        >
+                            <CheckCircle2 className="h-3 w-3" /> Reset to Due
+                        </button>
+                    )}
+                    {status !== 'generated' && status !== 'na' && status !== 'due' && (
+                        <button 
+                            onClick={() => onUpdateStatus('generated')}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-blue-400 hover:bg-blue-500/20"
+                        >
+                            <FileArchive className="h-3 w-3" /> Mark Generated
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

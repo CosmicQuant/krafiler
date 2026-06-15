@@ -2602,6 +2602,36 @@ export async function processFilingJob(job: JobContext): Promise<{
         context = undefined;
         browser = undefined;
 
+        // Persist the prepared VAT artifacts to the client document so the dashboard
+        // can show the "File VAT" button even after a page refresh or a failed filing.
+        try {
+            if (payload.clientId) {
+                const clientUpdate: Record<string, any> = {
+                    vat: 'generated',
+                    status: { vat: 'generated' },
+                    vatZipUrl: preparedVat.generatedZipUrl,
+                    vatZipLabel: preparedVat.generatedZipLabel,
+                    vatSourcePackageUrl: preparedVat.sourcePackageUrl,
+                    vatSourcePackageLabel: preparedVat.sourcePackageLabel,
+                    vatSummary: vatSummaryWithWithholding,
+                    vatPreparedAt: new Date().toISOString(),
+                };
+                // Track the period the ZIP was generated for
+                const periodFrom = payload.periodFrom || '';
+                if (periodFrom) {
+                    const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
+                    if (periodMatch) {
+                        clientUpdate.vatPeriod = `${periodMatch[1]}-${periodMatch[2]}`;
+                    }
+                }
+                await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                await appendJobLog(job, `Saved prepared VAT ZIP to client workspace`, { progress: 95 });
+            }
+        } catch (persistErr: any) {
+            console.error(`[Worker][${jobId}] Failed to persist prepared VAT artifacts:`, persistErr.message);
+            await appendJobLog(job, `Warning: VAT ZIP generated but could not be saved to client workspace`, { progress: 95, level: 'info' });
+        }
+
         await setJobStep(job, 100, 'VAT preparation completed. Awaiting filing confirmation');
         return {
             receiptPath: '',
@@ -3033,7 +3063,31 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         await navigationDelay();
 
-        // ── Step 12: Download PDF acknowledgment receipt ─────────────────────────
+        // ── Step 12: Close iTax Survey popup if present ──────────────────────────
+        // KRA sometimes shows a survey modal that blocks the receipt download link.
+        try {
+            const surveyDismissed = await page.evaluate(() => {
+                // Look for the survey dialog's "Not Now" button by its text
+                const buttons = Array.from(document.querySelectorAll('button, input[type="button"], a'));
+                const notNowBtn = buttons.find((el) => {
+                    const text = (el.textContent ?? el.getAttribute('value') ?? '').trim().toLowerCase();
+                    return text === 'not now' || text.includes('not now');
+                }) as HTMLElement | undefined;
+                if (notNowBtn) {
+                    notNowBtn.click();
+                    return true;
+                }
+                return false;
+            });
+            if (surveyDismissed) {
+                await appendJobLog(job, 'Dismissed iTax survey popup', { progress: 90 });
+                await page.waitForTimeout(1000);
+            }
+        } catch (surveyErr: any) {
+            console.log(`[Worker][${jobId}] Survey dismissal attempt failed (non-critical):`, surveyErr.message);
+        }
+
+        // ── Step 13: Download PDF acknowledgment receipt ─────────────────────────
         await setJobStep(job, 90, 'Waiting for the acknowledgment receipt download');
 
         const receiptDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -3176,6 +3230,18 @@ export async function processFilingJob(job: JobContext): Promise<{
                 console.log(`[Worker][${jobId}] Receipt saved via download event: ${receiptPath}`);
             } else {
                 throw new Error('No PDF response detected after clicking receipt link');
+            }
+
+            // Validate the saved file is actually a PDF
+            if (receiptDownloaded) {
+                const fileBuffer = await fs.readFile(receiptPath).catch(() => Buffer.alloc(0));
+                const header = fileBuffer.slice(0, 8);
+                if (!header.toString().startsWith('%PDF')) {
+                    await fs.unlink(receiptPath).catch(() => {});
+                    receiptDownloaded = false;
+                    throw new Error(`Downloaded receipt is not a valid PDF (header: ${header.toString('hex')}). Likely a KRA error or HTML page was captured.`);
+                }
+                await appendJobLog(job, `Receipt PDF validated and saved`, { progress: 92 });
             }
         } catch (downloadErr: any) {
             console.warn(`[Worker][${jobId}] Receipt download failed (continuing without receipt):`, downloadErr.message);

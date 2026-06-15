@@ -27,6 +27,8 @@ export function getPreviousMonthIsoRange(referenceDate = new Date()) {
     return {
         periodFrom: formatLocalIsoDate(previousMonthStart),
         periodTo: formatLocalIsoDate(previousMonthEnd),
+        year: previousMonthStart.getFullYear(),
+        month: previousMonthStart.getMonth() + 1,
     };
 }
 
@@ -82,6 +84,8 @@ export function getCurrentFilingPeriod(taxObligationType?: string) {
         periodTo: `${yyyy}-${mm}-${dd}`,
         mmYYYY: `${mm}${yyyy}`,
         mmSlashYYYY: `${mm}/${yyyy}`,
+        year: filingYear,
+        month: filingMonth,
     };
 }
 
@@ -103,6 +107,8 @@ export function periodFromRun(runPeriod: string) {
         periodTo: `${yyyy}-${mm}-${dd}`,
         mmYYYY: `${mm}${yyyy}`,
         mmSlashYYYY: `${mm}/${yyyy}`,
+        year: y,
+        month: m,
     };
 }
 

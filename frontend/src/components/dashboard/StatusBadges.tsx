@@ -89,15 +89,13 @@ export function InteractiveStatusBadge({
                             <CheckCircle2 className="h-3 w-3" /> Mark Paid
                         </button>
                     )}
-                    {status !== 'due' && status !== 'na' && (
-                        <button 
-                            onClick={() => onUpdateStatus('due')}
-                            type="button"
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-amber-400 hover:bg-amber-500/20"
-                        >
-                            <CheckCircle2 className="h-3 w-3" /> Reset to Due
-                        </button>
-                    )}
+                    <button 
+                        onClick={() => onUpdateStatus('due')}
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 font-semibold text-amber-400 hover:bg-amber-500/20"
+                    >
+                        <CheckCircle2 className="h-3 w-3" /> {status === 'due' ? 'Clear Filed Period' : 'Reset to Due'}
+                    </button>
                     {status !== 'generated' && status !== 'na' && status !== 'due' && (
                         <button 
                             onClick={() => onUpdateStatus('generated')}

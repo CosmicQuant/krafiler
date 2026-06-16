@@ -157,6 +157,16 @@ function normalizeInvoiceNumber(value: string): string {
     return value.replace(/^\|/, '').trim();
 }
 
+// Credit-note rows in KRA source CSVs have two extra trailing columns:
+//   column J (index 9) = credit-note invoice number
+//   column K (index 10) = credit-note date
+function getCreditNoteColumns(row: CsvRow): { cnInvoice: string; cnDate: string } {
+    return {
+        cnInvoice: normalizeInvoiceNumber(row[9] || ''),
+        cnDate: (row[10] || '').trim(),
+    };
+}
+
 function normalizeName(value: string, lookup: Map<string, string>, key: string): string {
     const trimmed = value.trim();
     if (trimmed) {
@@ -206,7 +216,11 @@ async function readCsvRows(filePath: string): Promise<CsvRow[]> {
     });
 }
 
-async function extractVatPackage(sourceZipPath: string, outputDir: string): Promise<string> {
+type ExtractVatPackageResult =
+    | { kind: 'csv'; nestedCsvDir: string; xlsFilePath?: string }
+    | { kind: 'xls-only'; nestedCsvDir: null; xlsFilePath: string };
+
+async function extractVatPackage(sourceZipPath: string, outputDir: string): Promise<ExtractVatPackageResult> {
     // Verify the downloaded file is actually a ZIP
     const fileBuffer = fsSync.readFileSync(sourceZipPath);
     const isZip = fileBuffer.length >= 4 &&
@@ -225,22 +239,30 @@ async function extractVatPackage(sourceZipPath: string, outputDir: string): Prom
     outerZip.extractAllTo(outputDir, true);
 
     const nestedZipPath = path.join(outputDir, 'csv.zip');
-    if (!fsSync.existsSync(nestedZipPath)) {
-        const extractedFiles = fsSync.readdirSync(outputDir);
-        throw new Error(
-            `Downloaded VAT package did not contain the nested csv.zip file. ` +
-            `Extracted contents: [${extractedFiles.join(', ')}]. ` +
-            `This usually means the wrong download button was clicked — ` +
-            `the "Download Autopopulated VAT Return" button should produce a ZIP with csv.zip inside, ` +
-            `but template download links only produce an .xls file.`
-        );
+    if (fsSync.existsSync(nestedZipPath)) {
+        const nestedDir = path.join(outputDir, 'nested-csv');
+        await ensureDirectory(nestedDir);
+        const nestedZip = new AdmZip(nestedZipPath);
+        nestedZip.extractAllTo(nestedDir, true);
+        return { kind: 'csv', nestedCsvDir: nestedDir };
     }
 
-    const nestedDir = path.join(outputDir, 'nested-csv');
-    await ensureDirectory(nestedDir);
-    const nestedZip = new AdmZip(nestedZipPath);
-    nestedZip.extractAllTo(nestedDir, true);
-    return nestedDir;
+    // Some clients have no transactions for the period. KRA then returns a ZIP
+    // that contains only the .xls workbook (no nested csv.zip). In that case we
+    // generate a no-transaction VAT return using only the credit brought forward.
+    const extractedFiles = fsSync.readdirSync(outputDir);
+    const xlsFile = extractedFiles.find((f) => f.toLowerCase().endsWith('.xls') || f.toLowerCase().endsWith('.xlsx'));
+    if (xlsFile) {
+        return { kind: 'xls-only', nestedCsvDir: null, xlsFilePath: path.join(outputDir, xlsFile) };
+    }
+
+    throw new Error(
+        `Downloaded VAT package did not contain the nested csv.zip file and no .xls workbook was found. ` +
+        `Extracted contents: [${extractedFiles.join(', ')}]. ` +
+        `This usually means the wrong download button was clicked — ` +
+        `the "Download Autopopulated VAT Return" button should produce a ZIP with csv.zip inside, ` +
+        `but template download links only produce an .xls file.`
+    );
 }
 
 async function discoverVatSections(nestedCsvDir: string): Promise<{ [key: string]: string[] }> {
@@ -295,12 +317,17 @@ function mapSectionRows(params: {
         let values: string[] = [];
         let vatAmount = 0;
 
+        // Credit-note rows carry two extra trailing columns in the source CSVs:
+        //   column J (index 9) = credit-note invoice number
+        //   column K (index 10) = credit-note date
+        const { cnInvoice, cnDate } = getCreditNoteColumns(row);
+        const hasCreditNoteColumns = cnInvoice.length > 0 || cnDate.length > 0;
+
         switch (section) {
             case 'B':
             case 'C': {
-                // Sales with PIN (10-col source)
-                // Output: 11 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, empty, empty, Rate]
-                // B = General Rate (16%), C = Other Rate (8%)
+                // Sales with PIN (10-col source; credit notes add J/K)
+                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, empty, CN invoice, CN date, empty, Rate]
                 const rate = section === 'B' ? 0.16 : 0.08;
                 vatAmount = round(taxableAmount * rate, 4);
                 const pin = (row[0] || '').trim();
@@ -314,6 +341,8 @@ function mapSectionRows(params: {
                     formatXmlNumber(taxableAmount, 4),
                     formatXmlNumber(vatAmount, 4),
                     '',
+                    cnInvoice,
+                    cnDate,
                     '',
                     section === 'B' ? 'GNRL' : 'OTHR',
                 ];
@@ -321,8 +350,8 @@ function mapSectionRows(params: {
             }
             case 'D1':
             case 'D2': {
-                // Zero-rated sales (10-col source, amount at index 9 for D1)
-                // Output: same 11-col format but VAT = 0, rate ZERO
+                // Zero-rated sales (10-col source; credit notes add J/K)
+                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, 0, empty, CN invoice, CN date, empty, ZERO]
                 const pin = (row[1] || '').trim();
                 values = [
                     pin,
@@ -334,14 +363,16 @@ function mapSectionRows(params: {
                     formatXmlNumber(taxableAmount, 4),
                     '0',
                     '',
+                    cnInvoice,
+                    cnDate,
                     '',
                     'ZERO',
                 ];
                 break;
             }
             case 'E': {
-                // Exempt sales (10-col source)
-                // Output: 11 cols, VAT = 0, rate EXEMPT
+                // Exempt sales (10-col source; credit notes add J/K)
+                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, 0, empty, CN invoice, CN date, empty, EXEMPT]
                 const pin = (row[0] || '').trim();
                 values = [
                     pin,
@@ -353,6 +384,8 @@ function mapSectionRows(params: {
                     formatXmlNumber(taxableAmount, 4),
                     '0',
                     '',
+                    cnInvoice,
+                    cnDate,
                     '',
                     'EXEMPT',
                 ];
@@ -360,8 +393,8 @@ function mapSectionRows(params: {
             }
             case 'F':
             case 'G': {
-                // Purchases with VAT (11-col source)
-                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, empty, empty, Local, Rate]
+                // Purchases with VAT (11-col source; credit notes add J/K)
+                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, CN invoice, CN date, Local, Rate]
                 vatAmount = round(taxableAmount * (section === 'F' ? 0.16 : 0.08), 4);
                 const supplierPin = (row[1] || '').trim();
                 values = [
@@ -374,16 +407,16 @@ function mapSectionRows(params: {
                     '',
                     formatXmlNumber(taxableAmount, 4),
                     formatXmlNumber(vatAmount, 4),
-                    '',
-                    '',
+                    cnInvoice,
+                    cnDate,
                     (row[0] || '').trim(),
                     section === 'F' ? 'GNRL' : 'OTHR',
                 ];
                 break;
             }
             case 'H': {
-                // Zero-rated purchases (9-col source)
-                // Output: 11 cols [Local, PIN, Name, Date, Invoice, empty, Desc, empty, Amount, Local, ZERO]
+                // Zero-rated purchases (9-col source; credit notes add J/K)
+                // Output: 13 cols [Local, PIN, Name, Date, Invoice, empty, Desc, empty, Amount, CN invoice, CN date, Local, ZERO]
                 const supplierPin = (row[1] || '').trim();
                 values = [
                     (row[0] || '').trim(),
@@ -395,14 +428,16 @@ function mapSectionRows(params: {
                     (row[6] || '').trim(),
                     '',
                     formatXmlNumber(taxableAmount, 4),
+                    cnInvoice,
+                    cnDate,
                     (row[0] || '').trim(),
                     'ZERO',
                 ];
                 break;
             }
             case 'I': {
-                // Exempt purchases (8-col source)
-                // Output: 10 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, Local, EXEMPT]
+                // Exempt purchases (8-col source; credit notes add J/K)
+                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, CN invoice, CN date, Local, EXEMPT]
                 const supplierPin = (row[1] || '').trim();
                 values = [
                     (row[0] || '').trim(),
@@ -413,13 +448,15 @@ function mapSectionRows(params: {
                     (row[5] || '').trim(),
                     '',
                     formatXmlNumber(taxableAmount, 4),
+                    cnInvoice,
+                    cnDate,
                     (row[0] || '').trim(),
                     'EXEMPT',
                 ];
                 break;
             }
             case 'J': {
-                // Imported services (assume same 11-col source as F)
+                // Imported services (assume same 11-col source as F; credit notes add J/K)
                 vatAmount = round(taxableAmount * 0.16, 4);
                 const supplierPin = (row[1] || '').trim();
                 values = [
@@ -432,8 +469,8 @@ function mapSectionRows(params: {
                     '',
                     formatXmlNumber(taxableAmount, 4),
                     formatXmlNumber(vatAmount, 4),
-                    '',
-                    '',
+                    cnInvoice,
+                    cnDate,
                     (row[0] || '').trim(),
                     'IMPT',
                 ];
@@ -701,6 +738,81 @@ async function copyArtifactToClientWorkspace(sourcePath: string, clientName: str
     }
 }
 
+async function buildNoTransactionVatArtifacts(
+    params: PrepareVatReturnParams,
+    generatedDir: string,
+    workingDir: string,
+): Promise<PreparedVatReturnArtifacts> {
+    const zeroTotals = { totalBase: 0, totalVat: 0 };
+    const namedValues = buildNamedValues({
+        taxpayerPin: params.taxpayerPin,
+        periodFrom: params.periodFrom,
+        periodTo: params.periodTo,
+        previousCredit: params.previousCredit,
+        bWithPin: zeroTotals,
+        bWithoutPin: zeroTotals,
+        cWithPin: zeroTotals,
+        cWithoutPin: zeroTotals,
+        dWithPin: zeroTotals,
+        dWithoutPin: zeroTotals,
+        eWithPin: zeroTotals,
+        eWithoutPin: zeroTotals,
+        fPurchases: zeroTotals,
+        gPurchases: zeroTotals,
+        hPurchases: zeroTotals,
+        iPurchases: zeroTotals,
+        jPurchases: zeroTotals,
+    });
+
+    const vatXmlFileName = `${formatArtifactTimestamp(new Date())}_${params.taxpayerPin.toUpperCase()}_VAT.xml`;
+    const vatXmlPath = path.join(generatedDir, vatXmlFileName);
+    await fs.writeFile(vatXmlPath, buildVatXml(namedValues), 'utf8');
+
+    const finalZipFileName = `${formatArtifactTimestamp(new Date())}_${params.taxpayerPin.toUpperCase()}_VAT.zip`;
+    const finalZipPath = path.join(workingDir, finalZipFileName);
+    createVatUploadZip(finalZipPath, [{ path: vatXmlPath, name: vatXmlFileName }]);
+
+    const sourcePackageArtifact = await copyArtifactToClientWorkspace(params.sourceZipPath, params.clientName);
+    const generatedZipArtifact = await copyArtifactToClientWorkspace(finalZipPath, params.clientName, finalZipFileName);
+
+    const netVatBalance = round(0 - params.previousCredit, 2);
+    const resultSummary: PreparedVatReturnSummary = {
+        inputVat: 0,
+        outputVat: 0,
+        previousCredit: round(params.previousCredit, 2),
+        withholdingAmount: 0,
+        payableVat: 0,
+        netVatBalance,
+        sales: [
+            { label: 'Taxable Sales (General Rate)', base: 0, vat: 0, rate: 0.16 },
+            { label: 'Taxable Sales (Other Rate)', base: 0, vat: 0, rate: 0.08 },
+            { label: 'Sales (Zero Rated)', base: 0, vat: 0, rate: 0.00 },
+            { label: 'Sales (Exempt)', base: 0, vat: 0, rate: 0.00 },
+        ],
+        purchases: [
+            { label: 'Taxable Purchases (General Rate)', base: 0, vat: 0, rate: 0.16 },
+            { label: 'Taxable Purchases (Other Rate)', base: 0, vat: 0, rate: 0.08 },
+            { label: 'Purchases (Zero Rated)', base: 0, vat: 0, rate: 0.00 },
+            { label: 'Exempt Purchases', base: 0, vat: 0, rate: 0.00 },
+            { label: 'Imported Services', base: 0, vat: 0, rate: 0.16 },
+        ],
+    };
+
+    return {
+        generatedZipPath: generatedZipArtifact.path,
+        generatedZipUrl: generatedZipArtifact.url,
+        generatedZipLabel: generatedZipArtifact.label,
+        sourcePackagePath: sourcePackageArtifact.path,
+        sourcePackageUrl: sourcePackageArtifact.url,
+        sourcePackageLabel: sourcePackageArtifact.label,
+        summary: resultSummary,
+        vatSummary: resultSummary,
+        namedValues,
+        generatedFiles: [vatXmlPath],
+        autoPopulationSucceeded: true,
+    };
+}
+
 export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams): Promise<PreparedVatReturnArtifacts> {
     if (!fsSync.existsSync(VAT_TEMPLATE_PATH)) {
         throw new Error(`VAT workbook template not found: ${VAT_TEMPLATE_PATH}`);
@@ -715,7 +827,14 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     await ensureDirectory(extractedDir);
     await ensureDirectory(generatedDir);
 
-    const nestedCsvDir = await extractVatPackage(params.sourceZipPath, extractedDir);
+    const extractionResult = await extractVatPackage(params.sourceZipPath, extractedDir);
+
+    // ── No-transaction path: KRA returned only an .xls workbook with no csv.zip ─
+    if (extractionResult.kind === 'xls-only') {
+        return buildNoTransactionVatArtifacts(params, generatedDir, workingDir);
+    }
+
+    const nestedCsvDir = extractionResult.nestedCsvDir;
     const discoveredSections = await discoverVatSections(nestedCsvDir);
 
     // ── Helper: read all files for a section key, returning per-subsection rows ─
@@ -739,7 +858,16 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
             ? await readSectionFiles('D1')
             : { withPin: [], withoutPin: [] };
     const eSource = await readSectionFiles('E');
-    const fSource = discoveredSections['F']?.length > 0 ? await readCsvRows(discoveredSections['F'][0]) : [];
+    // Section F may be split into multiple CSVs by KRA:
+    //   - SEC_F_WITH_VAT_PIN1.CSV (main general-rated purchases)
+    //   - SEC_F_Digital_Supply1.CSV (digital supply purchases)
+    //   - SEC_F_WITHOUT_PIN_AND_NON-VAT_PIN1.CSV (must be ignored)
+    // Combine the first two into the generated F CSV; explicitly drop the third.
+    const fSource: CsvRow[] = [];
+    const fFiles = (discoveredSections['F'] || []).filter((f) => !f.match(/WITHOUT_PIN_AND_NON-VAT_PIN/i));
+    for (const fFile of fFiles) {
+        fSource.push(...(await readCsvRows(fFile)));
+    }
     const gSource = discoveredSections['G']?.length > 0 ? await readCsvRows(discoveredSections['G'][0]) : [];
     const hSource = discoveredSections['H']?.length > 0 ? await readCsvRows(discoveredSections['H'][0]) : [];
     const iSource = discoveredSections['I']?.length > 0 ? await readCsvRows(discoveredSections['I'][0]) : [];

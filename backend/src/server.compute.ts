@@ -7,13 +7,13 @@
  */
 
 import dotenv from 'dotenv';
+import express, { Request, Response } from 'express';
 import path from 'path';
 
 // Load env vars BEFORE any module that reads process.env at import time
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 import 'express-async-errors';
-import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import { logger } from './logger';
@@ -59,6 +59,7 @@ import workScheduleFirestoreRoutes from './api/work-schedules.firestore';
 import holidaysFirestoreRoutes from './api/holidays.firestore';
 import portalFirestoreRoutes from './api/portal.firestore';
 import subscriptionRoutes from './api/subscriptions.firestore';
+import webhooksRoutes from './api/webhooks.firestore';
 import pinoHttp from 'pino-http';
 import { verifyAuth } from './middleware/verifyAuth';
 import { serveReceipt } from './middleware/receipts';
@@ -93,8 +94,24 @@ const filingLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+// ─── Public Webhooks ──────────────────────────────────────────────────────────
+// These routes need the raw request body for signature verification, so they are
+// mounted before the global JSON parser.
+
+app.use(
+    '/api/webhooks/resend',
+    express.raw({
+        type: 'application/json',
+        limit: '1mb',
+        verify: (req: Request, _res: Response, buf: Buffer) => {
+            (req as any).rawBody = buf.toString('utf8');
+        },
+    }),
+    webhooksRoutes
+);
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
+
 app.use(express.json({ limit: '5mb' }));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

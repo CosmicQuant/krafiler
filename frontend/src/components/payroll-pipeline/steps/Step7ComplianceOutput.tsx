@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import {
     RefreshCw,
     AlertCircle,
@@ -12,12 +12,14 @@ import {
     Search,
     ChevronDown,
     ChevronUp,
+    ChevronRight,
     Play,
     Info,
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
 import { downloadPdf } from '../../../utils/downloadPdf';
+import { EmailEventTimeline, EmailEvent } from '../../email/EmailEventTimeline';
 
 /* ─── Types ─── */
 
@@ -38,7 +40,7 @@ interface ComplianceResult {
 }
 
 interface EmailHistoryItem {
-    id: number;
+    id: string;
     employeeName: string;
     emailAddress: string;
     documentType: string;
@@ -176,6 +178,9 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
     const [emailLoading, setEmailLoading] = useState(false);
     const [sendingEmail, setSendingEmail] = useState(false);
     const [emailResult, setEmailResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+    const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
+    const [emailEvents, setEmailEvents] = useState<Record<string, EmailEvent[]>>({});
+    const [loadingEmailEvents, setLoadingEmailEvents] = useState<Record<string, boolean>>({});
 
     const fetchEmailHistory = useCallback(async () => {
         setEmailLoading(true);
@@ -192,6 +197,31 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
     useEffect(() => {
         fetchEmailHistory();
     }, [fetchEmailHistory]);
+
+    const fetchEmailEvents = useCallback(async (emailHistoryId: string) => {
+        if (emailEvents[emailHistoryId] || loadingEmailEvents[emailHistoryId]) return;
+        setLoadingEmailEvents((prev) => ({ ...prev, [emailHistoryId]: true }));
+        try {
+            const res = await apiFetch(`/clients/${clientId}/email/history/${emailHistoryId}/events`);
+            if (res.ok) {
+                const events = await res.json();
+                setEmailEvents((prev) => ({ ...prev, [emailHistoryId]: events }));
+            }
+        } catch {
+            setEmailEvents((prev) => ({ ...prev, [emailHistoryId]: [] }));
+        } finally {
+            setLoadingEmailEvents((prev) => ({ ...prev, [emailHistoryId]: false }));
+        }
+    }, [clientId, emailEvents, loadingEmailEvents]);
+
+    const toggleEmailEvents = (historyId: string) => {
+        if (expandedEmailId === historyId) {
+            setExpandedEmailId(null);
+        } else {
+            setExpandedEmailId(historyId);
+            void fetchEmailEvents(historyId);
+        }
+    };
 
     const handleSendPayslips = async () => {
         setSendingEmail(true);
@@ -624,35 +654,74 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                                     <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Doc</th>
                                     <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Status</th>
                                     <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Sent</th>
+                                    <th className="px-3 py-2 font-semibold uppercase tracking-wider text-slate-500">Events</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
-                                {emailHistory.map((h) => (
-                                    <tr key={h.id} className="hover:bg-slate-50/50 transition">
-                                        <td className="px-3 py-2 font-medium text-slate-900">{h.employeeName}</td>
-                                        <td className="px-3 py-2 text-slate-700">{h.emailAddress}</td>
-                                        <td className="px-3 py-2">
-                                            <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 uppercase">
-                                                {h.documentType}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span
-                                                className={cn(
-                                                    'inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                                                    h.status === 'sent'
-                                                        ? 'bg-emerald-50 text-emerald-700'
-                                                        : 'bg-rose-50 text-rose-700'
-                                                )}
-                                            >
-                                                {h.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2 text-slate-500">
-                                            {h.sentAt ? new Date(h.sentAt).toLocaleString() : '-'}
-                                        </td>
-                                    </tr>
-                                ))}
+                                {emailHistory.map((h) => {
+                                    const isExpanded = expandedEmailId === h.id;
+                                    return (
+                                        <Fragment key={h.id}>
+                                            <tr className="hover:bg-slate-50/50 transition">
+                                                <td className="px-3 py-2 font-medium text-slate-900">{h.employeeName}</td>
+                                                <td className="px-3 py-2 text-slate-700">{h.emailAddress}</td>
+                                                <td className="px-3 py-2">
+                                                    <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 uppercase">
+                                                        {h.documentType}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <span
+                                                        className={cn(
+                                                            'inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize',
+                                                            h.status === 'delivered' || h.status === 'opened' || h.status === 'clicked'
+                                                                ? 'bg-emerald-50 text-emerald-700'
+                                                                : h.status === 'sent'
+                                                                ? 'bg-blue-50 text-blue-700'
+                                                                : h.status === 'failed' || h.status === 'bounced'
+                                                                ? 'bg-rose-50 text-rose-700'
+                                                                : 'bg-amber-50 text-amber-700'
+                                                        )}
+                                                    >
+                                                        {h.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-slate-500">
+                                                    {h.sentAt ? new Date(h.sentAt).toLocaleString() : '-'}
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <button
+                                                        onClick={() => toggleEmailEvents(h.id)}
+                                                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
+                                                    >
+                                                        {isExpanded ? (
+                                                            <ChevronDown className="h-3 w-3" />
+                                                        ) : (
+                                                            <ChevronRight className="h-3 w-3" />
+                                                        )}
+                                                        {isExpanded ? 'Hide' : 'View'}
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            {isExpanded && (
+                                                <tr className="bg-slate-50/50">
+                                                    <td colSpan={6} className="px-3 py-3">
+                                                        {loadingEmailEvents[h.id] ? (
+                                                            <div className="flex items-center gap-2 py-3 text-xs text-slate-500">
+                                                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                                                Loading events...
+                                                            </div>
+                                                        ) : (
+                                                            <EmailEventTimeline
+                                                                events={emailEvents[h.id] || []}
+                                                            />
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>

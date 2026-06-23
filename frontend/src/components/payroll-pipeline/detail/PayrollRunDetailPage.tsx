@@ -102,7 +102,15 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
 
     useEffect(() => {
         fetchEntries();
-    }, [fetchEntries]);
+    }, [fetchEntries, refreshToken]);
+
+    // Keep the open drawer in sync when entries are refreshed/regenerated.
+    useEffect(() => {
+        if (selectedEntry && entries.length > 0) {
+            const updated = entries.find((e) => e.id === selectedEntry.id);
+            if (updated) setSelectedEntry(updated);
+        }
+    }, [entries, selectedEntry]);
 
     const handleCreateRun = async () => {
         try {
@@ -239,6 +247,7 @@ export function PayrollRunDetailPage({ client }: PayrollRunDetailPageProps) {
                         clientId={client.id}
                         runId={currentRun?.id}
                         period={period}
+                        refreshToken={refreshToken}
                         onSelectEntry={handleSelectEntry}
                         onRefresh={() => setRefreshToken((t) => t + 1)}
                         onAddEmployee={() => { setEditingEmployee(null); setEmployeeModalOpen(true); }}

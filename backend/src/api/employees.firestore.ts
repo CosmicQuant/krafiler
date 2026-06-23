@@ -516,7 +516,17 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         // computed (post-deduction) amount.
 
         const grossPay = payrollEntry?.grossPay ?? (parseFloat(String(emp['Total Gross Pay (Ksh) (H)'] || '0')) || 0);
-        const totalCashPay = payrollEntry?.basicPay ?? (parseFloat(String(emp['Total Cash Pay (A)'] || '0')) || 0);
+        const absentDays = payrollEntry?.absentDays || 0;
+        const absentDedAmount = payrollEntry?.absentDedAmount || 0;
+        const unpaidLeaveDays = payrollEntry?.unpaidLeaveDays || 0;
+        const unpaidLeaveDedAmount = payrollEntry?.unpaidLeaveDedAmount || 0;
+        const lateDays = payrollEntry?.lateDays || 0;
+        const lateDedAmount = payrollEntry?.lateDedAmount || 0;
+        // Show the original/contractual basic pay on the payslip. Attendance deductions are listed separately.
+        const computedCashPay = payrollEntry?.basicPay ?? (parseFloat(String(emp['Total Cash Pay (A)'] || '0')) || 0);
+        const contractualBasicPay = payrollEntry?.originalBasicPay
+            || (computedCashPay + absentDedAmount + unpaidLeaveDedAmount + lateDedAmount);
+        const totalCashPay = contractualBasicPay;
         const carBenefit = payrollEntry?.carBenefit ?? (parseFloat(String(emp['Value of Car Benefit (B)'] || '0')) || 0);
         const meals = payrollEntry?.mealsBenefit ?? (parseFloat(String(emp['Value of Meals (C)'] || '0')) || 0);
         const nonCash = payrollEntry?.nonCashBenefits ?? (parseFloat(String(emp['Non Cash Benefits (D)'] || '0')) || 0);
@@ -535,14 +545,10 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const payeTax = payrollEntry?.payeTax ?? (parseFloat(String(emp['PAYE Tax (Ksh) (R)'] || '0')) || 0);
         const loanDeduction = payrollEntry?.loanDeduction || 0;
         const otherDeductions = payrollEntry?.otherDeductions || 0;
-        const absentDays = payrollEntry?.absentDays || 0;
-        const absentDedAmount = payrollEntry?.absentDedAmount || 0;
-        const unpaidLeaveDays = payrollEntry?.unpaidLeaveDays || 0;
-        const unpaidLeaveDedAmount = payrollEntry?.unpaidLeaveDedAmount || 0;
-        const lateDays = payrollEntry?.lateDays || 0;
-        const lateDedAmount = payrollEntry?.lateDedAmount || 0;
 
-        const totalDeductions = shaDed + nssfDed + ahl + payeTax + otherPension + postRetMedical + loanDeduction + otherDeductions + absentDedAmount + unpaidLeaveDedAmount + lateDedAmount;
+        const attendanceDeductionsTotal = absentDedAmount + unpaidLeaveDedAmount + lateDedAmount;
+        const statutoryDeductionsTotal = shaDed + nssfDed + ahl + payeTax + otherPension + postRetMedical + loanDeduction + otherDeductions;
+        const totalDeductions = statutoryDeductionsTotal;
         const netPay = payrollEntry?.netPay ?? (grossPay - totalDeductions);
 
         // Resolve logo (GCS or local)
@@ -568,7 +574,8 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
 
         if (logoLocalPath) {
             try {
-                doc.image(logoLocalPath, leftMargin + pageWidth - 80, headerY, { width: 70 });
+                // Fill the available header height (60pt) with no top padding; maintain aspect ratio within the right-hand box.
+                doc.image(logoLocalPath, leftMargin + pageWidth - 80, headerY, { fit: [80, 60], align: 'right' });
             } catch (e: any) {
                 console.warn('Payslip logo error:', e.message);
             }
@@ -628,6 +635,26 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
             y += 12;
         });
 
+        // ── Attendance Deductions (reduce gross pay) ──
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
+        y += 6;
+        doc.text('Attendance Deductions', col1X, y);
+        doc.text('Amount (KES)', colValX - 60, y);
+        y += 16;
+
+        const attendanceDeductions: [string, number][] = [
+            [`Absenteeism (${absentDays} days)`, absentDedAmount],
+            [`Unpaid Leave (${unpaidLeaveDays} days)`, unpaidLeaveDedAmount],
+            [`Lateness (${lateDays} hrs)`, lateDedAmount],
+        ];
+
+        doc.fontSize(8).font('Helvetica').fillColor('#333');
+        attendanceDeductions.forEach(([label, amount]) => {
+            doc.text(label as string, col1X, y);
+            doc.text(formatMoney(amount as number), colValX, y, { align: 'right' });
+            y += 12;
+        });
+
         doc.rect(col1X, y, pageWidth, 1).fill('#eee');
         y += 6;
         doc.font('Helvetica-Bold').fillColor('#000');
@@ -635,7 +662,7 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         doc.text(formatMoney(grossPay), colValX, y, { align: 'right' });
         y += 18;
 
-        // ── Deductions Table ──
+        // ── Statutory & Other Deductions ──
         doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
         doc.text('Deductions', col1X, y);
         doc.text('Amount (KES)', colValX - 60, y);
@@ -648,9 +675,6 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
             ['Housing Levy (1.5%)', ahl],
             ['Other Pension', otherPension],
             ['Post-Retirement Medical', postRetMedical],
-            [`Absenteeism (${absentDays} days)`, absentDedAmount],
-            [`Unpaid Leave (${unpaidLeaveDays} days)`, unpaidLeaveDedAmount],
-            [`Lateness (${lateDays} hrs)`, lateDedAmount],
         ];
         if (loanDeduction > 0) deductions.push(['Loan Deduction', loanDeduction]);
         if (otherDeductions > 0) deductions.push(['Other Deductions', otherDeductions]);
@@ -724,7 +748,8 @@ function computeMonthP9Values(m: P9MonthData): number[] {
     const g = m.shaDeduction || 0;
     const h = m.postRetMedical || 0;
     const i = m.mortgageInterest || 0;
-    const j = m.totalDeductions || 0;
+    // Column J = E3 + F + G + H + I only (statutory/benefit deductions, excluding PAYE/loan/other)
+    const j = e3 + f + g + h + i;
     const k = m.taxablePay || 0;
     const mRelief = 2400;
     const n = m.insuranceRelief || 0;

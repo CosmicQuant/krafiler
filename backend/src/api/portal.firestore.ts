@@ -396,7 +396,8 @@ router.get('/payslip', async (req: PortalRequest, res) => {
 
         if (logoLocalPath) {
             try {
-                doc.image(logoLocalPath, leftX + pageContentW - 70, headerY, { width: 60 });
+                // Fill the available header height with no top padding; maintain aspect ratio within the right-hand box.
+                doc.image(logoLocalPath, leftX + pageContentW - 70, headerY, { fit: [70, 60], align: 'right' });
             } catch { /* ignore */ }
         }
 
@@ -413,19 +414,19 @@ router.get('/payslip', async (req: PortalRequest, res) => {
         doc.moveDown(0.8);
 
         const e = entry as any;
-        const basicPay = e.basicPay || (emp as any).basicPay || 0;
+        const computedBasicPay = e.basicPay || (emp as any).basicPay || 0;
+        const absentDays = e.absentDays || 0;
+        const absentDeduction = e.absentDedAmount || 0;
+        const unpaidLeaveDays = e.unpaidLeaveDays || 0;
+        const unpaidLeaveDeduction = e.unpaidLeaveDedAmount || 0;
+        const lateDays = e.lateDays || 0;
+        const lateDeduction = e.lateDedAmount || 0;
+        // Show the original/contractual basic pay on the payslip. Attendance deductions are listed separately.
+        const basicPay = e.originalBasicPay || (computedBasicPay + absentDeduction + unpaidLeaveDeduction + lateDeduction);
         const benefits = e.benefits || 0;
         const overtimePay = e.overtimePay || 0;
         const bonusPay = (e.bonusPay || 0) + (e.nonTaxableBonus || 0);
-        const grossPay = e.grossPay || (basicPay + benefits + overtimePay + bonusPay);
-        const unpaidLeaveDays = e.unpaidLeaveDays || 0;
-        const unpaidLeaveDeduction = unpaidLeaveDays > 0 ? Math.round((basicPay / 30) * unpaidLeaveDays * 100) / 100 : 0;
-        const absentDays = e.absentDays || 0;
-        const lateDays = e.lateDays || 0;
-        const dailyRate = basicPay / 30;
-        const hourlyRate = dailyRate / 8;
-        const absentDeduction = absentDays * dailyRate;
-        const lateDeduction = lateDays * hourlyRate;
+        const grossPay = e.grossPay || (basicPay + benefits + overtimePay + bonusPay - absentDeduction - unpaidLeaveDeduction - lateDeduction);
         const loanDeduction = e.loanDeduction || 0;
         const shaDeduction = e.shaDeduction || Math.round(grossPay * 0.0275 * 100) / 100;
         const nssfDeduction = e.nssfDeduction || Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
@@ -455,6 +456,18 @@ router.get('/payslip', async (req: PortalRequest, res) => {
         if (overtimePay > 0) { doc.text('Overtime Pay', leftX, earnY); doc.text(overtimePay.toFixed(2), earningsAmountX, earnY); earnY += rowH; }
         if (bonusPay > 0) { doc.text('Bonus Pay', leftX, earnY); doc.text(bonusPay.toFixed(2), earningsAmountX, earnY); earnY += rowH; }
 
+        // Attendance deductions reduce gross pay
+        earnY += 4;
+        doc.font('Helvetica-Bold').text('Attendance Deductions', leftX, earnY);
+        earnY += rowH;
+        doc.font('Helvetica');
+        doc.text(`Unpaid Leave (${unpaidLeaveDays} days)`, leftX, earnY);
+        doc.text(unpaidLeaveDeduction.toFixed(2), earningsAmountX, earnY); earnY += rowH;
+        doc.text(`Absenteeism (${absentDays} days)`, leftX, earnY);
+        doc.text(absentDeduction.toFixed(2), earningsAmountX, earnY); earnY += rowH;
+        doc.text(`Lateness (${lateDays} hrs)`, leftX, earnY);
+        doc.text(lateDeduction.toFixed(2), earningsAmountX, earnY); earnY += rowH;
+
         earnY += 4;
         doc.rect(leftX, earnY, 200, 1).fill('#ddd');
         earnY += 6;
@@ -468,19 +481,13 @@ router.get('/payslip', async (req: PortalRequest, res) => {
         doc.text('NSSF', rightX, dedY); doc.text(nssfDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
         doc.text('AHL', rightX, dedY); doc.text(ahlDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
 
-        doc.text(`Unpaid Leave (${unpaidLeaveDays} days)`, rightX, dedY);
-        doc.text(unpaidLeaveDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
-        doc.text(`Absenteeism (${absentDays} days)`, rightX, dedY);
-        doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
-        doc.text(`Lateness (${lateDays} hrs)`, rightX, dedY);
-        doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
         if (loanDeduction > 0) { doc.text('Loan Deduction', rightX, dedY); doc.text(loanDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
         if (otherDeductions > 0) { doc.text('Other Deductions', rightX, dedY); doc.text(otherDeductions.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
 
         dedY += 4;
         doc.rect(rightX, dedY, 200, 1).fill('#ddd');
         dedY += 6;
-        const totalDed = shaDeduction + nssfDeduction + ahlDeduction + loanDeduction + otherDeductions + payeTax + unpaidLeaveDeduction + absentDeduction + lateDeduction;
+        const totalDed = shaDeduction + nssfDeduction + ahlDeduction + loanDeduction + otherDeductions + payeTax;
         doc.font('Helvetica-Bold').text('Total Deductions', rightX, dedY);
         doc.text(totalDed.toFixed(2), deductionsAmountX, dedY);
         dedY += rowH;
@@ -535,24 +542,24 @@ router.get('/p9', async (req: PortalRequest, res) => {
         const nssfDed = e.nssfDeduction || Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
         const ahl = e.ahlDeduction || Math.round(grossPay * 0.015 * 100) / 100;
         const payeTax = e.payeTax || 0;
-        const loanDed = e.loanDeduction || 0;
-        const otherDed = e.otherDeductions || 0;
-        const netPay = e.netPay || Math.max(0, grossPay - shaDed - nssfDed - ahl - loanDed - otherDed - payeTax);
         const personalRelief = 2400;
         const insuranceRelief = 0;
         const taxYear = new Date().getFullYear().toString();
         const monthNum = new Date().getMonth() + 1;
 
         const totalCashPay = basicPay || 0;
-        const carBenefit = (emp as any).carBenefit || 0;
-        const meals = (emp as any).mealsBenefit || 0;
-        const nonCash = (emp as any).nonCashBenefits || 0;
-        const housingBenefit = (emp as any).housingBenefit || 0;
-        const otherBenefits = (emp as any).otherBenefits || 0;
-        const otherPension = (emp as any).otherPension || 0;
-        const postRetMedical = (emp as any).postRetMedical || 0;
-        const mortgage = (emp as any).mortgageInterest || 0;
-        const taxablePay = e.taxablePay || (grossPay - (shaDed + nssfDed + ahl + otherPension + postRetMedical + mortgage));
+        const carBenefit = e.carBenefit || (emp as any).carBenefit || 0;
+        const meals = e.mealsBenefit || (emp as any).mealsBenefit || 0;
+        const nonCash = e.nonCashBenefits || (emp as any).nonCashBenefits || 0;
+        const housingBenefit = e.housingBenefit || (emp as any).housingBenefit || 0;
+        const otherBenefits = e.otherBenefits || (emp as any).otherBenefits || 0;
+        const otherPension = e.otherPension || (emp as any).otherPension || 0;
+        const postRetMedical = e.postRetMedical || (emp as any).postRetMedical || 0;
+        const mortgage = e.mortgageInterest || (emp as any).mortgageInterest || 0;
+        // Column J = E3 + F + G + H + I only (statutory/benefit deductions, excluding loan/other deductions)
+        const e3_lower = Math.min(totalCashPay * 0.30, (nssfDed || 0) + (otherPension || 0));
+        const totalDeductionsColJ = e3_lower + (ahl || 0) + (shaDed || 0) + (postRetMedical || 0) + (mortgage || 0);
+        const taxablePay = e.taxablePay || Math.max(0, grossPay - totalDeductionsColJ);
 
         const { resolveLogoPath } = await import('../lib/cloudStorage');
         const p9LogoPath = await resolveLogoPath(client as any, uid);
@@ -638,8 +645,6 @@ router.get('/p9', async (req: PortalRequest, res) => {
         const valueOfQuarters = housingBenefit || 0;
         const e1_30PerA = totalCashPay * 0.30;
         const e2_actual = (nssfDed || 0) + (otherPension || 0);
-        const e3_lower = Math.min(e1_30PerA, e2_actual);
-        const totalDeductionsColJ = e3_lower + (shaDed || 0) + (ahl || 0) + (otherPension || 0) + (postRetMedical || 0) + (mortgage || 0);
         const taxCharged = (payeTax || 0) + (personalRelief || 0) + (insuranceRelief || 0);
 
         const monthLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];

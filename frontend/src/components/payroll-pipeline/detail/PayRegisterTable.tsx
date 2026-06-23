@@ -48,12 +48,13 @@ interface PayRegisterTableProps {
   clientId: string;
   runId?: number;
   period?: string;
+  refreshToken?: number;
   onSelectEntry?: (entry: PayrollEntry) => void;
   onRefresh?: () => void;
   onAddEmployee?: () => void;
 }
 
-export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRefresh, onAddEmployee }: PayRegisterTableProps) {
+export function PayRegisterTable({ clientId, runId, period, refreshToken, onSelectEntry, onRefresh, onAddEmployee }: PayRegisterTableProps) {
   const [entries, setEntries] = useState<PayrollEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRef
 
   useEffect(() => {
     fetchEntries();
-  }, [fetchEntries]);
+  }, [fetchEntries, refreshToken]);
 
   const computeRow = useCallback((entry: PayrollEntry): PayrollEntry => {
     const preview = calculatePayrollPreview({

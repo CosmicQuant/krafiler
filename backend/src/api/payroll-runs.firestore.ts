@@ -65,17 +65,17 @@ async function generateEntriesForRun(
         .map((d: any) => ({ id: d.id, ...d.data() }))
         .filter((h: any) => h.date?.startsWith(`${yearStr}-`) || h.isRecurring) as any[];
 
-    // Fetch active loans
+    // Fetch active loans (filter remainingInstallments in memory to avoid composite index)
     const loansSnapshot = await adminDb
         .collection('loans')
         .where('ownerUid', '==', uid)
         .where('clientId', '==', clientId)
-        .where('remainingInstallments', '>', 0)
         .get();
     const loanMap = new Map<string, number>();
     const loanTypeMap = new Map<string, string>();
     for (const d of loansSnapshot.docs) {
         const ln = d.data() as any;
+        if ((ln.remainingInstallments || 0) <= 0) continue;
         const empId = String(ln.employeeId);
         if (!empId) continue;
         loanMap.set(empId, (loanMap.get(empId) || 0) + (ln.monthlyDeduction || 0));
@@ -252,13 +252,24 @@ async function generateEntriesForRun(
         }
     }
 
-    // Delete existing entries for this run (batched, 500 limit)
+    // Load existing entries so user overrides are preserved across regenerate.
     const existingEntriesSnapshot = await adminDb
         .collection('payrollEntries')
         .where('ownerUid', '==', uid)
         .where('clientId', '==', clientId)
         .where('payrollRunId', '==', runId)
         .get();
+    const overridesByEmployee = new Map<string, Record<string, number>>();
+    for (const d of existingEntriesSnapshot.docs) {
+        const e = d.data() as any;
+        if (e.overrides) {
+            try {
+                overridesByEmployee.set(String(e.employeeId), JSON.parse(e.overrides));
+            } catch { /* ignore */ }
+        }
+    }
+
+    // Delete existing entries for this run (batched, 500 limit)
     const DELETE_BATCH_SIZE = 500;
     for (let i = 0; i < existingEntriesSnapshot.docs.length; i += DELETE_BATCH_SIZE) {
         const deleteBatch = adminDb.batch();
@@ -291,6 +302,7 @@ async function generateEntriesForRun(
         const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, (run as any).period);
 
         const approval = approvalMap.get(String(emp.id));
+        const overrides = overridesByEmployee.get(emp.id) || {};
 
         const totalStdHours = approval?.totalStdHours ?? (totalStdHoursMap.get(emp.id) || 0);
         const otHours = approval?.overtimeHours ?? (otHoursMap.get(emp.id) || 0);
@@ -326,11 +338,13 @@ async function generateEntriesForRun(
         }
 
         const computedBasicPayFromApproval = approval?.computedBasicPay;
-        const adjustedBasicPay = computedBasicPayFromApproval !== undefined && computedBasicPayFromApproval !== null
-            ? roundMoney(computedBasicPayFromApproval)
-            : (empPayStructure === 'prorated'
-                ? Math.round((totalStdHours + holidayHours + paidLeaveHours) * hourlyRate * 100) / 100
-                : undefined);
+        const adjustedBasicPay = overrides.basicPay !== undefined
+            ? roundMoney(overrides.basicPay)
+            : (computedBasicPayFromApproval !== undefined && computedBasicPayFromApproval !== null
+                ? roundMoney(computedBasicPayFromApproval)
+                : (empPayStructure === 'prorated'
+                    ? Math.round((totalStdHours + holidayHours + paidLeaveHours) * hourlyRate * 100) / 100
+                    : undefined));
 
         const entry: any = computePayrollEntry(
             {
@@ -340,34 +354,39 @@ async function generateEntriesForRun(
                 payrollNumber: emp.payrollNumber,
                 basicPay: emp.basicPay,
                 basicPayOverride: adjustedBasicPay,
-                carBenefit: emp.carBenefit || 0,
-                mealsBenefit: emp.mealsBenefit || 0,
-                nonCashBenefits: emp.nonCashBenefits || 0,
-                housingBenefit: emp.housingBenefit || 0,
-                otherBenefits: emp.otherBenefits || 0,
+                carBenefit: overrides.carBenefit !== undefined ? overrides.carBenefit : (emp.carBenefit || 0),
+                mealsBenefit: overrides.mealsBenefit !== undefined ? overrides.mealsBenefit : (emp.mealsBenefit || 0),
+                nonCashBenefits: overrides.nonCashBenefits !== undefined ? overrides.nonCashBenefits : (emp.nonCashBenefits || 0),
+                housingBenefit: overrides.housingBenefit !== undefined ? overrides.housingBenefit : (emp.housingBenefit || 0),
+                otherBenefits: overrides.otherBenefits !== undefined ? overrides.otherBenefits : (emp.otherBenefits || 0),
                 dateJoined: emp.dateJoined,
                 dateLeft: emp.dateLeft,
                 employmentStatus: emp.employmentStatus,
-                loanDeduction: loanMap.get(emp.id) || 0,
+                loanDeduction: overrides.loanDeduction !== undefined ? overrides.loanDeduction : (loanMap.get(emp.id) || 0),
                 unpaidLeaveDays: empPayStructure === 'fixed' ? (leaveMap.get(emp.id) || 0) : 0,
                 payStructure: empPayStructure,
-                overtimePay: empPayStructure === 'fixed' ? overtimePay : 0,
-                attendanceAbsentDays: empPayStructure === 'fixed' ? absentCount : 0,
-                attendanceLateDays: empPayStructure === 'fixed' ? lateHrs : 0,
+                overtimePay: overrides.overtimePay !== undefined ? overrides.overtimePay : (empPayStructure === 'fixed' ? overtimePay : 0),
+                attendanceAbsentDays: empPayStructure === 'fixed' ? (overrides.absentDays !== undefined ? overrides.absentDays : absentCount) : 0,
+                attendanceLateDays: empPayStructure === 'fixed' ? (overrides.lateHours !== undefined ? overrides.lateHours : lateHrs) : 0,
                 pwd: emp.pwd || 'No',
-                otherPension: emp.otherPension || 0,
-                postRetMedical: emp.postRetMedical || 0,
-                mortgageInterest: emp.mortgageInterest || 0,
-                insuranceRelief: emp.insuranceRelief || 0,
-                bonusPay: emp.bonusPay || 0,
+                otherPension: overrides.otherPension !== undefined ? overrides.otherPension : (emp.otherPension || 0),
+                postRetMedical: overrides.postRetMedical !== undefined ? overrides.postRetMedical : (emp.postRetMedical || 0),
+                mortgageInterest: overrides.mortgageInterest !== undefined ? overrides.mortgageInterest : (emp.mortgageInterest || 0),
+                insuranceRelief: overrides.insuranceRelief !== undefined ? overrides.insuranceRelief : (emp.insuranceRelief || 0),
+                bonusPay: overrides.bonusPay !== undefined ? overrides.bonusPay : (emp.bonusPay || 0),
                 standardCheckIn: emp.standardCheckIn || '08:00',
                 standardCheckOut: emp.standardCheckOut || '17:00',
             },
             (run as any).period,
             prorate,
             scheduleConfig,
-            holidays,
-            adjustmentsByEmployee.get(emp.id) || [],
+            holidays as any,
+            [
+                ...(adjustmentsByEmployee.get(emp.id) || []),
+                ...(overrides.otherDeductions !== undefined && overrides.otherDeductions > 0
+                    ? [{ type: 'deduction' as const, amount: overrides.otherDeductions, isStatutory: false }]
+                    : []),
+            ],
         );
         entry.totalStdHours = Math.round(totalStdHours * 100) / 100;
         entry.holidayHours = Math.round(holidayHours * 100) / 100;
@@ -433,6 +452,9 @@ async function generateEntriesForRun(
         entry.lateDedAmount = approval?.lateDedAmount ?? (Math.round(lateHrs * hourlyRate * 100) / 100);
         entry.unpaidLeaveHours = Math.round(unpaidLeaveHours * 100) / 100;
         entry.unpaidLeaveDedAmount = approval?.unpaidLeaveDedAmount ?? (Math.round(unpaidLeaveHours * hourlyRate * 100) / 100);
+        // Persist any user overrides so they survive future regenerations.
+        const empOverrides = overridesByEmployee.get(emp.id);
+        entry.overrides = empOverrides ? JSON.stringify(empOverrides) : null;
         return entry;
     });
 
@@ -493,6 +515,7 @@ async function generateEntriesForRun(
                 lateDedAmount: entry.lateDedAmount || 0,
                 unpaidLeaveHours: entry.unpaidLeaveHours || 0,
                 unpaidLeaveDedAmount: entry.unpaidLeaveDedAmount || 0,
+                overrides: entry.overrides || null,
                 status: 'active',
                 lockedAt: null,
                 createdAt: now,
@@ -1021,7 +1044,8 @@ function generatePayslipPDF(doc: any, entry: any, client: any, logoPath?: string
 
     if (logoPath) {
         try {
-            doc.image(logoPath, amtX - 20, headerY, { width: 70 });
+            // Fill the available header height (60pt) with no top padding; maintain aspect ratio within the right-hand box.
+            doc.image(logoPath, amtX - 20, headerY, { fit: [80, 60], align: 'right', valign: 'top' });
         } catch { /* ignore */ }
     }
 
@@ -2346,13 +2370,13 @@ router.post('/:clientId/payroll-runs/:id/finalize', async (req: AuthenticatedReq
                 .where('ownerUid', '==', uid)
                 .where('clientId', '==', clientId)
                 .where('employeeId', '==', entry.employeeId)
-                .where('remainingInstallments', '>', 0)
                 .limit(1)
                 .get();
 
             if (loansSnapshot.empty) continue;
             const loanDoc = loansSnapshot.docs[0];
             const loan = loanDoc.data() as any;
+            if ((loan.remainingInstallments || 0) <= 0) continue;
 
             try {
                 await adminDb.collection('loanTransactions').add({

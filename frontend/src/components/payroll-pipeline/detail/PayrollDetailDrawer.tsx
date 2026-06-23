@@ -127,10 +127,17 @@ function isOnLeave(employeeId: number, dateStr: string, leaveRequests: LeaveRequ
 export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, onSaved }: PayrollDetailDrawerProps) {
   const [activeTab, setActiveTab] = useState<'attendance' | 'payroll' | 'payslip' | 'employee'>('payroll');
   const [showFullGrid, setShowFullGrid] = useState(false);
+  const [gridApproved, setGridApproved] = useState(false);
+  const [gridApproving, setGridApproving] = useState(false);
+  const gridApproveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const [draft, setDraft] = useState<Partial<PayrollEntry>>({ ...entry });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft({ ...entry });
+  }, [entry]);
 
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [loans, setLoans] = useState<any[]>([]);
@@ -248,6 +255,32 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
       setError('Network error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleGridRegisterApprove = useCallback((fn: () => Promise<boolean>) => {
+    gridApproveRef.current = fn;
+  }, []);
+
+  const handleGridApproveClick = async () => {
+    if (!gridApproveRef.current) return;
+    setGridApproving(true);
+    try {
+      const success = await gridApproveRef.current();
+      if (success) {
+        setGridApproved(true);
+        // Auto-regenerate payroll run entries so the pay register updates immediately.
+        if (runId) {
+          try {
+            await apiFetch(`/clients/${clientId}/payroll-runs/${runId}/generate`, { method: 'POST' });
+          } catch {
+            /* ignore generation errors; user can regenerate manually */
+          }
+        }
+        onSaved();
+      }
+    } finally {
+      setGridApproving(false);
     }
   };
 
@@ -791,15 +824,36 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
           <div className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-slate-900">Attendance Calendar — {entry.employeeName}</h3>
-              <button onClick={() => setShowFullGrid(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition">
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {!gridApproved ? (
+                  <button
+                    onClick={handleGridApproveClick}
+                    disabled={gridApproving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition disabled:opacity-40"
+                  >
+                    {gridApproving ? (
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
+                    Approve Attendance
+                  </button>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 border border-emerald-200">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Approved
+                  </span>
+                )}
+                <button onClick={() => setShowFullGrid(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
             <AttendanceCalendarGrid
               clientId={clientId}
               period={period}
               onPeriodChange={() => {}}
-              onApproved={() => {}}
+              onApproved={() => { setGridApproved(true); onSaved(); }}
+              onRegisterApprove={handleGridRegisterApprove}
             />
           </div>
         </div>

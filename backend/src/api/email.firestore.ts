@@ -1,12 +1,62 @@
 import { Router } from 'express';
 import { adminDb } from '../lib/firebaseAdmin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { sendPayslipEmail, sendP9Email, verifyConnection } from '../services/emailService';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
 
 const router = Router();
 
 const EMAIL_HISTORY_COLLECTION = 'emailHistory';
+
+interface CreateHistoryInput {
+    ownerUid: string;
+    clientId: string;
+    employeeId: string;
+    employeeName: string;
+    kraPin: string;
+    emailAddress: string;
+    documentType: 'payslip' | 'p9';
+    periodLabel?: string;
+    taxYear?: string;
+}
+
+function createEmailHistoryDoc(input: CreateHistoryInput) {
+    const ref = adminDb.collection(EMAIL_HISTORY_COLLECTION).doc();
+    const now = new Date().toISOString();
+    const payload = {
+        ownerUid: input.ownerUid,
+        clientId: input.clientId,
+        employeeId: input.employeeId,
+        employeeName: input.employeeName,
+        kraPin: input.kraPin,
+        emailAddress: input.emailAddress,
+        documentType: input.documentType,
+        status: 'pending',
+        provider: null,
+        resendEmailId: null,
+        errorMessage: null,
+        periodLabel: input.periodLabel || null,
+        taxYear: input.taxYear || null,
+        sentAt: now,
+        createdAt: now,
+        updatedAt: now,
+    };
+    return { ref, payload };
+}
+
+async function updateEmailHistoryStatus(
+    historyId: string,
+    update: Record<string, any>,
+) {
+    try {
+        await adminDb.collection(EMAIL_HISTORY_COLLECTION).doc(historyId).update({
+            ...update,
+            updatedAt: new Date().toISOString(),
+        });
+    } catch (err) {
+        console.error(`[EmailHistory] Failed to update ${historyId}:`, err);
+    }
+}
 
 // GET /api/clients/:clientId/email/history
 router.get('/:clientId/email/history', async (req: AuthenticatedRequest, res) => {
@@ -25,6 +75,37 @@ router.get('/:clientId/email/history', async (req: AuthenticatedRequest, res) =>
         res.json(snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
     } catch (err) {
         console.error('Error fetching email history from Firestore:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// GET /api/clients/:clientId/email/history/:emailHistoryId/events
+router.get('/:clientId/email/history/:emailHistoryId/events', async (req: AuthenticatedRequest, res) => {
+    try {
+        const uid = req.user!.uid;
+        const { clientId, emailHistoryId } = req.params;
+
+        const historyDoc = await adminDb.collection(EMAIL_HISTORY_COLLECTION).doc(emailHistoryId).get();
+        if (!historyDoc.exists) {
+            return res.status(404).json({ message: 'Email history not found' });
+        }
+
+        const historyData = historyDoc.data() as any;
+        if (historyData.ownerUid !== uid || historyData.clientId !== clientId) {
+            return res.status(403).json({ message: 'Unauthorized' });
+        }
+
+        const eventsSnapshot = await adminDb
+            .collection(EMAIL_HISTORY_COLLECTION)
+            .doc(emailHistoryId)
+            .collection('events')
+            .orderBy('createdAt', 'desc')
+            .limit(100)
+            .get();
+
+        res.json(eventsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+        console.error('Error fetching email events from Firestore:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 });
@@ -68,8 +149,7 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
 
         const companyName = payrollData.preamble?.companyName || 'Company';
 
-        const now = new Date().toISOString();
-        const results: { kraPin: string; employeeName: string; success: boolean; error?: string }[] = [];
+        const results: { kraPin: string; employeeName: string; success: boolean; error?: string; historyId?: string }[] = [];
 
         for (const emp of employees) {
             const empData = emp as any;
@@ -100,9 +180,7 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
             const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
             const filename = `Payslip_${empData.employeeName.replace(/\s+/g, '_')}_${periodLabel.replace(/\//g, '_')}.pdf`;
 
-            const emailResult = await sendPayslipEmail(empData.email, empData.employeeName, companyName, periodLabel, pdfBuffer, filename);
-
-            await adminDb.collection(EMAIL_HISTORY_COLLECTION).add({
+            const { ref: historyRef, payload: historyPayload } = createEmailHistoryDoc({
                 ownerUid: uid,
                 clientId,
                 employeeId: empData.id,
@@ -110,9 +188,30 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
                 kraPin: empData.kraPin,
                 emailAddress: empData.email,
                 documentType: 'payslip',
+                periodLabel,
+            });
+
+            await historyRef.set(historyPayload);
+
+            const emailResult = await sendPayslipEmail(
+                empData.email,
+                empData.employeeName,
+                companyName,
+                periodLabel,
+                pdfBuffer,
+                filename,
+                {
+                    emailHistoryId: historyRef.id,
+                    clientId,
+                    documentType: 'payslip',
+                }
+            );
+
+            await updateEmailHistoryStatus(historyRef.id, {
                 status: emailResult.success ? 'sent' : 'failed',
+                provider: emailResult.provider || null,
+                resendEmailId: emailResult.messageId || null,
                 errorMessage: emailResult.error || null,
-                sentAt: now,
             });
 
             results.push({
@@ -120,6 +219,7 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
                 employeeName: empData.employeeName,
                 success: emailResult.success,
                 error: emailResult.error,
+                historyId: historyRef.id,
             });
         }
 
@@ -166,8 +266,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
         const payrollData = await payrollRes.json();
         const companyName = payrollData.preamble?.companyName || 'Company';
 
-        const now = new Date().toISOString();
-        const results: { kraPin: string; employeeName: string; success: boolean; error?: string }[] = [];
+        const results: { kraPin: string; employeeName: string; success: boolean; error?: string; historyId?: string }[] = [];
 
         for (const emp of employees) {
             const empData = emp as any;
@@ -189,9 +288,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
             const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
             const filename = `P9_${empData.employeeName.replace(/\s+/g, '_')}_${taxYear}.pdf`;
 
-            const emailResult = await sendP9Email(empData.email, empData.employeeName, companyName, taxYear, pdfBuffer, filename);
-
-            await adminDb.collection(EMAIL_HISTORY_COLLECTION).add({
+            const { ref: historyRef, payload: historyPayload } = createEmailHistoryDoc({
                 ownerUid: uid,
                 clientId,
                 employeeId: empData.id,
@@ -199,9 +296,30 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
                 kraPin: empData.kraPin,
                 emailAddress: empData.email,
                 documentType: 'p9',
+                taxYear,
+            });
+
+            await historyRef.set(historyPayload);
+
+            const emailResult = await sendP9Email(
+                empData.email,
+                empData.employeeName,
+                companyName,
+                taxYear,
+                pdfBuffer,
+                filename,
+                {
+                    emailHistoryId: historyRef.id,
+                    clientId,
+                    documentType: 'p9',
+                }
+            );
+
+            await updateEmailHistoryStatus(historyRef.id, {
                 status: emailResult.success ? 'sent' : 'failed',
+                provider: emailResult.provider || null,
+                resendEmailId: emailResult.messageId || null,
                 errorMessage: emailResult.error || null,
-                sentAt: now,
             });
 
             results.push({
@@ -209,6 +327,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
                 employeeName: empData.employeeName,
                 success: emailResult.success,
                 error: emailResult.error,
+                historyId: historyRef.id,
             });
         }
 
@@ -225,7 +344,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
 // GET /api/clients/:clientId/email/verify
 router.get('/:clientId/email/verify', async (_req, res) => {
     const ok = await verifyConnection();
-    res.json({ connected: ok, message: ok ? 'SMTP connection verified' : 'SMTP not configured or connection failed' });
+    res.json({ connected: ok, message: ok ? 'Email provider configured' : 'Email provider not configured or connection failed' });
 });
 
 export default router;

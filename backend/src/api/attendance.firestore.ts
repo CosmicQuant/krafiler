@@ -130,7 +130,20 @@ router.get('/:clientId/attendance', async (req: AuthenticatedRequest, res) => {
 
         const snapshot = await query.get();
         const records = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
-        res.json(records);
+
+        // Deduplicate by employee + date, keeping the most recently updated record.
+        // This prevents stale duplicate records from reappearing after a cell edit.
+        const dedupMap = new Map<string, any>();
+        for (const r of records) {
+            const key = `${r.employeeId}-${r.date}`;
+            const existing = dedupMap.get(key);
+            const existingTs = existing?.updatedAt?.toMillis?.() || existing?.createdAt?.toMillis?.() || 0;
+            const rTs = r.updatedAt?.toMillis?.() || r.createdAt?.toMillis?.() || 0;
+            if (!existing || rTs >= existingTs) {
+                dedupMap.set(key, r);
+            }
+        }
+        res.json(Array.from(dedupMap.values()));
     } catch (err) {
         console.error('Error fetching attendance records:', err);
         res.status(500).json({ message: 'Internal server error' });

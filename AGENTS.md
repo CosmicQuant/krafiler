@@ -91,7 +91,8 @@ Key backend vars from `.env.example` and code:
 | `TEMP_DIR` | Temp dir for receipts/captchas (default `/tmp` or `C:\Temp`). |
 | `RECEIPTS_DIR` | Receipt storage directory (default `receipts/` relative to project root). |
 | `CLOUD_STORAGE_BUCKET` / `FIREBASE_PROJECT_ID` / `GOOGLE_APPLICATION_CREDENTIALS` | GCP/Firebase wiring. Cloud Storage is actively used for documents, receipts, and PRNs. |
-| `SMTP_*` / `EMAIL_FROM` | SMTP for payslip/P9 mass emailing; leave unset for JSON transport in dev. |
+| `RESEND_API_KEY` / `RESEND_WEBHOOK_SECRET` / `RESEND_FROM_EMAIL` | Resend email API for payslips/P9s; webhook secret verifies Resend webhook signatures. |
+| `SMTP_*` / `EMAIL_FROM` | Legacy SMTP fallback for payslip/P9 mass emailing. |
 | `PAYSTACK_SECRET_KEY` / `PAYSTACK_PUBLIC_KEY` | Paystack subscription integration. |
 | `AWS_*` / `S3_BUCKET_NAME` / `WEBHOOK_URL` / `WEBHOOK_SECRET` | Defined but not wired; use Cloud Storage and Firestore instead. |
 
@@ -117,6 +118,14 @@ Located at `backend/src/workers/services/`:
 - `NssfService.ts` — NSSF portal automation.
 - `PrnService.ts` — Payment Registration Number (PRN) generation.
 - `BrowserService.ts`, `NavigationService.ts`, `ReceiptService.ts` — Shared helpers.
+
+## Email (Resend)
+
+- **Provider**: payslips and P9s are sent via the Resend API (`backend/src/services/emailService.ts`). Resend is primary; legacy SMTP is a fallback if `RESEND_API_KEY` is unset.
+- **Webhook endpoint**: `POST /api/webhooks/resend` receives Resend events (`email.sent`, `email.delivered`, `email.opened`, etc.). It is mounted **before** the global JSON body parser so the raw body is available for signature verification.
+- **Signature verification**: uses `resend.webhooks.verify()` with `RESEND_WEBHOOK_SECRET`. In dev, if the secret is unset, the endpoint logs a warning and skips verification.
+- **Event storage**: verified events are stored in the `events` subcollection under `emailHistory/{id}`. The `emailHistory` doc status is updated to `sent`, `delivered`, `opened`, `bounced`, etc.
+- **Frontend UI**: the email history table in `Step7ComplianceOutput.tsx` has expandable rows that show a timeline of delivery events via `EmailEventTimeline`.
 
 ## API Routes
 

@@ -7,7 +7,7 @@
 
 import 'express-async-errors';
 import dotenv from 'dotenv';
-import express from 'express';
+import express, { Request, Response } from 'express';
 import path from 'path';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -59,6 +59,7 @@ import pinoHttp from 'pino-http';
 import { verifyAuth } from './middleware/verifyAuth';
 import { serveReceipt } from './middleware/receipts';
 import subscriptionRoutes from './api/subscriptions.firestore';
+import webhooksRoutes from './api/webhooks.firestore';
 import { checkSubscriptionLimits } from './middleware/subscription';
 
 const app = express();
@@ -93,6 +94,22 @@ const filingLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+
+// ─── Public Webhooks ──────────────────────────────────────────────────────────
+// These routes need the raw request body for signature verification, so they are
+// mounted before the global JSON parser.
+
+app.use(
+    '/api/webhooks/resend',
+    express.raw({
+        type: 'application/json',
+        limit: '1mb',
+        verify: (req: Request, _res: Response, buf: Buffer) => {
+            (req as any).rawBody = buf.toString('utf8');
+        },
+    }),
+    webhooksRoutes
+);
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  X, Save, CalendarCheck, Banknote, User, FileText, Eye, Mail, Download, FileSpreadsheet,
+  X, Save, CalendarCheck, Banknote, User, FileText, Eye, Mail, Download, FileSpreadsheet, CheckCircle2,
 } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { cn } from '../../../utils/cn';
@@ -302,6 +302,8 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     insuranceRelief: draft.insuranceRelief ?? 0,
     bonusPay: draft.bonusPay ?? entry.bonusPay,
     pwd: employee?.pwd || 'No',
+    loanDeduction: draft.loanDeduction ?? entry.loanDeduction ?? 0,
+    otherDeductions: draft.otherDeductions ?? entry.otherDeductions ?? 0,
   }, period || '2026-01', false);
 
   const attMap = new Map<string, any>();
@@ -403,14 +405,19 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     if (!employee?.kraPin) return;
     const [y, m] = (period || '').split('-');
     const periodParam = m && y ? `${m}${y}` : '';
-    const url = `/clients/${clientId}/payslip/${employee.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
+    const queryParams = new URLSearchParams();
+    if (periodParam) queryParams.set('period', periodParam);
+    if (runId) queryParams.set('runId', String(runId));
+    const url = `/clients/${clientId}/payslip/${employee.kraPin}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     downloadBlob(url, `payslip-${employee.kraPin}.pdf`);
   };
 
   const handleDownloadP9 = () => {
     if (!employee?.kraPin) return;
     const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
-    const url = `/clients/${clientId}/p9/${employee.kraPin}?year=${yearStr}`;
+    const params = new URLSearchParams({ year: yearStr });
+    if (runId) params.set('runId', String(runId));
+    const url = `/clients/${clientId}/p9/${employee.kraPin}?${params.toString()}`;
     downloadBlob(url, `P9-${employee.kraPin}-${yearStr}.pdf`);
   };
 
@@ -607,6 +614,8 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
                   { label: 'NSSF', value: preview.nssfDeduction },
                   { label: 'AHL', value: preview.ahlDeduction },
                   { label: 'PAYE', value: preview.payeTax },
+                  ...(preview.loanDeduction > 0 ? [{ label: 'Loan Deduction', value: preview.loanDeduction }] : []),
+                  ...(preview.otherDeductions > 0 ? [{ label: 'Other Deductions', value: preview.otherDeductions }] : []),
                   { label: 'Total Deductions', value: preview.totalDeductions },
                   { label: 'Days Worked', value: preview.daysWorked },
                 ].map((item) => (
@@ -760,9 +769,9 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
                   <div className="space-y-1.5">
                     {loans.map((loan: any) => (
                       <div key={loan.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                        <span className="text-xs font-medium text-slate-700">{loan.type || 'Loan'}</span>
+                        <span className="text-xs font-medium text-slate-700">{loan.loanType || 'Loan'}</span>
                         <div className="flex items-center gap-3 text-xs text-slate-500">
-                          <span>KES {Number(loan.amount || 0).toLocaleString()}</span>
+                          <span>KES {Number(loan.principal || 0).toLocaleString()}</span>
                           <span>{loan.remainingInstallments || 0} left</span>
                           <span className="font-mono">KES {Number(loan.monthlyDeduction || 0).toLocaleString()}/mo</span>
                         </div>

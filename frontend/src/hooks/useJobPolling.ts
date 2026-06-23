@@ -76,7 +76,7 @@ export function useJobPolling(
 
           // ── Side-effect: update client record when job completes ─────────────
           const finishedAt = typeof data.finishedOn === 'string' ? data.finishedOn : new Date().toISOString();
-          const obligationType = currentJobs[clientId].obligationType;
+          const obligationType = currentJobs[clientId].obligationType || data.payload?.payload?.taxObligationType || data.payload?.taxObligationType;
 
           if (data.state === 'completed') {
             // Determine the period that was filed from the job payload

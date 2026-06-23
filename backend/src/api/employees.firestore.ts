@@ -3,6 +3,7 @@ import { adminDb } from '../lib/firebaseAdmin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { logAudit } from '../services/auditService';
 import { verifyAuth, AuthenticatedRequest } from '../middleware/verifyAuth';
+import { computePayrollEntry } from '../services/payrollEngine';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
@@ -409,6 +410,7 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const client = { id: clientDoc.id, ...clientDoc.data() };
 
         const period = (req.query.period as string) || '';
+        const runId = (req.query.runId as string) || '';
         const periodLabel = period ? `${period.substring(0, 2)}/${period.substring(2)}` : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
         // Fetch payroll data via internal API (same container, so localhost works in Cloud Run / local)
@@ -438,27 +440,110 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const shaNo = String(emp['SHA No'] || '');
         const payrollNo = String(emp['Payroll Number'] || '');
 
-        const grossPay = parseFloat(String(emp['Total Gross Pay (Ksh) (H)'] || '0')) || 0;
-        const totalCashPay = parseFloat(String(emp['Total Cash Pay (A)'] || '0')) || 0;
-        const carBenefit = parseFloat(String(emp['Value of Car Benefit (B)'] || '0')) || 0;
-        const meals = parseFloat(String(emp['Value of Meals (C)'] || '0')) || 0;
-        const nonCash = parseFloat(String(emp['Non Cash Benefits (D)'] || '0')) || 0;
-        const housingBenefit = parseFloat(String(emp['Housing Benefit (F)'] || '0')) || 0;
-        const otherBenefits = parseFloat(String(emp['Other Benefits (G)'] || '0')) || 0;
+        // Try to fetch the actual payroll entry for the period so loan/other deductions are reflected
+        let payrollEntry: any = null;
+        let matchedRunId: string | null = null;
 
-        const shaDed = parseFloat(String(emp['Social Health Insurance Fund (I)'] || '0')) || 0;
-        const nssfDed = parseFloat(String(emp['NSSF Contribution (J)'] || '0')) || 0;
-        const otherPension = parseFloat(String(emp['Other Pension Contribution (K)'] || '0')) || 0;
-        const postRetMedical = parseFloat(String(emp['Post Retirement Medical Fund (L)'] || '0')) || 0;
-        const mortgage = parseFloat(String(emp['Mortgage Interest (M)'] || '0')) || 0;
-        const ahl = parseFloat(String(emp['Affordable Housing Levy (N)'] || '0')) || 0;
-        const taxablePay = parseFloat(String(emp['Taxable Pay(Ksh) (O)'] || '0')) || 0;
+        const findEntryInRun = async (targetRunId: string) => {
+            const entrySnapshot = await adminDb
+                .collection('payrollEntries')
+                .where('ownerUid', '==', uid)
+                .where('clientId', '==', clientId)
+                .where('payrollRunId', '==', targetRunId)
+                .get();
+            const targetPin = employeeKraPin.toUpperCase();
+            const raw = entrySnapshot.docs
+                .map(d => d.data())
+                .find((e: any) => String(e.kraPin || '').toUpperCase() === targetPin) || null;
+            if (!raw) return null;
+            // Apply overrides the same way the register does, so edited values appear on payslips.
+            let merged = { ...raw };
+            if (raw.overrides) {
+                try {
+                    const overrides = JSON.parse(raw.overrides);
+                    merged = { ...merged, ...overrides };
+                } catch {
+                    // ignore malformed overrides
+                }
+            }
+            return merged;
+        };
+
+        try {
+            if (runId) {
+                // Use the explicit runId from the register/drawer so we never pick the wrong run.
+                const runDoc = await adminDb.collection('payrollRuns').doc(runId).get();
+                if (runDoc.exists && runDoc.data()?.ownerUid === uid && runDoc.data()?.clientId === clientId) {
+                    matchedRunId = runId;
+                    payrollEntry = await findEntryInRun(runId);
+                    console.log(`[PAYSLIP] runId=${runId} matched=${payrollEntry ? 'yes' : 'no'} loanDeduction=${payrollEntry?.loanDeduction || 0} carBenefit=${payrollEntry?.carBenefit || 0}`);
+                }
+            }
+
+            if (!payrollEntry && period && period.length === 6) {
+                const entryPeriod = `${period.substring(2)}-${period.substring(0, 2)}`;
+                // Find the latest payroll run for this period
+                const runsSnapshot = await adminDb
+                    .collection('payrollRuns')
+                    .where('ownerUid', '==', uid)
+                    .where('clientId', '==', clientId)
+                    .where('period', '==', entryPeriod)
+                    .get();
+                const runs = runsSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
+                runs.sort((a: any, b: any) => {
+                    const ta = a.createdAt?.toMillis?.() || new Date(a.createdAt).getTime() || 0;
+                    const tb = b.createdAt?.toMillis?.() || new Date(b.createdAt).getTime() || 0;
+                    return tb - ta;
+                });
+                const latestRun = runs[0];
+                console.log(`[PAYSLIP] period=${entryPeriod} runs=${runs.length} latestRun=${latestRun?.id} kraPin=${employeeKraPin}`);
+                if (latestRun) {
+                    matchedRunId = latestRun.id;
+                    payrollEntry = await findEntryInRun(latestRun.id);
+                    const entryPins = payrollEntry ? [String(payrollEntry.kraPin || '')] : [];
+                    console.log(`[PAYSLIP] entries=${payrollEntry ? 1 : 0} pins=${entryPins.join(',')} target=${employeeKraPin.toUpperCase()}`);
+                    console.log(`[PAYSLIP] matched=${payrollEntry ? 'yes' : 'no'} loanDeduction=${payrollEntry?.loanDeduction || 0} carBenefit=${payrollEntry?.carBenefit || 0}`);
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to fetch payroll entry for payslip:', e);
+        }
+
+        // Use the stored payroll entry directly. The entry already contains the
+        // attendance-adjusted basic pay, deductions, and statutory values computed
+        // by generateEntriesForRun / update-entry. Recomputing here risked double-
+        // counting attendance deductions because the stored basicPay is already the
+        // computed (post-deduction) amount.
+
+        const grossPay = payrollEntry?.grossPay ?? (parseFloat(String(emp['Total Gross Pay (Ksh) (H)'] || '0')) || 0);
+        const totalCashPay = payrollEntry?.basicPay ?? (parseFloat(String(emp['Total Cash Pay (A)'] || '0')) || 0);
+        const carBenefit = payrollEntry?.carBenefit ?? (parseFloat(String(emp['Value of Car Benefit (B)'] || '0')) || 0);
+        const meals = payrollEntry?.mealsBenefit ?? (parseFloat(String(emp['Value of Meals (C)'] || '0')) || 0);
+        const nonCash = payrollEntry?.nonCashBenefits ?? (parseFloat(String(emp['Non Cash Benefits (D)'] || '0')) || 0);
+        const housingBenefit = payrollEntry?.housingBenefit ?? (parseFloat(String(emp['Housing Benefit (F)'] || '0')) || 0);
+        const otherBenefits = payrollEntry?.otherBenefits ?? (parseFloat(String(emp['Other Benefits (G)'] || '0')) || 0);
+
+        const shaDed = payrollEntry?.shaDeduction ?? (parseFloat(String(emp['Social Health Insurance Fund (I)'] || '0')) || 0);
+        const nssfDed = payrollEntry?.nssfDeduction ?? (parseFloat(String(emp['NSSF Contribution (J)'] || '0')) || 0);
+        const otherPension = payrollEntry?.otherPension ?? (parseFloat(String(emp['Other Pension Contribution (K)'] || '0')) || 0);
+        const postRetMedical = payrollEntry?.postRetMedical ?? (parseFloat(String(emp['Post Retirement Medical Fund (L)'] || '0')) || 0);
+        const mortgage = payrollEntry?.mortgageInterest ?? (parseFloat(String(emp['Mortgage Interest (M)'] || '0')) || 0);
+        const ahl = payrollEntry?.ahlDeduction ?? (parseFloat(String(emp['Affordable Housing Levy (N)'] || '0')) || 0);
+        const taxablePay = payrollEntry?.taxablePay ?? (parseFloat(String(emp['Taxable Pay(Ksh) (O)'] || '0')) || 0);
         const personalRelief = parseFloat(String(emp['Monthly Personal Relief (Ksh) (P)'] || '0')) || 0;
-        const insuranceRelief = parseFloat(String(emp['Amount of Insurance Relief (Q)'] || '0')) || 0;
-        const payeTax = parseFloat(String(emp['PAYE Tax (Ksh) (R)'] || '0')) || 0;
+        const insuranceRelief = payrollEntry?.insuranceRelief ?? (parseFloat(String(emp['Amount of Insurance Relief (Q)'] || '0')) || 0);
+        const payeTax = payrollEntry?.payeTax ?? (parseFloat(String(emp['PAYE Tax (Ksh) (R)'] || '0')) || 0);
+        const loanDeduction = payrollEntry?.loanDeduction || 0;
+        const otherDeductions = payrollEntry?.otherDeductions || 0;
+        const absentDays = payrollEntry?.absentDays || 0;
+        const absentDedAmount = payrollEntry?.absentDedAmount || 0;
+        const unpaidLeaveDays = payrollEntry?.unpaidLeaveDays || 0;
+        const unpaidLeaveDedAmount = payrollEntry?.unpaidLeaveDedAmount || 0;
+        const lateDays = payrollEntry?.lateDays || 0;
+        const lateDedAmount = payrollEntry?.lateDedAmount || 0;
 
-        const totalDeductions = shaDed + nssfDed + ahl + payeTax + otherPension + postRetMedical;
-        const netPay = grossPay - totalDeductions;
+        const totalDeductions = shaDed + nssfDed + ahl + payeTax + otherPension + postRetMedical + loanDeduction + otherDeductions + absentDedAmount + unpaidLeaveDedAmount + lateDedAmount;
+        const netPay = payrollEntry?.netPay ?? (grossPay - totalDeductions);
 
         // Resolve logo (GCS or local)
         const { resolveLogoPath } = await import('../lib/cloudStorage');
@@ -474,23 +559,22 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const leftMargin = 40;
         let y = leftMargin;
 
-        // ── Logo ──
+        // ── Header row: company info left, logo right ──
+        const headerY = y;
+        doc.fontSize(16).font('Helvetica-Bold').fillColor('#000').text(companyName, leftMargin, headerY);
+        doc.fontSize(8).font('Helvetica').fillColor('#666').text(`KRA PIN: ${companyPin}`, leftMargin, headerY + 18);
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000').text('PAYSLIP', leftMargin, headerY + 32);
+        doc.fontSize(8).font('Helvetica').fillColor('#666').text(`Period: ${periodLabel}`, leftMargin + 180, headerY + 34);
+
         if (logoLocalPath) {
             try {
-                doc.image(logoLocalPath, leftMargin, y, { width: 70 });
-                y += 80;
+                doc.image(logoLocalPath, leftMargin + pageWidth - 80, headerY, { width: 70 });
             } catch (e: any) {
                 console.warn('Payslip logo error:', e.message);
             }
         }
 
-        // ── Header ──
-        doc.fontSize(16).font('Helvetica-Bold').text(companyName, leftMargin, y);
-        doc.fontSize(8).font('Helvetica').fillColor('#666').text(`KRA PIN: ${companyPin}`, leftMargin, y + 18);
-        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000').text('PAYSLIP', leftMargin, y + 32);
-        doc.fontSize(8).font('Helvetica').fillColor('#666').text(`Period: ${periodLabel}`, leftMargin + 300, y + 32);
-
-        y += 52;
+        y += 60;
 
         // ── Employee Details ──
         doc.rect(leftMargin, y, pageWidth, 1).fill('#ddd');
@@ -530,7 +614,7 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
 
         const earnings = [
             ['Basic / Cash Pay', totalCashPay],
-            ['Car Benefit', carBenefit],
+            ['Car/Transport Benefit', carBenefit],
             ['Meals', meals],
             ['Non-Cash Benefits', nonCash],
             ['Housing Benefit', housingBenefit],
@@ -557,14 +641,19 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         doc.text('Amount (KES)', colValX - 60, y);
         y += 16;
 
-        const deductions = [
+        const deductions: [string, number][] = [
             ['PAYE Tax', payeTax],
             ['SHIF (2.75%)', shaDed],
             ['NSSF (6%)', nssfDed],
             ['Housing Levy (1.5%)', ahl],
             ['Other Pension', otherPension],
             ['Post-Retirement Medical', postRetMedical],
+            [`Absenteeism (${absentDays} days)`, absentDedAmount],
+            [`Unpaid Leave (${unpaidLeaveDays} days)`, unpaidLeaveDedAmount],
+            [`Lateness (${lateDays} hrs)`, lateDedAmount],
         ];
+        if (loanDeduction > 0) deductions.push(['Loan Deduction', loanDeduction]);
+        if (otherDeductions > 0) deductions.push(['Other Deductions', otherDeductions]);
 
         doc.fontSize(8).font('Helvetica').fillColor('#333');
         deductions.forEach(([label, amount]) => {
@@ -609,6 +698,7 @@ interface P9MonthData {
     mealsBenefit: number;
     nonCashBenefits: number;
     housingBenefit: number;
+    otherBenefits: number;
     grossPay: number;
     ahlDeduction: number;
     shaDeduction: number;
@@ -624,7 +714,7 @@ interface P9MonthData {
 
 function computeMonthP9Values(m: P9MonthData): number[] {
     const a = m.basicPay || 0;
-    const b = (m.carBenefit || 0) + (m.mealsBenefit || 0) + (m.nonCashBenefits || 0);
+    const b = (m.carBenefit || 0) + (m.mealsBenefit || 0) + (m.nonCashBenefits || 0) + (m.otherBenefits || 0);
     const c = m.housingBenefit || 0;
     const d = m.grossPay || 0;
     const e1 = a * 0.30;
@@ -647,6 +737,7 @@ function generateP9WithPdfKit(res: any, data: any) {
     const {
         companyName, companyPin, client, employeeName, kraPin, idNo, nssfNo, shaNo, payrollNo,
         department, jobTitle, employmentType, taxYear, monthlyData, logoPath: companyLogoPath,
+        kraLogoPath,
     } = data;
 
     const doc = new PDFDocument({ margin: 25, size: 'A4' });
@@ -658,16 +749,21 @@ function generateP9WithPdfKit(res: any, data: any) {
     const leftMargin = 25;
     let y = leftMargin;
 
-    // ── Company Header (Logo + Name) ──
+    // ── Company Header: company logo left, KRA logo right ──
+    const headerY = y;
     if (companyLogoPath) {
         try {
-            doc.image(companyLogoPath, leftMargin, y, { width: 60 });
-            y += 70;
+            doc.image(companyLogoPath, leftMargin, headerY, { width: 60 });
+        } catch { /* ignore */ }
+    }
+    if (kraLogoPath) {
+        try {
+            doc.image(kraLogoPath, leftMargin + pageWidth - 60, headerY, { width: 55 });
         } catch { /* ignore */ }
     }
     doc.fontSize(14).font('Helvetica-Bold').fillColor('#1e293b');
-    doc.text(companyName, leftMargin, y, { width: pageWidth });
-    y += 18;
+    doc.text(companyName, leftMargin, headerY + 50, { width: pageWidth });
+    y = headerY + 68;
     doc.fontSize(8).font('Helvetica').fillColor('#64748b');
     doc.text(`KRA PIN: ${companyPin}  |  Tax Deduction Card  |  Year ${taxYear}`, leftMargin, y);
     y += 16;
@@ -821,6 +917,7 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
         const employeeKraPin = req.params.employeeKraPin;
 
         const taxYear = (req.query.year as string) || new Date().getFullYear().toString();
+        const p9RunId = (req.query.runId as string) || '';
         const yearPrefix = taxYear;
 
         const clientDoc = await adminDb.collection('clients').doc(clientId).get();
@@ -842,7 +939,22 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
         }
         const employeeRecord = { id: employeeSnapshot.docs[0].id, ...employeeSnapshot.docs[0].data() };
 
-        // Fetch all payroll runs for this client in the tax year
+        // If a runId is provided, pin that run's entry for its period so the
+        // P9 month matches the register/run the user is viewing.
+        let pinnedRun: any = null;
+        let pinnedMonthIndex: number | null = null;
+        if (p9RunId) {
+            const pinnedRunDoc = await adminDb.collection(PAYROLL_RUNS_COLLECTION).doc(p9RunId).get();
+            if (pinnedRunDoc.exists && pinnedRunDoc.data()?.ownerUid === uid && pinnedRunDoc.data()?.clientId === clientId) {
+                pinnedRun = { id: pinnedRunDoc.id, ...pinnedRunDoc.data() };
+                const [, monthStr] = (pinnedRun as any).period.split('-');
+                pinnedMonthIndex = parseInt(monthStr, 10) - 1;
+            }
+        }
+
+        // Fetch all payroll runs for this client in the tax year.
+        // Use the latest run per period so regenerated runs replace older ones
+        // instead of being summed (which would double-count).
         const runsSnapshot = await adminDb
             .collection(PAYROLL_RUNS_COLLECTION)
             .where('ownerUid', '==', uid)
@@ -851,12 +963,31 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             .where('period', '<=', `${yearPrefix}-12`)
             .get();
 
-        const runs = runsSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        const runs = runsSnapshot.docs
+            .map((d: any) => ({ id: d.id, ...d.data() }))
+            .sort((a: any, b: any) => {
+                const ta = a.createdAt?.toMillis?.() || new Date(a.createdAt).getTime() || 0;
+                const tb = b.createdAt?.toMillis?.() || new Date(b.createdAt).getTime() || 0;
+                return tb - ta;
+            });
 
-        // Build month-indexed data
+        const latestRunByPeriod = new Map<string, any>();
+        for (const run of runs) {
+            const period = (run as any).period;
+            if (!latestRunByPeriod.has(period)) {
+                latestRunByPeriod.set(period, run);
+            }
+        }
+
+        // If a run is pinned, override the latest run for that period
+        if (pinnedRun && pinnedMonthIndex !== null && pinnedMonthIndex >= 0 && pinnedMonthIndex <= 11) {
+            latestRunByPeriod.set((pinnedRun as any).period, pinnedRun);
+        }
+
+        // Build month-indexed data from the chosen run for each period
         const monthlyData: P9MonthData[] = [];
 
-        for (const run of runs) {
+        for (const run of latestRunByPeriod.values()) {
             const [, monthStr] = (run as any).period.split('-');
             const monthIndex = parseInt(monthStr, 10) - 1;
             if (monthIndex < 0 || monthIndex > 11) continue;
@@ -873,45 +1004,32 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             if (entriesSnapshot.empty) continue;
             const entry = entriesSnapshot.docs[0].data() as any;
 
-            const existing = monthlyData.find((m) => m.monthIndex === monthIndex);
-            if (existing) {
-                existing.basicPay += entry.basicPay || 0;
-                existing.grossPay += entry.grossPay || 0;
-                existing.payeTax += entry.payeTax || 0;
-                existing.taxablePay += entry.taxablePay || 0;
-                existing.nssfDeduction += entry.nssfDeduction || 0;
-                existing.shaDeduction += entry.shaDeduction || 0;
-                existing.ahlDeduction += entry.ahlDeduction || 0;
-                existing.totalDeductions += entry.totalDeductions || 0;
-                existing.carBenefit += entry.carBenefit || 0;
-                existing.mealsBenefit += entry.mealsBenefit || 0;
-                existing.nonCashBenefits += entry.nonCashBenefits || 0;
-                existing.housingBenefit += entry.housingBenefit || 0;
-            } else {
-                monthlyData.push({
-                    monthIndex,
-                    basicPay: entry.basicPay || 0,
-                    carBenefit: entry.carBenefit || 0,
-                    mealsBenefit: entry.mealsBenefit || 0,
-                    nonCashBenefits: entry.nonCashBenefits || 0,
-                    housingBenefit: entry.housingBenefit || 0,
-                    grossPay: entry.grossPay || 0,
-                    ahlDeduction: entry.ahlDeduction || 0,
-                    shaDeduction: entry.shaDeduction || 0,
-                    nssfDeduction: entry.nssfDeduction || 0,
-                    totalDeductions: entry.totalDeductions || 0,
-                    taxablePay: entry.taxablePay || 0,
-                    payeTax: entry.payeTax || 0,
-                    otherPension: (employeeRecord as any).otherPension || 0,
-                    postRetMedical: (employeeRecord as any).postRetMedical || 0,
-                    mortgageInterest: (employeeRecord as any).mortgageInterest || 0,
-                    insuranceRelief: (employeeRecord as any).insuranceRelief || 0,
-                });
-            }
+            monthlyData.push({
+                monthIndex,
+                basicPay: entry.basicPay || 0,
+                carBenefit: entry.carBenefit || 0,
+                mealsBenefit: entry.mealsBenefit || 0,
+                nonCashBenefits: entry.nonCashBenefits || 0,
+                housingBenefit: entry.housingBenefit || 0,
+                otherBenefits: entry.otherBenefits || 0,
+                grossPay: entry.grossPay || 0,
+                ahlDeduction: entry.ahlDeduction || 0,
+                shaDeduction: entry.shaDeduction || 0,
+                nssfDeduction: entry.nssfDeduction || 0,
+                totalDeductions: entry.totalDeductions || 0,
+                taxablePay: entry.taxablePay || 0,
+                payeTax: entry.payeTax || 0,
+                otherPension: (employeeRecord as any).otherPension || 0,
+                postRetMedical: (employeeRecord as any).postRetMedical || 0,
+                mortgageInterest: (employeeRecord as any).mortgageInterest || 0,
+                insuranceRelief: (employeeRecord as any).insuranceRelief || 0,
+            });
         }
 
         const { resolveLogoPath } = await import('../lib/cloudStorage');
         const p9LogoPath = await resolveLogoPath(client as any, uid);
+
+        const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
 
         generateP9WithPdfKit(res, {
             companyName: (client as any).name,
@@ -929,6 +1047,7 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             taxYear,
             monthlyData,
             logoPath: p9LogoPath,
+            kraLogoPath: fs.existsSync(kraLogoPath) ? kraLogoPath : null,
         });
     } catch (err) {
         console.error('Error generating P9:', err);

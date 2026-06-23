@@ -8,6 +8,23 @@ const router = Router();
 
 const LOANS_COLLECTION = 'loans';
 
+async function resolveEmployeeName(uid: string, clientId: string, employeeId: any, providedName?: string): Promise<{ employeeName: string; kraPin: string }> {
+    if (providedName && employeeId) {
+        return { employeeName: providedName, kraPin: '' };
+    }
+    if (!employeeId) {
+        return { employeeName: providedName || '', kraPin: '' };
+    }
+    try {
+        const empDoc = await adminDb.collection('employees').doc(String(employeeId)).get();
+        if (empDoc.exists && empDoc.data()?.ownerUid === uid && empDoc.data()?.clientId === clientId) {
+            const data = empDoc.data() as any;
+            return { employeeName: providedName || data.employeeName || '', kraPin: data.kraPin || '' };
+        }
+    } catch { /* ignore */ }
+    return { employeeName: providedName || '', kraPin: '' };
+}
+
 // GET /api/clients/:clientId/loans
 router.get('/:clientId/loans', async (req: AuthenticatedRequest, res) => {
     try {
@@ -35,18 +52,27 @@ router.post('/:clientId/loans', async (req: AuthenticatedRequest, res) => {
         const clientId = req.params.clientId;
         const { employeeId, employeeName, kraPin, loanType, principal, monthlyDeduction, installments, remainingInstallments, interestRate, totalInterest, totalRepayable, amountPaid, status, disbursedAt, notes } = req.body;
 
+        const principalNum = Number(principal) || 0;
+        const installmentsNum = Number(installments) || 1;
+        let monthlyDeductionNum = Number(monthlyDeduction) || 0;
+        if (monthlyDeductionNum <= 0 && principalNum > 0 && installmentsNum > 0) {
+            monthlyDeductionNum = Math.round((principalNum / installmentsNum) * 100) / 100;
+        }
+
+        const { employeeName: resolvedName, kraPin: resolvedKraPin } = await resolveEmployeeName(uid, clientId, employeeId, employeeName);
+
         const now = Timestamp.now();
         const docRef = await adminDb.collection(LOANS_COLLECTION).add({
             ownerUid: uid,
             clientId,
             employeeId: employeeId || '',
-            employeeName: employeeName || '',
-            kraPin: kraPin || '',
+            employeeName: resolvedName,
+            kraPin: kraPin !== undefined ? kraPin : resolvedKraPin,
             loanType: loanType || 'Salary Advance',
-            principal: principal || 0,
-            monthlyDeduction: monthlyDeduction || 0,
-            installments: installments || 1,
-            remainingInstallments: remainingInstallments || 1,
+            principal: principalNum,
+            monthlyDeduction: monthlyDeductionNum,
+            installments: installmentsNum,
+            remainingInstallments: Number(remainingInstallments) || installmentsNum,
             interestRate: interestRate || 0,
             totalInterest: totalInterest || 0,
             totalRepayable: totalRepayable || 0,
@@ -94,14 +120,29 @@ router.put('/:clientId/loans/:id', async (req: AuthenticatedRequest, res) => {
         const existing = doc.data()!;
         const { employeeId, employeeName, kraPin, loanType, principal, monthlyDeduction, installments, remainingInstallments, interestRate, totalInterest, totalRepayable, amountPaid, status, disbursedAt, notes } = req.body;
 
+        const principalNum = principal !== undefined ? Number(principal) : Number(existing.principal) || 0;
+        const installmentsNum = installments !== undefined ? Number(installments) : Number(existing.installments) || 1;
+        let monthlyDeductionNum = monthlyDeduction !== undefined ? Number(monthlyDeduction) : Number(existing.monthlyDeduction) || 0;
+        if (monthlyDeductionNum <= 0 && principalNum > 0 && installmentsNum > 0) {
+            monthlyDeductionNum = Math.round((principalNum / installmentsNum) * 100) / 100;
+        }
+
+        let resolvedEmployeeName = employeeName;
+        let resolvedKraPin = kraPin;
+        if (employeeId !== undefined && !employeeName) {
+            const { employeeName: lookedUpName, kraPin: lookedUpKraPin } = await resolveEmployeeName(uid, clientId, employeeId);
+            resolvedEmployeeName = lookedUpName;
+            resolvedKraPin = lookedUpKraPin;
+        }
+
         const updateData: any = { updatedAt: Timestamp.now() };
         if (employeeId !== undefined) updateData.employeeId = employeeId;
-        if (employeeName !== undefined) updateData.employeeName = employeeName;
-        if (kraPin !== undefined) updateData.kraPin = kraPin;
+        if (resolvedEmployeeName !== undefined) updateData.employeeName = resolvedEmployeeName;
+        if (resolvedKraPin !== undefined) updateData.kraPin = resolvedKraPin;
         if (loanType !== undefined) updateData.loanType = loanType;
-        if (principal !== undefined) updateData.principal = principal;
-        if (monthlyDeduction !== undefined) updateData.monthlyDeduction = monthlyDeduction;
-        if (installments !== undefined) updateData.installments = installments;
+        if (principal !== undefined) updateData.principal = principalNum;
+        if (monthlyDeduction !== undefined || monthlyDeductionNum !== Number(existing.monthlyDeduction || 0)) updateData.monthlyDeduction = monthlyDeductionNum;
+        if (installments !== undefined) updateData.installments = installmentsNum;
         if (remainingInstallments !== undefined) updateData.remainingInstallments = remainingInstallments;
         if (interestRate !== undefined) updateData.interestRate = interestRate;
         if (totalInterest !== undefined) updateData.totalInterest = totalInterest;

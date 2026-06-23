@@ -1005,6 +1005,18 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
     const isPrn = obligationType.endsWith('_prn');
     const baseObligation = isPrn ? obligationType.replace(/_prn$/, '') : obligationType;
     const token = normalizeObligationToken(baseObligation);
+
+    // Sub-obligations (e.g. NITA Levy, Affordable Housing Levy) are generated as part
+    // of a PAYE filing. They are not top-level taxObligationType values, so query
+    // under the parent obligation and then filter by the specific PRN taxType.
+    const subObligationParents: Record<string, string> = {
+        nita: 'paye',
+        affordable_housing: 'paye',
+        housing_levy: 'paye',
+    };
+    const parentObligation = subObligationParents[token] || token;
+    const prnTaxType = parentObligation !== token ? token : undefined;
+
     try {
         // Verify client ownership
         const clientRef = adminDb.collection('clients').doc(id);
@@ -1016,23 +1028,100 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
             return res.status(403).json({ error: 'Forbidden' });
         }
 
-        // Find the most recent job for this client + obligation that has a GCS receipt or PRN
+        // Find the most recent jobs for this client, then filter by obligation in memory.
+        // taxObligationType is stored nested inside payload.payload, so a simple where
+        // clause on the nested field would require a dedicated composite index. Filtering
+        // in memory keeps the query index-free and robust.
         const jobsSnap = await adminDb.collection('jobs')
             .where('clientId', '==', id)
-            .where('taxObligationType', '==', token)
-            .orderBy('completedAt', 'desc')
-            .limit(10)
+            .limit(50)
             .get();
 
+        const jobDocs = jobsSnap.docs
+            .map((doc) => ({ id: doc.id, data: doc.data() }))
+            .filter((j) => {
+                const jobTaxType =
+                    j.data?.payload?.payload?.taxObligationType ||
+                    j.data?.payload?.taxObligationType ||
+                    j.data?.taxObligationType;
+                return jobTaxType === parentObligation;
+            })
+            .sort((a, b) => {
+                const ca = a.data?.completedAt?.toMillis?.() || 0;
+                const cb = b.data?.completedAt?.toMillis?.() || 0;
+                return cb - ca;
+            })
+            .slice(0, 10);
+
         let gcsPath: string | null = null;
-        for (const doc of jobsSnap.docs) {
-            const data = doc.data();
-            const p = isPrn ? data?.artifacts?.prnGcsPath : data?.artifacts?.receiptGcsPath;
-            if (p) { gcsPath = p; break; }
+        let fileName = isPrn ? `${baseObligation}_prn.pdf` : `${baseObligation}_receipt.pdf`;
+
+        // For PAYE PRNs, prefer the client document's payePrnResults array. It is
+        // updated immediately by both filing and print-PRN jobs and contains the
+        // GCS paths for all three statutory PRNs (PAYE, NITA, AHL).
+        const clientData = clientDoc.data();
+        if (isPrn && baseObligation === 'paye' && clientData) {
+            const payePrnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
+                clientData.payePrnResults || [];
+            const targetTaxType = prnTaxType || 'paye';
+            const match = payePrnResults.find(
+                (r) => r.taxType?.toLowerCase() === targetTaxType && (r.prnGcsPath || r.prnPath)
+            );
+            if (match) {
+                gcsPath = match.prnGcsPath || null;
+                if (!gcsPath && match.prnPath && match.prnPath.startsWith('users/')) {
+                    gcsPath = match.prnPath;
+                }
+            }
+        }
+
+        for (const { data } of jobDocs) {
+            if (gcsPath) break;
+            if (isPrn) {
+                if (prnTaxType) {
+                    // Look for a specific sub-obligation PRN (e.g. nita, affordable_housing)
+                    const prnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
+                        data?.result?.prnResults || data?.prnResults || [];
+                    const match = prnResults.find(
+                        (r) => r.taxType?.toLowerCase() === prnTaxType && (r.prnGcsPath || r.prnPath)
+                    );
+                    if (match) {
+                        gcsPath = match.prnGcsPath || null;
+                        if (!gcsPath && match.prnPath && match.prnPath.startsWith('users/')) {
+                            // Legacy local-style path stored as prnPath
+                            gcsPath = match.prnPath;
+                        }
+                        break;
+                    }
+                } else {
+                    // Primary PRN for the obligation (legacy: artifacts.prnGcsPath; current: first result.prnResults entry)
+                    const prnResults: Array<{ taxType?: string; prnGcsPath?: string }> =
+                        data?.result?.prnResults || [];
+                    const primaryPrn = prnResults.find((r) => r.prnGcsPath);
+                    gcsPath = primaryPrn?.prnGcsPath || data?.artifacts?.prnGcsPath || null;
+                    if (gcsPath) break;
+                }
+            } else {
+                gcsPath = data?.artifacts?.receiptGcsPath || null;
+                if (gcsPath) break;
+            }
         }
 
         if (!gcsPath) {
             return res.status(404).json({ error: `No ${isPrn ? 'PRN' : 'receipt'} found in Cloud Storage for this obligation` });
+        }
+
+        // If a signed URL was somehow stored instead of a GCS path, extract the path
+        if (gcsPath.startsWith('https://')) {
+            try {
+                const urlPath = new URL(gcsPath).pathname;
+                // pathname starts with /bucket-name/ or /
+                const bucketName = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
+                const prefix = `/${bucketName}/`;
+                gcsPath = urlPath.startsWith(prefix) ? urlPath.slice(prefix.length) : urlPath.replace(/^\//, '');
+            } catch {
+                // leave gcsPath as-is; file() will likely fail below with 404
+            }
         }
 
         const bucketName = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
@@ -1042,8 +1131,10 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
             return res.status(404).json({ error: `${isPrn ? 'PRN' : 'Receipt'} file missing in Cloud Storage` });
         }
 
+        // Sanitize filename for Windows/HTTP headers
+        const safeFileName = fileName.replace(/[^\w.\-]+/g, '_');
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `inline; filename="${path.basename(gcsPath)}"`);
+        res.setHeader('Content-Disposition', `inline; filename="${safeFileName}"`);
         file.createReadStream().on('error', (err) => {
             console.error('GCS read stream error:', err);
             if (!res.headersSent) res.status(500).json({ error: `Failed to read ${isPrn ? 'PRN' : 'receipt'}` });

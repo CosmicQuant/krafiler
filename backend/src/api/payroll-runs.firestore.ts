@@ -122,6 +122,36 @@ async function generateEntriesForRun(
         .get();
     const attendanceRecords = attendanceSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
+    // Fetch approved attendance payroll values computed by the attendance calendar.
+    // These values are the source of truth for the pay register and payslip.
+    const approvalsSnapshot = await adminDb
+        .collection('attendancePayrollApprovals')
+        .where('ownerUid', '==', uid)
+        .where('clientId', '==', clientId)
+        .where('period', '==', (run as any).period)
+        .get();
+    const approvalMap = new Map<string, any>();
+    for (const d of approvalsSnapshot.docs) {
+        const data = d.data();
+        approvalMap.set(String(data.employeeId), data);
+    }
+
+    // Deduplicate attendance records by employee+date, keeping the most severe status.
+    // Severity order: Absent > Half-Day > Late > Present/On Leave/Off Day
+    const severityOrder: Record<string, number> = { Absent: 4, 'Half-Day': 3, Late: 2, Present: 1, 'On Leave': 1, 'Off Day': 0 };
+    const dedupMap = new Map<string, any>();
+    for (const ar of attendanceRecords) {
+        const arData = ar as any;
+        const key = `${arData.employeeId}-${arData.date}`;
+        const existing = dedupMap.get(key);
+        const currentSeverity = severityOrder[arData.status] ?? 0;
+        const existingSeverity = existing ? (severityOrder[existing.status] ?? 0) : -1;
+        if (currentSeverity > existingSeverity) {
+            dedupMap.set(key, arData);
+        }
+    }
+    const dedupedAttendanceRecords = Array.from(dedupMap.values());
+
     // Compute attendance-adjusted pay using actual hours worked (matches frontend grid)
     const totalStdHoursMap = new Map<string, number>();
     const otHoursMap = new Map<string, number>();
@@ -134,7 +164,7 @@ async function generateEntriesForRun(
     const offCountMap = new Map<string, number>();
     const paidLeaveHoursMap = new Map<string, number>();
 
-    for (const ar of attendanceRecords) {
+    for (const ar of dedupedAttendanceRecords) {
         const arData = ar as any;
         const emp = employees.find((e: any) => e.id === arData.employeeId);
         if (!emp) continue;
@@ -214,7 +244,7 @@ async function generateEntriesForRun(
         const current = new Date(overlapStart);
         while (current <= overlapEnd) {
             const dateStr = current.toISOString().slice(0, 10);
-            const hasRecord = attendanceRecords.some((ar: any) => ar.employeeId === lvData.employeeId && ar.date === dateStr);
+            const hasRecord = dedupedAttendanceRecords.some((ar: any) => ar.employeeId === lvData.employeeId && ar.date === dateStr);
             if (!hasRecord) {
                 paidLeaveHoursMap.set(lvData.employeeId, (paidLeaveHoursMap.get(lvData.employeeId) || 0) + (lvData.hours || dailyHours));
             }
@@ -222,18 +252,21 @@ async function generateEntriesForRun(
         }
     }
 
-    // Delete existing entries for this run
+    // Delete existing entries for this run (batched, 500 limit)
     const existingEntriesSnapshot = await adminDb
         .collection('payrollEntries')
         .where('ownerUid', '==', uid)
         .where('clientId', '==', clientId)
         .where('payrollRunId', '==', runId)
         .get();
-    const deleteBatch = adminDb.batch();
-    for (const d of existingEntriesSnapshot.docs) {
-        deleteBatch.delete(d.ref);
+    const DELETE_BATCH_SIZE = 500;
+    for (let i = 0; i < existingEntriesSnapshot.docs.length; i += DELETE_BATCH_SIZE) {
+        const deleteBatch = adminDb.batch();
+        for (const d of existingEntriesSnapshot.docs.slice(i, i + DELETE_BATCH_SIZE)) {
+            deleteBatch.delete(d.ref);
+        }
+        await deleteBatch.commit();
     }
-    await deleteBatch.commit();
 
     // Load dynamic adjustments for this run
     const adjustmentsSnapshot = await adminDb
@@ -257,19 +290,21 @@ async function generateEntriesForRun(
         const scheduledDays = getScheduledWorkDays(scheduleConfig, (run as any).period, holidays);
         const scheduledDaysIncludingHolidays = getScheduledDaysIncludingHolidays(scheduleConfig, (run as any).period);
 
-        const totalStdHours = totalStdHoursMap.get(emp.id) || 0;
-        const otHours = otHoursMap.get(emp.id) || 0;
+        const approval = approvalMap.get(String(emp.id));
+
+        const totalStdHours = approval?.totalStdHours ?? (totalStdHoursMap.get(emp.id) || 0);
+        const otHours = approval?.overtimeHours ?? (otHoursMap.get(emp.id) || 0);
         const paidLeaveHours = paidLeaveHoursMap.get(emp.id) || 0;
-        const lateHrs = lateHoursMap.get(emp.id) || 0;
-        const absentCount = absentCountMap.get(emp.id) || 0;
+        const lateHrs = approval?.lateHours ?? (lateHoursMap.get(emp.id) || 0);
+        const absentCount = approval?.absentDays ?? (absentCountMap.get(emp.id) || 0);
         const [siH, siM] = (emp.standardCheckIn || '08:00').split(':').map(Number);
         const [soH, soM] = (emp.standardCheckOut || '17:00').split(':').map(Number);
         const dailyHours = Math.max(1, ((soH * 60 + (soM || 0)) - (siH * 60 + (siM || 0))) / 60);
-        const totalScheduledHours = getTotalScheduledHours(scheduleConfig, (run as any).period);
-        const hourlyRate = (emp.hourlyRate || (Math.round((emp.basicPay / Math.max(1, totalScheduledHours)) * 100000000) / 100000000)) || 0;
+        const totalScheduledHours = approval?.totalScheduledHours ?? getTotalScheduledHours(scheduleConfig, (run as any).period);
+        const hourlyRate = approval?.hourlyRate ?? ((emp.hourlyRate || (Math.round((emp.basicPay / Math.max(1, totalScheduledHours)) * 100000000) / 100000000)) || 0);
         const otRate = Math.round(hourlyRate * 1.5 * 100) / 100;
         const paidLeaveAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
-        const overtimePay = Math.round(otHours * otRate * 100) / 100;
+        const overtimePay = approval?.overtimeAmount ?? (Math.round(otHours * otRate * 100) / 100);
 
         const [runYear, runMonth] = (run as any).period.split('-').map(Number);
         const daysInPeriod = new Date(runYear, runMonth, 0).getDate();
@@ -290,9 +325,12 @@ async function generateEntriesForRun(
             }
         }
 
-        const adjustedBasicPay = empPayStructure === 'prorated'
-            ? Math.round((totalStdHours + holidayHours + paidLeaveHours) * hourlyRate * 100) / 100
-            : undefined;
+        const computedBasicPayFromApproval = approval?.computedBasicPay;
+        const adjustedBasicPay = computedBasicPayFromApproval !== undefined && computedBasicPayFromApproval !== null
+            ? roundMoney(computedBasicPayFromApproval)
+            : (empPayStructure === 'prorated'
+                ? Math.round((totalStdHours + holidayHours + paidLeaveHours) * hourlyRate * 100) / 100
+                : undefined);
 
         const entry: any = computePayrollEntry(
             {
@@ -345,37 +383,41 @@ async function generateEntriesForRun(
         entry.totalScheduledHours = totalScheduledHours;
         entry.hourlyRate = hourlyRate;
 
-        let absentHours = 0;
-        for (const ar of attendanceRecords) {
-            const arData = ar as any;
-            if (arData.employeeId !== emp.id) continue;
-            if (arData.status !== 'Absent') continue;
-            const d = parseInt(arData.date.split('-')[2], 10);
-            const date = new Date(runYear, runMonth - 1, d);
-            const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
-            absentHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+        let absentHours = approval?.absentHours ?? 0;
+        if (!approval?.absentHours && absentHours === 0) {
+    for (const ar of dedupedAttendanceRecords) {
+                const arData = ar as any;
+                if (arData.employeeId !== emp.id) continue;
+                if (arData.status !== 'Absent') continue;
+                const d = parseInt(arData.date.split('-')[2], 10);
+                const date = new Date(runYear, runMonth - 1, d);
+                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                absentHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+            }
         }
 
-        let unpaidLeaveHours = 0;
-        for (const lv of leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }))) {
-            const lvData = lv as any;
-            if (lvData.employeeId !== emp.id) continue;
-            if (lvData.status !== 'Approved') continue;
-            const isUnpaid = lvData.isPaid === false || lvData.isPaid === 0 || (lvData.leaveType || '').toLowerCase().includes('unpaid');
-            if (!isUnpaid) continue;
-            const lvStart = new Date(lvData.startDate);
-            const lvEnd = lvData.endDate ? new Date(lvData.endDate) : new Date(lvData.startDate);
-            const periodStart = new Date(runYear, runMonth - 1, 1);
-            const periodEnd = new Date(runYear, runMonth, 0);
-            const overlapStart = lvStart > periodStart ? lvStart : periodStart;
-            const overlapEnd = lvEnd < periodEnd ? lvEnd : periodEnd;
-            if (overlapStart > overlapEnd) continue;
-            const current = new Date(overlapStart);
-            while (current <= overlapEnd) {
-                const d = current.getDate();
-                const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][current.getDay()];
-                unpaidLeaveHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
-                current.setDate(current.getDate() + 1);
+        let unpaidLeaveHours = approval?.unpaidLeaveHours ?? 0;
+        if (!approval?.unpaidLeaveHours && unpaidLeaveHours === 0) {
+            for (const lv of leaveSnapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }))) {
+                const lvData = lv as any;
+                if (lvData.employeeId !== emp.id) continue;
+                if (lvData.status !== 'Approved') continue;
+                const isUnpaid = lvData.isPaid === false || lvData.isPaid === 0 || (lvData.leaveType || '').toLowerCase().includes('unpaid');
+                if (!isUnpaid) continue;
+                const lvStart = new Date(lvData.startDate);
+                const lvEnd = lvData.endDate ? new Date(lvData.endDate) : new Date(lvData.startDate);
+                const periodStart = new Date(runYear, runMonth - 1, 1);
+                const periodEnd = new Date(runYear, runMonth, 0);
+                const overlapStart = lvStart > periodStart ? lvStart : periodStart;
+                const overlapEnd = lvEnd < periodEnd ? lvEnd : periodEnd;
+                if (overlapStart > overlapEnd) continue;
+                const current = new Date(overlapStart);
+                while (current <= overlapEnd) {
+                    const d = current.getDate();
+                    const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][current.getDay()];
+                    unpaidLeaveHours += scheduleConfig ? (scheduleConfig[dayName] || 0) : dailyHours;
+                    current.setDate(current.getDate() + 1);
+                }
             }
         }
 
@@ -386,11 +428,11 @@ async function generateEntriesForRun(
         entry.holidayPayAmount = Math.round(holidayHours * hourlyRate * 100) / 100;
         entry.paidLeavePayAmount = Math.round(paidLeaveHours * hourlyRate * 100) / 100;
         entry.absentHours = Math.round(absentHours * 100) / 100;
-        entry.absentDedAmount = Math.round(absentHours * hourlyRate * 100) / 100;
+        entry.absentDedAmount = approval?.absentDedAmount ?? (Math.round(absentHours * hourlyRate * 100) / 100);
         entry.lateHours = Math.round(lateHrs * 100) / 100;
-        entry.lateDedAmount = Math.round(lateHrs * hourlyRate * 100) / 100;
+        entry.lateDedAmount = approval?.lateDedAmount ?? (Math.round(lateHrs * hourlyRate * 100) / 100);
         entry.unpaidLeaveHours = Math.round(unpaidLeaveHours * 100) / 100;
-        entry.unpaidLeaveDedAmount = Math.round(unpaidLeaveHours * hourlyRate * 100) / 100;
+        entry.unpaidLeaveDedAmount = approval?.unpaidLeaveDedAmount ?? (Math.round(unpaidLeaveHours * hourlyRate * 100) / 100);
         return entry;
     });
 
@@ -716,7 +758,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
         const allowedOverrides = [
             'basicPay', 'carBenefit', 'mealsBenefit', 'nonCashBenefits',
             'housingBenefit', 'otherBenefits', 'bonusPay', 'insuranceRelief',
-            'absentDays', 'lateHours', 'overtimePay', 'otherDeductions', 'hourlyRate',
+            'absentDays', 'lateHours', 'overtimePay', 'otherDeductions', 'loanDeduction', 'hourlyRate',
         ];
 
         const overridePayload: Record<string, number> = {};
@@ -796,12 +838,22 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
                 mergedOverrides.basicPay = Math.round(mergedOverrides.hourlyRate * totalScheduledHours * 100) / 100;
             }
 
+            // The stored entry.basicPay is the attendance-adjusted (computed) pay.
+            // Use originalBasicPay as the contractual master so attendance deductions
+            // are not double-counted during recomputation.
+            const masterBasicPay = entry.originalBasicPay || entry.basicPay || 0;
+            const userEditedBasicPay = mergedOverrides.basicPay !== undefined ? mergedOverrides.basicPay : undefined;
+            const computedBasicPayOverride = userEditedBasicPay !== undefined
+                ? userEditedBasicPay
+                : (entry.basicPay || masterBasicPay);
+
             const baseInput = {
                 employeeId: empDoc.id,
                 employeeName: emp.employeeName,
                 kraPin: emp.kraPin,
                 payrollNumber: emp.payrollNumber,
-                basicPay: mergedOverrides.basicPay !== undefined ? mergedOverrides.basicPay : entry.basicPay,
+                basicPay: masterBasicPay,
+                basicPayOverride: computedBasicPayOverride,
                 carBenefit: mergedOverrides.carBenefit !== undefined ? mergedOverrides.carBenefit : entry.carBenefit,
                 mealsBenefit: mergedOverrides.mealsBenefit !== undefined ? mergedOverrides.mealsBenefit : entry.mealsBenefit,
                 nonCashBenefits: mergedOverrides.nonCashBenefits !== undefined ? mergedOverrides.nonCashBenefits : entry.nonCashBenefits,
@@ -810,7 +862,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
                 dateJoined: emp.dateJoined,
                 dateLeft: emp.dateLeft,
                 employmentStatus: emp.employmentStatus,
-                loanDeduction: entry.loanDeduction || 0,
+                loanDeduction: mergedOverrides.loanDeduction !== undefined ? mergedOverrides.loanDeduction : (entry.loanDeduction || 0),
                 unpaidLeaveDays: payStructure === 'fixed' ? (entry.unpaidLeaveDays || 0) : 0,
                 payStructure,
                 overtimePay: mergedOverrides.overtimePay !== undefined ? mergedOverrides.overtimePay : entry.overtimePay,
@@ -849,6 +901,7 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
             updateSet.nssfDeduction = computed.nssfDeduction;
             updateSet.ahlDeduction = computed.ahlDeduction;
             updateSet.otherDeductions = computed.otherDeductions;
+            updateSet.loanDeduction = computed.loanDeduction;
             updateSet.totalDeductions = computed.totalDeductions;
             updateSet.taxablePay = computed.taxablePay;
             updateSet.payeTax = computed.payeTax;
@@ -862,6 +915,14 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
             updateSet.lateDays = computed.lateDays;
             updateSet.attendanceDeduction = computed.attendanceDeduction;
             updateSet.originalBasicPay = computed.originalBasicPay;
+            // When basicPayOverride is used, attendance/unpaid-leave deductions are not
+            // reflected in the computed output; preserve the original breakdown for the payslip.
+            updateSet.absentHours = mergedOverrides.absentDays !== undefined ? undefined : (entry.absentHours || 0);
+            updateSet.absentDedAmount = mergedOverrides.absentDays !== undefined ? undefined : (entry.absentDedAmount || 0);
+            updateSet.lateHours = mergedOverrides.lateHours !== undefined ? undefined : (entry.lateHours || 0);
+            updateSet.lateDedAmount = mergedOverrides.lateHours !== undefined ? undefined : (entry.lateDedAmount || 0);
+            updateSet.unpaidLeaveHours = entry.unpaidLeaveHours || 0;
+            updateSet.unpaidLeaveDedAmount = entry.unpaidLeaveDedAmount || 0;
             updateSet.scheduledWorkDays = computed.scheduledWorkDays || computed.daysWorked;
             updateSet.totalScheduledHours = computed.totalScheduledHours;
             updateSet.hourlyRate = mergedOverrides.hourlyRate !== undefined
@@ -947,27 +1008,24 @@ function generatePayslipPDF(doc: any, entry: any, client: any, logoPath?: string
     const rowH = 14;
     const isFixed = (entry.payStructure || 'fixed') === 'fixed';
 
-    // ── Company Logo ──
+    // ── Header row: company info left, logo right ──
+    const headerY = y;
+    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1e293b');
+    doc.text(client?.name || 'Company', leftX, headerY, { align: 'left', width: contentW - 100 });
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b');
+    doc.text(`KRA PIN: ${client?.pin || ''}`, leftX, headerY + 18, { align: 'left', width: contentW - 100 });
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#0f172a');
+    doc.text('PAYSLIP', leftX, headerY + 34, { align: 'left', width: contentW - 100 });
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b');
+    doc.text(`Period: ${entry.period || ''}`, leftX + 120, headerY + 36, { align: 'left', width: 150 });
+
     if (logoPath) {
         try {
-            const logoW = 120;
-            const logoH = 80;
-            const logoX = (pageW - logoW) / 2;
-            doc.image(logoPath, logoX, y, { fit: [logoW, logoH], align: 'center', valign: 'center' });
-            y += 100;
+            doc.image(logoPath, amtX - 20, headerY, { width: 70 });
         } catch { /* ignore */ }
     }
 
-    // ── Header ──
-    doc.fontSize(18).font('Helvetica-Bold').fillColor('#1e293b');
-    doc.text(client?.name || 'Company', leftX, y, { align: 'center', width: contentW });
-    y += 24;
-    doc.fontSize(9).font('Helvetica').fillColor('#64748b');
-    doc.text(`KRA PIN: ${client?.pin || ''}`, leftX, y, { align: 'center', width: contentW });
-    y += 14;
-    doc.fontSize(11).font('Helvetica-Bold').fillColor('#0f172a');
-    doc.text('PAYSLIP', leftX, y, { align: 'center', width: contentW });
-    y += 20;
+    y = headerY + 60;
 
     // ── Employee Info ──
     const infoBoxH = 52;
@@ -1039,33 +1097,22 @@ function generatePayslipPDF(doc: any, entry: any, client: any, logoPath?: string
         lineItem('Overtime Pay', entry.overtimePay || 0);
     }
 
-    // 3. ATTENDANCE DEDUCTIONS / SUMMARY
-    const hasAbsent = (entry.absentHours || 0) > 0;
-    const hasLate = (entry.lateHours || 0) > 0;
-    const hasUnpaidLeave = (entry.unpaidLeaveHours || 0) > 0;
-    if (hasAbsent || hasLate || hasUnpaidLeave) {
-        sectionHeader(isFixed ? 'Attendance Deductions' : 'Attendance Summary');
-        if (hasAbsent) {
-            if (isFixed) {
-                lineItem('Absent Deduction', -entry.absentDedAmount, { red: true });
-            } else {
-                lineItem('Absent Hours', entry.absentDedAmount);
-            }
-        }
-        if (hasLate) {
-            if (isFixed) {
-                lineItem('Late Deduction', -entry.lateDedAmount, { red: true });
-            } else {
-                lineItem('Late Hours', entry.lateDedAmount);
-            }
-        }
-        if (hasUnpaidLeave) {
-            if (isFixed) {
-                lineItem('Unpaid Leave Deduction', -entry.unpaidLeaveDedAmount, { red: true });
-            } else {
-                lineItem('Unpaid Leave Hours', entry.unpaidLeaveDedAmount);
-            }
-        }
+    // 3. ATTENDANCE DEDUCTIONS / SUMMARY (always shown, zero if none)
+    const absentDays = entry.absentDays || 0;
+    const absentDedAmount = entry.absentDedAmount || 0;
+    const lateHours = entry.lateHours || 0;
+    const lateDedAmount = entry.lateDedAmount || 0;
+    const unpaidLeaveDays = entry.unpaidLeaveDays || 0;
+    const unpaidLeaveDedAmount = entry.unpaidLeaveDedAmount || 0;
+    sectionHeader(isFixed ? 'Attendance Deductions' : 'Attendance Summary');
+    if (isFixed) {
+        lineItem(`Absent Deduction (${absentDays} days)`, -absentDedAmount, { red: true });
+        lineItem(`Late Deduction (${lateHours} hrs)`, -lateDedAmount, { red: true });
+        lineItem(`Unpaid Leave Deduction (${unpaidLeaveDays} days)`, -unpaidLeaveDedAmount, { red: true });
+    } else {
+        lineItem('Absent Hours', absentDedAmount);
+        lineItem('Late Hours', lateDedAmount);
+        lineItem('Unpaid Leave Hours', unpaidLeaveDedAmount);
     }
 
     // BENEFITS & ALLOWANCES
@@ -2058,27 +2105,24 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
         }
         await deleteBatch.commit();
 
-        // Delete all absent/half-day records for employees with 0 absent days
-        const zeroAbsentEmpIds = employeeApprovals
-            .filter((ea: any) => !(ea.absentDays > 0))
-            .map((ea: any) => ea.employeeId);
-        if (zeroAbsentEmpIds.length > 0) {
-            const zeroAbsentSnapshot = await adminDb
-                .collection('attendanceRecords')
-                .where('ownerUid', '==', uid)
-                .where('clientId', '==', clientId)
-                .where('date', '>=', `${period}-01`)
-                .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
-                .where('status', 'in', ['Absent', 'Half-Day'])
-                .get();
-            const zeroBatch = adminDb.batch();
-            for (const d of zeroAbsentSnapshot.docs) {
-                if (zeroAbsentEmpIds.includes((d.data() as any).employeeId)) {
-                    zeroBatch.delete(d.ref);
-                }
+        // Delete all absent/half-day records for employees being approved so stale
+        // records do not inflate the absent count when payroll is regenerated.
+        const approvedEmpIds = employeeApprovals.map((ea: any) => ea.employeeId);
+        const absentHalfSnapshot = await adminDb
+            .collection('attendanceRecords')
+            .where('ownerUid', '==', uid)
+            .where('clientId', '==', clientId)
+            .where('date', '>=', `${period}-01`)
+            .where('date', '<=', `${period}-${String(daysInMonth).padStart(2, '0')}`)
+            .where('status', 'in', ['Absent', 'Half-Day'])
+            .get();
+        const cleanupBatch = adminDb.batch();
+        for (const d of absentHalfSnapshot.docs) {
+            if (approvedEmpIds.includes((d.data() as any).employeeId)) {
+                cleanupBatch.delete(d.ref);
             }
-            await zeroBatch.commit();
         }
+        await cleanupBatch.commit();
 
         // Refresh existing set after cleanup
         const existingAfterCleanup = await adminDb
@@ -2119,11 +2163,22 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
                     employeeId: ea.employeeId,
                     employeeName: ea.employeeName || '',
                     absentDays: ea.absentDays || 0,
+                    absentDates: ea.absentDates || [],
+                    absentHours: ea.absentHours || 0,
+                    absentDedAmount: ea.absentDedAmount || 0,
                     lateHours: ea.lateHours || 0,
+                    lateDedAmount: ea.lateDedAmount || 0,
+                    unpaidLeaveDays: ea.unpaidLeaveDays || 0,
+                    unpaidLeaveHours: ea.unpaidLeaveHours || 0,
+                    unpaidLeaveDedAmount: ea.unpaidLeaveDedAmount || 0,
                     overtimeHours: ea.overtimeHours || 0,
                     overtimeRate: ea.overtimeRate || 0,
                     overtimeMultiplier: ea.overtimeMultiplier || 1.5,
                     overtimeAmount: ea.overtimeAmount || 0,
+                    totalStdHours: ea.totalStdHours || 0,
+                    totalScheduledHours: ea.totalScheduledHours || 0,
+                    hourlyRate: ea.hourlyRate || 0,
+                    computedBasicPay: ea.computedBasicPay || 0,
                     approvedBy: approvedBy || null,
                     approvedAt: nowIso,
                     createdAt: nowIso,
@@ -2163,7 +2218,13 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
                 if (isWorkDay) workDays.push(`${period}-${String(d).padStart(2, '0')}`);
             }
 
-            for (const dateStr of workDays.slice(-absentCount)) {
+            // Use the exact absent dates from the calendar when provided; otherwise
+            // fall back to the last N scheduled work days for backward compatibility.
+            const absentDates: string[] = Array.isArray(ea.absentDates) && ea.absentDates.length > 0
+                ? ea.absentDates
+                : workDays.slice(-absentCount);
+
+            for (const dateStr of absentDates) {
                 if (effectiveExistingSet.has(`${(emp as any).id}-${dateStr}`)) continue;
                 newRecords.push({
                     ownerUid: uid,

@@ -754,15 +754,35 @@ export function AttendanceCalendarGrid({ clientId, period: propPeriod, onApprove
         try {
             const payload = employees.map(emp => {
                 const s = summaries.get(emp.id);
+                // Collect the exact dates marked Absent in the calendar so the backend
+                // creates attendance records for those specific days instead of guessing
+                // the last N work days.
+                const absentDates: string[] = [];
+                for (const [key, rec] of attendanceMap.entries()) {
+                    if (key.startsWith(`${emp.id}-`) && rec.status === 'Absent') {
+                        absentDates.push(rec.date);
+                    }
+                }
                 return {
                     employeeId: emp.id,
                     employeeName: emp.employeeName,
-                    absentDays: s?.absentDays || 0,
+                    absentDays: absentDates.length,
+                    absentDates,
+                    absentHours: s?.absentHours || 0,
+                    absentDedAmount: s?.absentDedAmount || 0,
                     lateHours: s?.lateHours || 0,
+                    lateDedAmount: s?.lateDedAmount || 0,
+                    unpaidLeaveDays: 0, // populated by backend from leave requests
+                    unpaidLeaveHours: s?.unpaidLeaveHours || 0,
+                    unpaidLeaveDedAmount: s?.unpaidLeaveDedAmount || 0,
                     overtimeHours: s?.overtimeHours || 0,
                     overtimeRate: s?.hourlyRate || 0,
                     overtimeMultiplier: s?.overtimeMultiplier || 1.5,
                     overtimeAmount: s?.overtimeAmount || 0,
+                    totalStdHours: s?.totalStdHours || 0,
+                    totalScheduledHours: s?.totalScheduledHours || 0,
+                    hourlyRate: s?.hourlyRate || 0,
+                    computedBasicPay: computedBasicPay(emp),
                 };
             });
             const res = await apiFetch(`/clients/${clientId}/attendance-payroll-approve`, {

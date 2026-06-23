@@ -174,6 +174,7 @@ export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRef
           unpaidLeaveDays: 0,
           insuranceRelief: 0,
           otherDeductions: entry.otherDeductions,
+          loanDeduction: entry.loanDeduction,
         }),
       });
       if (res.ok) {
@@ -228,13 +229,18 @@ export function PayRegisterTable({ clientId, runId, period, onSelectEntry, onRef
   const handleDownloadPayslip = (entry: PayrollEntry) => {
     const [y, m] = (period || '').split('-');
     const periodParam = m && y ? `${m}${y}` : '';
-    const url = `/clients/${clientId}/payslip/${entry.kraPin}${periodParam ? `?period=${periodParam}` : ''}`;
+    const queryParams = new URLSearchParams();
+    if (periodParam) queryParams.set('period', periodParam);
+    if (runId) queryParams.set('runId', String(runId));
+    const url = `/clients/${clientId}/payslip/${entry.kraPin}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     downloadBlob(url, `payslip-${entry.kraPin}.pdf`);
   };
 
   const handleDownloadP9 = (entry: PayrollEntry) => {
     const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
-    const url = `/clients/${clientId}/p9/${entry.kraPin}?year=${yearStr}`;
+    const params = new URLSearchParams({ year: yearStr });
+    if (runId) params.set('runId', String(runId));
+    const url = `/clients/${clientId}/p9/${entry.kraPin}?${params.toString()}`;
     downloadBlob(url, `P9-${entry.kraPin}-${yearStr}.pdf`);
   };
 

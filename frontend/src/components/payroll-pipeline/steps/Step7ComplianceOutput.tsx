@@ -531,13 +531,25 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
                                         <td className="px-3 py-2 text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 <button
-                                                    onClick={() => downloadPdf(`/clients/${clientId}/payslip/${emp.kraPin}${periodMMYYYY ? `?period=${periodMMYYYY}` : ''}`, `Payslip_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError)}
+                                                    onClick={() => {
+                                                        const params = new URLSearchParams();
+                                                        if (periodMMYYYY) params.set('period', periodMMYYYY);
+                                                        if (runId) params.set('runId', String(runId));
+                                                        const url = `/clients/${clientId}/payslip/${emp.kraPin}${params.toString() ? `?${params.toString()}` : ''}`;
+                                                        downloadPdf(url, `Payslip_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError);
+                                                    }}
                                                     className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                                 >
                                                     <Download className="h-3 w-3" /> Payslip
                                                 </button>
                                                 <button
-                                                    onClick={() => downloadPdf(`/clients/${clientId}/p9/${emp.kraPin}`, `P9_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError)}
+                                                    onClick={() => {
+                                                        const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
+                                                        const params = new URLSearchParams({ year: yearStr });
+                                                        if (runId) params.set('runId', String(runId));
+                                                        const url = `/clients/${clientId}/p9/${emp.kraPin}?${params.toString()}`;
+                                                        downloadPdf(url, `P9_${emp.employeeName.replace(/\s+/g, '_')}.pdf`, setError);
+                                                    }}
                                                     className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-100 transition"
                                                 >
                                                     <Download className="h-3 w-3" /> P9

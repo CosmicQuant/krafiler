@@ -266,6 +266,19 @@ const PAYE_UPLOAD_TRIGGER_SELECTORS = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+async function captureDebugScreenshot(page: any, jobId: string, suffix: string): Promise<string | null> {
+    try {
+        await fs.mkdir(TMP_DIR, { recursive: true });
+        const screenshotPath = path.join(TMP_DIR, `debug-${jobId}-${suffix}-${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.log(`[Worker][${jobId}] Debug screenshot saved: ${screenshotPath}`);
+        return screenshotPath;
+    } catch (err: any) {
+        console.warn(`[Worker][${jobId}] Failed to capture debug screenshot: ${err.message}`);
+        return null;
+    }
+}
+
 /**
  * Waits for a random duration to simulate human interaction cadence without
  * making ordinary form entry feel artificially slow.
@@ -1894,6 +1907,7 @@ export async function processFilingJob(job: JobContext): Promise<{
     receiptNumber: string | null;
     credentialUpdate: CredentialUpdate | null;
     prnPath?: string;
+    prnResults?: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string }>;
     vatSummary?: {
         inputVat: number;
         outputVat: number;
@@ -2273,33 +2287,98 @@ export async function processFilingJob(job: JobContext): Promise<{
             // Use the requested filing period (periodFrom) for PRN generation, not today's date
             const prnPeriodFrom = payload.periodFrom || '';
             const prnTargetDate = prnPeriodFrom ? new Date(prnPeriodFrom) : new Date();
-            const prnConfig: PrnConfig = {
-                taxType: taxObligationType,
-                periodYear: prnTargetDate.getFullYear().toString(),
-                periodMonth: prnTargetDate.toLocaleString('default', { month: 'long' })
-            };
 
-            await setJobStep(job, 80, `Generating standalone Payment Slip (PRN)...`);
-            const prnResult = await prnService.generate(prnConfig);
+            await setJobStep(job, 80, `Generating standalone Payment Slip(s) (PRN)...`);
 
-            if (!prnResult.prnPath) {
-                throw new Error(`PRN generation failed: ${prnResult.error ?? 'unknown error'}`);
+            // For PAYE, generate all three statutory PRNs (PAYE, NITA, AHL).
+            // For other obligations, generate a single PRN for the requested type.
+            let prnResults: Array<{ taxType: TaxObligationType; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
+            try {
+                prnResults = await generatePrnAfterFiling(
+                    job,
+                    page,
+                    kraPin,
+                    prnPeriodFrom,
+                    payload.periodTo || '',
+                    taxObligationType
+                );
+                if (prnResults.length > 0) {
+                    await jobStore.updateJob(jobId, {
+                        'result.prnResults': prnResults,
+                    } as any);
+                }
+            } catch (prnErr: any) {
+                console.error(`[Worker][${jobId}] Standalone PRN generation error:`, prnErr.message);
+                await appendJobLog(job, `Standalone PRN generation error: ${prnErr.message}`, { progress: 96, level: 'info' });
             }
-             
+
+            const successfulPrns = prnResults.filter((r) => r.prnPath && !r.error);
+            if (successfulPrns.length === 0) {
+                throw new Error(`PRN generation failed: no PRNs were generated`);
+            }
+
             if (context) await context.close();
             if (browser) await browser.close();
 
-            // Generate a signed URL for the standalone PRN so the frontend can download it
-            let prnUrl = prnResult.prnPath?.replace(/\\/g, '/');
-            try {
-                if (prnResult.prnGcsPath) {
-                    prnUrl = await getSignedDownloadUrl(prnResult.prnGcsPath, 60 * 24 * 7); // 7 days
+            // Persist PRN references on the client document so the dashboard can show download links
+            if (payload.clientId) {
+                try {
+                    const obligationCol =
+                        taxObligationType === 'paye' ? 'paye'
+                        : taxObligationType === 'turnover_tax' ? 'tot'
+                        : taxObligationType === 'monthly_rental_income' ? 'mri'
+                        : taxObligationType === 'vat' ? 'vat'
+                        : null;
+
+                    if (obligationCol) {
+                        const clientUpdate: Record<string, any> = {};
+                        const primaryPrn = successfulPrns[0];
+                        let prnUrl: string | undefined;
+                        try {
+                            if (primaryPrn.prnGcsPath) {
+                                prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                            }
+                        } catch (e: any) {
+                            console.error(`[Worker][${jobId}] Failed to generate client PRN signed URL:`, e.message);
+                        }
+                        clientUpdate[`${obligationCol}PrnUrl`] = prnUrl || primaryPrn.prnPath!.replace(/\\/g, '/');
+                        if (taxObligationType === 'paye') {
+                            // Merge with existing payePrnResults so a partial re-run does not
+                            // wipe out PRNs that were generated successfully in an earlier job.
+                            const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
+                            const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
+                            const generatedMap = new Map(successfulPrns.map((r) => [r.taxType, r]));
+                            const merged = [
+                                ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
+                                ...successfulPrns.map((r) => ({
+                                    taxType: r.taxType,
+                                    prnPath: r.prnPath,
+                                    prnGcsPath: r.prnGcsPath,
+                                })),
+                            ];
+                            clientUpdate[`${obligationCol}PrnResults`] = merged;
+                        }
+                        await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                        await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} PRN tracking`, { progress: 95 });
+                    }
+                } catch (e: any) {
+                    console.error('[Worker] Failed to update client PRN tracking:', e.message);
+                    await appendJobLog(job, `Failed to update client PRN tracking: ${e.message}`, { progress: 95, level: 'warn' });
                 }
-            } catch (e: any) {
-                console.error(`[Worker][${jobId}] Failed to generate standalone PRN signed URL:`, e.message);
             }
 
-            return { receiptPath: '', receiptNumber: null, credentialUpdate, prnPath: prnUrl };
+            // Return the primary PRN URL for legacy consumers
+            const primaryPrn = successfulPrns[0];
+            let prnUrl = primaryPrn.prnPath?.replace(/\\/g, '/');
+            try {
+                if (primaryPrn.prnGcsPath) {
+                    prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                }
+            } catch (e: any) {
+                console.error(`[Worker][${jobId}] Failed to generate result PRN signed URL:`, e.message);
+            }
+
+            return { receiptPath: '', receiptNumber: null, credentialUpdate, prnPath: prnUrl, prnResults: successfulPrns };
         }
 
         const isNilReturnExplicit = (payload as any).isNil === true;
@@ -2865,23 +2944,28 @@ export async function processFilingJob(job: JobContext): Promise<{
 
             page.off('dialog', dialogHandler);
 
-            // Do NOT reload after submit — same re-submit issue as the "Next" button.
-            await waitForPortalReadyWithReload(page, job, {
-                description: 'Post-submit receipt page',
-                selectors: [
-                    'text=Return Receipt Generated',
-                    'text=Return Submitted successfully',
-                    'text=Acknowledgement Number',
-                    'text=Acknowledgment Receipt',
-                    'text=Acknowledgement Receipt',
-                    'text=Receipt Number',
-                ],
-                timeout: 60_000,
-                reloadAttempts: 0,
-            }).catch(async () => {
-                // The receipt button may legitimately be absent if KRA returned a blocking dialog.
+            // ── Wait for KRA to confirm the return was submitted successfully ────────
+            const successSelectors = [
+                'text=Return Receipt Generated',
+                'text=Return Submitted successfully',
+                'text=Acknowledgement Number',
+                'text=Acknowledgment Receipt',
+                'text=Acknowledgement Receipt',
+                'text=Receipt Number',
+            ];
+
+            let receiptPageReady = false;
+            try {
+                await waitForPortalReadyWithReload(page, job, {
+                    description: 'Post-submit receipt page',
+                    selectors: successSelectors,
+                    timeout: 60_000,
+                    reloadAttempts: 0,
+                });
+                receiptPageReady = true;
+            } catch {
                 await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-            });
+            }
 
             const settledPortalMessage = await waitForMatchingPortalMessage(
                 page,
@@ -2892,6 +2976,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                 postSubmitPortalMessage = settledPortalMessage;
             }
 
+            // PAYE-specific retry for "form not attached" errors
             const shouldRetryAfterSummary =
                 isPayeUpload
                 && submitAttempt === 1
@@ -2909,17 +2994,39 @@ export async function processFilingJob(job: JobContext): Promise<{
                 continue;
             }
 
+            // If KRA reported any submission error, fail the job immediately.
+            if (postSubmitPortalMessage) {
+                await captureDebugScreenshot(page, jobId, 'post-submit-error');
+                await appendJobLog(job, `KRA submission error: ${postSubmitPortalMessage}`, { progress: 80, level: 'error' });
+                throw new Error(postSubmitPortalMessage);
+            }
+
+            // If the success page did not appear, fail the job.
+            if (!receiptPageReady) {
+                await captureDebugScreenshot(page, jobId, 'post-submit-no-success');
+                const errorText = await page.$$eval(
+                    '.error-message, #errorDiv, [id*="error"], .errormessage, .validation-message, .alert-danger, .text-danger',
+                    (els: HTMLElement[]) => els.map((el) => (el.textContent || '').trim()).filter(Boolean).join(' | ')
+                ).catch(() => '');
+
+                if (errorText) {
+                    await appendJobLog(job, `KRA validation error prevented filing: ${errorText}`, { progress: 80, level: 'error' });
+                    throw new Error(`KRA rejected the return: ${errorText}`);
+                }
+
+                await appendJobLog(job, 'KRA did not confirm the return was submitted successfully. No receipt page detected.', { progress: 80, level: 'error' });
+                throw new Error('KRA did not confirm the return was submitted successfully. No receipt page detected.');
+            }
+
             // Wait a moment for KRA to render the receipt/acknowledgment link
             await page.waitForTimeout(1_500);
 
-            // First try Playwright locators for known KRA receipt link texts (more reliable than JS scanning)
+            // First try Playwright locators for known KRA receipt link texts
             const receiptLinkSelectors = [
                 'a:has-text("Download Returns Receipt")',
                 'a:has-text("Acknowledgment Receipt")',
                 'a:has-text("Acknowledgement Receipt")',
                 'a:has-text("Return Receipt")',
-                'a:has-text("Receipt")',
-                'a:has-text("Download")',
                 '#downloadReceipt',
                 'a[href*="downloadReturnsReceipt" i]',
                 'a[onclick*="downloadReturnsReceipt" i]',
@@ -2948,7 +3055,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                 }
             }
 
-            // Inspect all links on the receipt page to find the download link by its actual attributes
+            // Fallback: inspect all links but reject nav/error/problem links.
             if (!downloadMeta) {
                 receiptPageLinks = await page.$$eval(
                     'a',
@@ -2965,18 +3072,19 @@ export async function processFilingJob(job: JobContext): Promise<{
                     console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
                 }
 
-                // Find the download link by its onclick/href/id OR visible text (the actual handler KRA uses)
-                // Only skip obvious mainMenu/nav links that are hidden in submenus.
-                const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|click here|print/i;
+                const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|print/i;
+                const problemLinkPatterns = /reportProblem|report\s*problem|contactUs|contact\s*us|help|support/i;
                 downloadMeta = receiptPageLinks.find(
                     (link) =>
-                        (!link.className.toLowerCase().includes('mainmenu') ||
-                         link.text.toLowerCase().includes('receipt') ||
-                         link.text.toLowerCase().includes('download')) &&
+                        !problemLinkPatterns.test(link.href) &&
+                        !problemLinkPatterns.test(link.onclick) &&
+                        !problemLinkPatterns.test(link.text) &&
+                        !link.className.toLowerCase().includes('mainmenu') &&
                         !link.className.toLowerCase().includes('topmenu') &&
-                        (link.onclick.toLowerCase().includes('download') ||
-                         link.href.toLowerCase().includes('download') ||
-                         link.href.toLowerCase().includes('receipt') ||
+                        (link.onclick.toLowerCase().includes('downloadreturnsreceipt') ||
+                         link.onclick.toLowerCase().includes('downloadreceipt') ||
+                         link.href.toLowerCase().includes('downloadreturnsreceipt') ||
+                         link.href.toLowerCase().includes('downloadreceipt') ||
                          link.id.toLowerCase().includes('download') ||
                          link.id.toLowerCase().includes('receipt') ||
                          receiptLinkPatterns.test(link.text))
@@ -3027,30 +3135,9 @@ export async function processFilingJob(job: JobContext): Promise<{
             break;
         }
 
-        if (!downloadMeta && postSubmitPortalMessage) {
-            await appendJobLog(job, `KRA prevented receipt generation: ${postSubmitPortalMessage}`, { progress: 80, level: 'error' });
-            throw new Error(postSubmitPortalMessage);
-        }
-
-        if (!downloadMeta && submitDialogMessage && !confirmationOnlyDialogPattern.test(submitDialogMessage)) {
-            await appendJobLog(job, `KRA prevented receipt generation: ${submitDialogMessage}`, { progress: 80, level: 'error' });
-            throw new Error(submitDialogMessage);
-        }
-
         if (!downloadMeta) {
-            // KRA may have returned a validation error instead of the receipt page.
-            // Scan for visible error text so the user gets a meaningful message.
-            const errorText = await page.$$eval(
-                '.error-message, #errorDiv, [id*="error"], .errormessage, .validation-message, .alert-danger, .text-danger',
-                (els: HTMLElement[]) => els.map((el) => (el.textContent || '').trim()).filter(Boolean).join(' | ')
-            ).catch(() => '');
-
-            if (errorText) {
-                await appendJobLog(job, `KRA validation error prevented filing: ${errorText}`, { progress: 80, level: 'error' });
-                throw new Error(`KRA rejected the VAT return: ${errorText}`);
-            }
-
-            await appendJobLog(job, `No download link found on the receipt page. Available links: ${JSON.stringify(receiptPageLinks)}`, { progress: 80, level: 'error' });
+            await captureDebugScreenshot(page, jobId, 'receipt-link-not-found');
+            await appendJobLog(job, `No valid receipt download link found on the post-submit page. Available links: ${JSON.stringify(receiptPageLinks)}`, { progress: 80, level: 'error' });
             throw new Error('Could not locate the receipt download link on the KRA receipt page');
         }
 
@@ -3244,8 +3331,10 @@ export async function processFilingJob(job: JobContext): Promise<{
                 await appendJobLog(job, `Receipt PDF validated and saved`, { progress: 92 });
             }
         } catch (downloadErr: any) {
-            console.warn(`[Worker][${jobId}] Receipt download failed (continuing without receipt):`, downloadErr.message);
-            await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. Filing succeeded — continuing without receipt.`, { progress: 90, level: 'info' });
+            await captureDebugScreenshot(page, jobId, 'receipt-download-failed');
+            console.error(`[Worker][${jobId}] Receipt download failed:`, downloadErr.message);
+            await appendJobLog(job, `Receipt download failed: ${downloadErr.message}. The return may have been filed, but without a receipt the job cannot be marked successful.`, { progress: 90, level: 'error' });
+            throw new Error(`Receipt download failed: ${downloadErr.message}`);
         }
 
         // ── Step 13: Inline PRN generation after successful filing ───────────────────
@@ -3361,12 +3450,21 @@ export async function processFilingJob(job: JobContext): Promise<{
                             console.error(`[Worker][${jobId}] Failed to generate client PRN signed URL:`, e.message);
                         }
                         clientUpdate[`${obligationCol}PrnUrl`] = prnUrl || primaryPrn.prnPath!.replace(/\\/g, '/');
-                        // Store all PRN results in a sub-field for multi-PRN tracking (e.g. PAYE)
-                        clientUpdate[`${obligationCol}PrnResults`] = successfulPrns.map(r => ({
-                            taxType: r.taxType,
-                            prnPath: r.prnPath,
-                            prnGcsPath: r.prnGcsPath,
-                        }));
+                        // Store all PRN results in a sub-field for multi-PRN tracking (e.g. PAYE).
+                        // Merge with existing results so partial re-runs do not delete previously
+                        // generated PRNs.
+                        const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
+                        const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
+                        const generatedMap = new Map(successfulPrns.map((r) => [r.taxType, r]));
+                        const merged = [
+                            ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
+                            ...successfulPrns.map((r) => ({
+                                taxType: r.taxType,
+                                prnPath: r.prnPath,
+                                prnGcsPath: r.prnGcsPath,
+                            })),
+                        ];
+                        clientUpdate[`${obligationCol}PrnResults`] = merged;
                     }
                 }
 
@@ -3426,6 +3524,7 @@ export async function processFilingJob(job: JobContext): Promise<{
             receiptNumber,
             credentialUpdate,
             prnPath: prnUrl,
+            prnResults: prnResults.length > 0 ? prnResults.filter((r) => r.prnPath && !r.error) : undefined,
         };
     } catch (err) {
         const error = err as Error;

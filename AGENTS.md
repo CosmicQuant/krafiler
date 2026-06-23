@@ -5,205 +5,185 @@ Compact guide for agents working in this repo. Every line answers "would I miss 
 ## Architecture
 
 - **Monorepo** (`npm workspaces`): `frontend/` (React 18 + Vite + Tailwind) and `backend/` (Express 4 + TypeScript).
-- **Two subsystems**: (1) **Practice Management** — conventional CRUD (HR, payroll, attendance, leave, loans, documents); (2) **KRA Filing** — Frontend → Express API → Pub/Sub → Playwright worker. Worker runs at `concurrency: 1` to avoid KRA rate limits.
-- **Database**: SQLite (`backend/src/db/krafiler.sqlite`) via Kysely (preferred) + `better-sqlite3`. Legacy `sqlite3`/`sqlite` connection (`openDb()`) still used in some routes and the worker. The DB file is gitignored and created on first API startup by `initDb()`.
-- **Frontend stack**: Tailwind CSS, React Router v7, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
-- **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`, `excise_duty`.
+- **Two subsystems**: (1) **Practice Management** — HR/payroll/attendance/leave/loans/documents; (2) **KRA Filing** — Frontend → Express API → Pub/Sub → Playwright worker.
+- **Primary database is Firestore**, not SQLite. All practice-management route files are `*.firestore.ts` and read/write Firestore collections. SQLite files under `backend/src/db/` are legacy artifacts.
+- **Authentication is Firebase Auth** (Google sign-in) plus a dev bypass token.
+- **Queue is Cloud Pub/Sub**, not Redis/BullMQ. The worker is an HTTP server that receives Pub/Sub push messages.
+- **Hardcoded GCP project**: backend (`backend/src/lib/firebaseAdmin.ts`) and frontend (`frontend/src/lib/firebase.ts`) both point to `taxpulse-498006` by default.
+- **Return types supported**: `income_tax_resident_individual`, `income_tax_non_resident_individual`, `monthly_rental_income` (MRI), `income_tax_company`, `turnover_tax` (ToT), `vat`, `paye`, `nssf`, `excise_duty`. (`nita` and `affordable_housing` are generated as PRNs after PAYE filing, not filed standalone.)
 - **VAT has two modes**: `prepareVatOnly` (download auto-populated data & generate ZIP without filing) and `upload` (file the prepared ZIP).
+- **README.md and DEPLOYMENT.md are stale** — they describe an older Redis/BullMQ + SQLite architecture. Trust executable sources (`package.json`, `server*.ts`, route files, `deploy.sh`) over those docs.
 
-## Entry Points
+## Backend Entry Points
 
-| Component | File | Start Command |
-|---|---|---|
-| Express API | `backend/src/server.ts` | `cd backend && npm run dev` |
-| Pub/Sub Worker | `backend/src/server.worker.ts` | `cd backend && npm run start:worker-service` |
-| React Frontend | `frontend/src/main.tsx` | `cd frontend && npm run dev` |
+| Component | File | Default Port | Purpose |
+|---|---|---|---|
+| Full API | `backend/src/server.ts` | 3001 | Local dev; mounts every route including tax filing. |
+| Compute API | `backend/src/server.compute.ts` | 3001 | Cloud Run entrypoint; same routes as `server.ts`. |
+| Worker service | `backend/src/server.worker.ts` | 8080 | Receives Pub/Sub push POSTs at `/process-job`. |
 
-Root-level shortcuts:
-- `npm run dev:backend` / `npm run dev:frontend`
+Start commands:
+- Full API dev: `cd backend && npm run dev`
+- Compute API (prod): `cd backend && npm run build && npm run start:compute`
+- Worker service (prod): `cd backend && npm run build && npm run start:worker-service`
+- Frontend dev: `cd frontend && npm run dev`
+- Root shortcuts: `npm run dev:backend`, `npm run dev:frontend`
 
-Utility scripts (backend):
-- `npm run tot` — one-off ToT filing script (`src/scripts/file-kra-tot-return.ts`)
-- `npm run generate:tot` — ToT ZIP generator (`src/scripts/kra-tot-generator.ts`)
-- `npm run start` / `npm run start:compute` / `npm run start:worker-service` / `npm run start:tot` — production runs from compiled `dist/`
+Utility scripts:
+- `cd backend && npm run tot` — one-off ToT filing script.
+- `cd backend && npm run generate:tot` — ToT ZIP generator.
 
 ## Critical Setup
 
 1. `npm install` in both `frontend/` and `backend/`.
 2. `cd backend && npx playwright install chromium`
-3. `cp backend/.env.example backend/.env` — fill `GEMINI_API_KEY`, `JWT_SECRET` (employee portal), and `SMTP_*` for payslip emailing.
-4. Start API → Worker → Frontend (three terminals).
+3. `cp backend/.env.example backend/.env` — note that `.env.example` is stale/incomplete; you must add `GEMMA4_API_KEY` (captcha) and `GOOGLE_APPLICATION_CREDENTIALS` / `CLOUD_STORAGE_BUCKET` if not using ADC defaults.
+4. Authenticate to GCP for Firestore/Pub/Sub: `gcloud auth application-default login` (or set `GOOGLE_APPLICATION_CREDENTIALS`).
+5. Set required vars in `backend/.env`: `GEMMA4_API_KEY` (captcha solving — the worker does not use `GEMINI_API_KEY`, even though `.env.example` still references it), `JWT_SECRET`, and `SMTP_*` if emailing payslips.
+6. For local dev without Firebase Auth, set `DEV_BYPASS_AUTH=true` in `backend/.env` and `VITE_DEV_BYPASS_AUTH=true` in `frontend/.env`.
+7. Start API → Worker → Frontend (three terminals). The frontend dev server runs on `http://localhost:3000` and proxies `/api` → `http://localhost:3001`.
 
-Frontend dev server: `http://localhost:3000`, proxies `/api` → backend `http://localhost:3001`.
+> End-to-end KRA filing locally requires the worker reachable at `localhost:8080/process-job` so Pub/Sub can push to it. In GCP this is automatic via `deploy.sh`; locally you may need to point a Pub/Sub push subscription at your local tunnel or invoke `/process-job` manually with the `jobId`.
+> 
+> The `filing-jobs` Pub/Sub topic must exist before the API publishes; `ensureTopicExists()` is defined but currently unused. `deploy.sh` creates it, but for local/dev projects create it manually if needed.
 
-## Type Checking
+## Type Checking, Tests & Lint
 
-- Backend: `cd backend && npx tsc --noEmit`
-- Frontend: `cd frontend && npx tsc --noEmit` (note: frontend tsconfig has `noUnusedLocals`, `noUnusedParameters` — expect extra strictness)
-- No tests, no lint config, no formatter config exist.
-- **Backend uses `--transpile-only`** in dev mode (`ts-node-dev --transpile-only`), so a passing `tsc --noEmit` is the only safety net — runtime errors can pass silently.
+| Command | Package | Notes |
+|---|---|---|
+| `npm run test` | backend | `tsc && node --test dist/services/payrollEngine.test.js`. Passes. |
+| `npx tsc --noEmit` | backend | Required safety net; dev server uses `ts-node-dev --transpile-only`, so runtime errors can slip through. |
+| `npx tsc --noEmit` | frontend | `noUnusedLocals` / `noUnusedParameters` enabled — stricter than backend. |
+| `npx eslint .` | either | ESLint 9 flat configs exist in both packages but are not wired to npm scripts. |
 
-## Database
+- `.prettierrc` exists at repo root (4-space tabs, single quotes, 120 width) but is not wired to an npm script.
+- `backend/tsconfig.json` excludes `src/db/migrations`, `src/db/schema.ts`, `src/db/kysely.ts`, `src/scripts/migrateSqliteToFirestore.ts`, and `src/services/complianceFileGenerator.ts`.
 
-- SQLite file at `backend/src/db/krafiler.sqlite` (gitignored; auto-created on API startup).
-- Migrations auto-run on API startup (`initDb()` in `server.ts`). 31 migration files (`001`–`032`, `016` is missing) in `backend/src/db/migrations/` run via Kysely's `migrateToLatest()`.
-- Kysely schema: `backend/src/db/schema.ts`. Prefer Kysely for new code; legacy `sqlite3`/`sqlite` still used in some routes and the worker.
-- Seed data: on first run, a default client (`P052262687K` — Golden Karafuu Investment Limited) is inserted and the workbook template is copied to `frontend/public/clients/`.
-- **Work schedule architecture** (`migrations/025`–`027`): `work_schedules` (per-weekday hours config as JSON), `holidays` (date, isRecurring, holidayType), and `employees.workScheduleId`/`offDay`. The payroll engine uses these for prorating `basicPay` against scheduled work days + holidays.
-- **Holiday seeding**: `POST /api/clients/:clientId/holidays/seed-kenyan` generates Kenyan public holidays (Easter via Gaussian algorithm, Eid al-Fitr via lookup table). Use `date` in `YYYY-MM-DD` format.
-- **When absentDays=0**: the approval endpoint skips all `attendance_records` creation. **Old code** created Absent records for ALL work days due to `slice(-0)` returning the entire array. The endpoint now **cleans up old auto-generated `attendance_records`** (matching `notes LIKE '%review%'`) before re-approving.
-- **Performance**: `attendance-payroll-approve` uses batch `INSERT`s, a `Set` for O(1) existing-record lookups, and skips employees with `absentDays=0` entirely.
-- **"Present" is the default** in the attendance calendar: days without individual records show `P` (Present) not `·`, reflecting the 100% attendance assumption.
-- Root `package.json` has `adm-zip` and `sqlite3` deps that belong in `backend/` — ignore if searching dependency sources.
-- `DB_PATH` env var overrides the SQLite location (default: alongside `kysely.ts`).
+## Database & Auth
 
-## Environment Variables (Backend)
+- **Firestore**: `backend/src/lib/firebaseAdmin.ts` initializes Firebase Admin with Application Default Credentials. Set `GOOGLE_APPLICATION_CREDENTIALS` for explicit service-account keys, or use `gcloud auth application-default login` for local dev.
+- **No migrations to run** — Firestore is schemaless. Legacy SQLite/Kysely files are gone or excluded from compilation.
+- **Dev bypass**: `DEV_BYPASS_AUTH=true` lets the frontend send `Authorization: Bearer dev` and the backend treat it as `uid=dev-user` with an active `firm` plan.
+- **Subscription limits**: `checkSubscriptionLimits` middleware reads the `users/{uid}` doc and enforces client/filing caps from `PLAN_CONFIG`. It auto-creates a default `starter` user doc if missing.
+- **Auth context**: frontend Firebase client config is hardcoded in `frontend/src/lib/firebase.ts`; `frontend/src/services/api.ts` attaches the Firebase ID token (or `dev` token in dev mode) to every request.
 
-From `.env.example` and additional code-read vars:
+## Environment Variables
+
+Key backend vars from `.env.example` and code:
 
 | Variable | Purpose |
 |---|---|
-| `JWT_SECRET` | Secret for signing employee portal JWT tokens |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` | Captcha solving via Gemini Vision API |
-| `USE_PUBSUB=true` | Enable Pub/Sub mode (always true in current builds) |
-| `PUBSUB_TOPIC` | Pub/Sub topic name for filing jobs (default: `filing-jobs`) |
-| `PORT` / `ALLOWED_ORIGIN` | Express server port (default 3001) and CORS origin (default http://localhost:3000) |
-| `NODE_ENV` | `development` or `production` (changes Playwright headless behavior in some scripts) |
-| `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Referenced by `encryption.ts` — **currently disabled** for speed (plaintext `kraPassword` passes through payload) |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `EMAIL_FROM` | SMTP credentials for payslip/P9 emailing (leave unset for dev JSON transport). |
-| `PLAYWRIGHT_HEADLESS=false` | `true` for headless mode |
-| `PLAYWRIGHT_SLOW_MO=0` | Millisecond delay between Playwright actions (debugging) |
-| `KRA_BROWSER_CHANNEL=chrome` | Browser channel: `chrome` or `msedge` |
-| `KRA_BROWSER_EXECUTABLE_PATH` | Exact path to system browser |
-| `KRA_REUSE_BROWSER_PROFILE=true` | Persist browser profile across jobs (cookies cleared each run) |
-| `KRA_BROWSER_PROFILE_DIR` | Profile directory path |
-| `KRA_OTP_CODE` | Pre-set OTP for mobile verification (bypasses SMS fetch) |
-| `KRA_DEBUG_ARTIFACTS=false` | Dump login page elements, screenshots, nav metadata to console |
-| `TEMP_DIR` | Temporary directory for receipts/captchas (default: `/tmp` or `C:\Temp`) |
-| `DB_PATH` | Override SQLite DB location (not in `.env.example`) |
-| `RECEIPTS_DIR` | Receipt storage directory (not in `.env.example`) |
-| `AWS_*` / `S3_BUCKET_NAME` | Defined in `.env.example`, **not wired** — receipts stay local |
-| `WEBHOOK_URL` / `WEBHOOK_SECRET` | Defined, **not wired** — notification is a mock log |
+| `JWT_SECRET` | Signs employee-portal JWT tokens. |
+| `GEMMA4_API_KEY` / `GEMMA4_MODEL` | Solves KRA arithmetic captcha via Google's generativelanguage API (default model `gemma-4-31b-it`). `GEMINI_API_KEY` in `.env.example` is stale and unused. |
+| `USE_PUBSUB` | Enable Pub/Sub queueing. Current code is Pub/Sub-only. |
+| `PUBSUB_TOPIC` | Topic name for filing jobs (default: `filing-jobs`). |
+| `PORT` | API default `3001`; worker service default `8080`. |
+| `ALLOWED_ORIGIN` | CORS origin, default `http://localhost:3000`. |
+| `DEV_BYPASS_AUTH` | `true` for local dev only; never in production. |
+| `PLAYWRIGHT_HEADLESS` | `false` shows the browser window (default in Dockerfile). |
+| `PLAYWRIGHT_SLOW_MO` | Millisecond delay between Playwright actions (debug). |
+| `KRA_BROWSER_CHANNEL` | `chrome` or `msedge`. |
+| `KRA_BROWSER_EXECUTABLE_PATH` | Exact browser path. |
+| `KRA_REUSE_BROWSER_PROFILE` | Persist profile across jobs. |
+| `KRA_BROWSER_PROFILE_DIR` | Profile directory path. |
+| `KRA_OTP_CODE` | Pre-set OTP for mobile verification. |
+| `KRA_DEBUG_ARTIFACTS` | Dump login page debug info. |
+| `TEMP_DIR` | Temp dir for receipts/captchas (default `/tmp` or `C:\Temp`). |
+| `RECEIPTS_DIR` | Receipt storage directory (default `receipts/` relative to project root). |
+| `CLOUD_STORAGE_BUCKET` / `FIREBASE_PROJECT_ID` / `GOOGLE_APPLICATION_CREDENTIALS` | GCP/Firebase wiring. Cloud Storage is actively used for documents, receipts, and PRNs. |
+| `SMTP_*` / `EMAIL_FROM` | SMTP for payslip/P9 mass emailing; leave unset for JSON transport in dev. |
+| `PAYSTACK_SECRET_KEY` / `PAYSTACK_PUBLIC_KEY` | Paystack subscription integration. |
+| `AWS_*` / `S3_BUCKET_NAME` / `WEBHOOK_URL` / `WEBHOOK_SECRET` | Defined but not wired; use Cloud Storage and Firestore instead. |
 
 ## Worker Behavior & Quirks
 
-- **Stealth**: `puppeteer-extra-plugin-stealth` applied once at module load.
-- **Captcha**: Solved via Gemini Vision API. Tesseract fallback function exists but is dead code — only Gemini is called in the main login flow.
-- **Password changes**: KRA forced password resets handled automatically; new password surfaced in job status (`credentialUpdate`).
-- **Mobile verification**: Worker waits for OTP — provide via `otpCode` in payload or `KRA_OTP_CODE` env var. No SMS gateway integration exists.
-- **Browser launch strategy**: tries `KRA_BROWSER_EXECUTABLE_PATH` → Windows system browsers (Chrome/Edge) → Playwright channel → bundled Chromium.
-- **Job dedup**: API checks for pending (waiting/active/delayed) jobs with identical parameters before enqueuing — returns 409 with existing `jobId`.
-- **Receipts**: Stored locally under `receipts/<jobId>/receipt.pdf`, served via `/api/receipts/...`. Server hardcodes `receipts/` relative to project root; storage utility respects `RECEIPTS_DIR` env var (mismatch possible if overridden).
-- **Job queue settings**: `attempts: 1`, no retries. KRA validation/credential errors surface immediately.
-- **Cancellation**: Jobs can be cancelled mid-execution via `POST /api/tax/filing-status/:jobId/cancel`. Worker polls for `cancelRequestedAt` at checkpoints.
-- **PAYE/VAT**: Upload artifacts are resolved from URLs (downloaded to `TEMP_DIR`) or local filesystem paths — see `resolveUploadArtifactPath()`.
-
-## API Routes
-
-Routes are mounted in `backend/src/server.ts:87-104`:
-
-### `/api/tax` — KRA Filing (`tax.routes.ts`)
-- `POST /api/tax/file-return` (+ legacy `/api/tax/file-nil-return`) — Enqueue filing job. Rate limited: 10 req / 15 min per IP.
-- `GET /api/tax/filing-status/:jobId` — Poll job status/progress/stepLogs.
-- `POST /api/tax/filing-status/:jobId/cancel` — Request job cancellation (graceful checkpoint-based).
-- `POST /api/tax/file-nssf-return` — NSSF filing (reads credentials from uploaded Master CSV rows 3-4).
-- `POST /api/tax/generate-tot-zip` — Generate ToT ZIP package without filing.
-
-### `/api/payroll` — Payroll Processing (`payroll.routes.ts`)
-- `POST /api/payroll/generate-unified` — Payroll processing.
-
-### `attendance-payroll-approve` — Review & Approve Attendance (`payroll-runs.routes.ts`)
-- On approval, deletes old auto-generated `attendance_records` (notes LIKE '%review%'), then creates new ones matching approved `absentDays`.
-- **Batch approach**: bulk `INSERT` into `attendance_payroll_approvals`, bulk `INSERT` into `attendance_records`, and a single `DELETE` + `INSERT` for overtime — all in one transaction per employee (skips entirely if `absentDays=0`).
-- **Performance gotcha**: `slice(-absentCount)` when `absentCount=0` returns the ENTIRE array (not empty). Always guard with `if (absentCount > 0)` before slicing.
-
-### `/api/clients` — Practice Management
-All mounted under `/api/clients`:
-- `clients.routes.ts` — Client CRUD and Master CSV upload.
-- `employees.routes.ts` — Employee management.
-- `leave.routes.ts` — Leave requests and approvals.
-- `loans.routes.ts` — Loan management.
-- `attendance.routes.ts` — Attendance tracking.
-- `reports.routes.ts` — Reports.
-- `email.routes.ts` — Email sending (payslips, P9s).
-- `payroll-runs.routes.ts` — Payroll run lifecycle.
-- `departments.routes.ts` — Department management.
-- `documents.routes.ts` — Document upload/storage.
-- `audit.routes.ts` — Audit log queries.
-- `kpi.routes.ts` — KPI tracking.
-
-### `/api/auth` — Authentication (`auth.routes.ts`)
-- Employee portal login (JWT-based).
-
-### `/api/portal` — Employee Portal (`portal.routes.ts`)
-- Employee self-service endpoints (payslips, P9s, leave requests).
-
-### Other
-- `GET /health` — Health check.
-
-## Backend Services (non-worker)
-
-Located at `backend/src/services/`:
-- `payrollEngine.ts` — Core payroll computation logic.
-- `emailService.ts` — SMTP email dispatch for payslips/P9s.
-- `auditService.ts` — Audit trail recording (used across routes).
-- `complianceFileGenerator.ts` — Generates SHA/PAYE/NSSF/ToT compliance ZIP packages.
-
-## Frontend Architecture
-
-- **Router**: `App.tsx` defines routes: `/` → PracticeLandingPage, `/dashboard` → PracticeDashboard. Old paths (`/accountant`, `/auditor`, `/payroll`, `/kra`) redirect to `/dashboard`.
-- **API client**: `services/api.ts` — Axios-based REST client.
-- **State**: `store/uiStore.ts` — Zustand store for UI state.
-- **Hooks**: `useClients.ts`, `useFilingActions.ts`, `useJobPolling.ts`, `useClientModal.ts` — TanStack Query wrappers in `hooks/`.
+- **Concurrency**: Worker Cloud Run is deployed with `--concurrency 1 --max-instances 1` to avoid KRA rate limits.
+- **No retries**: Job `attempts` are 1; KRA validation/credential errors surface immediately.
+- **Always returns HTTP 200**: `/process-job` acks every successfully parsed Pub/Sub message, even if the job itself fails. Only malformed messages or missing jobs return non-2xx.
+- **Dedup**: API rejects identical pending (waiting/active) filing jobs with 409 and the existing `jobId`.
+- **Captcha**: Solved via Gemma 4 Vision using `GEMMA4_API_KEY`/`GEMMA4_MODEL`; Tesseract code exists but is unused.
+- **Password resets**: KRA forced password changes are handled automatically; the new password is returned in `credentialUpdate`.
+- **OTP**: Provide via payload `otpCode` or `KRA_OTP_CODE` env var; no SMS gateway integration.
+- **Browser launch**: tries `KRA_BROWSER_EXECUTABLE_PATH` → Windows system Chrome/Edge → Playwright channel → bundled Chromium.
+- **Receipts**: stored locally under `receipts/<jobId>/receipt.pdf` and uploaded to Cloud Storage; `/api/receipts/*` serves local first, then streams from GCS (auth-protected).
+- **Cancellation**: `POST /api/tax/filing-status/:jobId/cancel`; worker polls `cancelRequestedAt` at checkpoints.
+- **PAYE/VAT uploads**: artifacts resolved from URLs (downloaded to `TEMP_DIR`) or local filesystem paths via `resolveUploadArtifactPath()`.
 
 ## Worker Services
 
 Located at `backend/src/workers/services/`:
-- `LoginService.ts` — Defined but **dead code** (never instantiated); login+captcha is inline in the worker.
-- `NilReturnService.ts` — Defined but **dead code** (never instantiated); nil returns are handled inline.
+- `LoginService.ts`, `NilReturnService.ts` — Defined but **dead code** (never instantiated); login and nil returns are handled inline in the worker.
 - `MriFilingService.ts`, `TotFilingService.ts`, `VatFilingService.ts`, `PayeFilingService.ts` — Per-return-type filing.
 - `NssfService.ts` — NSSF portal automation.
 - `PrnService.ts` — Payment Registration Number (PRN) generation.
 - `BrowserService.ts`, `NavigationService.ts`, `ReceiptService.ts` — Shared helpers.
 
+## API Routes
+
+Routes are mounted in `backend/src/server.ts:101-138` and `backend/src/server.compute.ts:100-136`.
+
+### `/api/tax` — KRA Filing (`backend/src/api/tax.routes.ts`)
+- `POST /api/tax/file-return` (+ legacy `POST /api/tax/file-nil-return`) — enqueue filing job. Rate limited: 10 req / 15 min per IP (`server.ts`); 100 req / 15 min (`server.compute.ts`).
+- `GET /api/tax/filing-status/:jobId` — poll status/progress/stepLogs.
+- `POST /api/tax/filing-status/:jobId/cancel` — request cancellation.
+- `POST /api/tax/file-nssf-return` — NSSF filing.
+- `POST /api/tax/generate-tot-zip` — generate ToT ZIP without filing.
+
+### Practice Management routes (`backend/src/api/*.firestore.ts`)
+All mounted under `/api/clients` unless noted:
+- `clients.firestore.ts` — clients and Master CSV upload.
+- `employees.firestore.ts` — employees.
+- `leave.firestore.ts` — leave.
+- `loans.firestore.ts` — loans.
+- `attendance.firestore.ts` — attendance.
+- `reports.firestore.ts` — reports.
+- `email.firestore.ts` — mass emailing.
+- `payroll-runs.firestore.ts` — payroll run lifecycle.
+- `payroll.firestore.ts` — payroll processing.
+- `departments.firestore.ts` — departments.
+- `documents.firestore.ts` — documents.
+- `audit.firestore.ts` — audit log.
+- `kpi.firestore.ts` — KPIs.
+- `work-schedules.firestore.ts` — work schedules.
+- `holidays.firestore.ts` — holidays.
+- `subscriptions.firestore.ts` — Paystack subscriptions and `PLAN_CONFIG`.
+- `auth.firestore.ts` — employee portal JWT login (mounted at `/api/auth`).
+- `portal.firestore.ts` — employee self-service (mounted at `/api/portal`).
+
+### Other
+- `GET /health` — health check.
+- `GET /api/receipts/*` — auth-protected receipt download.
+- `POST /api/subscriptions/webhook` — public Paystack webhook.
+
+## Frontend Architecture
+
+- **Stack**: React 18, Vite, Tailwind CSS, React Router v6, react-hook-form + zod, TanStack Query, Zustand, framer-motion, lucide-react.
+- **Routes** (`frontend/src/App.tsx`): `/` → landing, `/login` → Firebase login, `/dashboard/*` → protected dashboard, `/subscription` → plan page. Legacy `/accountant`, `/auditor`, `/payroll`, `/kra` redirect to `/dashboard`.
+- **API client**: `frontend/src/services/api.ts` — fetch-based wrapper that injects the Firebase ID token (or `dev` token).
+- **State**: `frontend/src/store/uiStore.ts` — Zustand UI store.
+
+## Deployment
+
+- `deploy.sh` builds and deploys: Cloud Build → Cloud Run (`krafiler-api` + `krafiler-worker`) → Firebase Hosting, plus Pub/Sub topic/subscription.
+- Two Dockerfiles: `backend/Dockerfile` (worker, includes Playwright + xvfb) and `backend/Dockerfile.compute` (API, no browser).
+- `frontend/firebase.json` rewrites `/api/**` to the `krafiler-api` Cloud Run service in `us-central1`.
+- `deploy.sh` correctly reminds you to set `GEMMA4_API_KEY` on the worker after deploy.
+
+## Payroll Engine Gotchas
+
+- **Work schedule proration**: `computePayrollEntry` accepts a work-schedule config and holiday list. `getScheduledWorkDays()` (excludes holidays) drives proration; `getScheduledDaysIncludingHolidays()` (includes holidays) drives rate calculations. `getTotalScheduledHours()` sums per-day hours for the month.
+- **Hourly rate rounding**: rounded to 4 decimal places.
+- **Dynamic adjustments**: allowances increase benefits/gross, non-statutory deductions increase `otherDeductions`.
+- **Ledger-based loans**: `loan_transactions` record deductions; `remainingInstallments` only mutates on finalize, not on draft generation.
+- **Finalize/rollback**: `lockedAt` on the run/entries tracks lock state. Finalize creates loan transactions and warns (but does not block) if net pay drops below 1/3 of gross pay.
+- **Payslip PDF**: reads stored `attendanceDeduction`, `unpaidLeaveDeduction`, and `basicPay` from the payroll entry; it does not recompute rates on the fly.
+
 ## Important Constraints
 
-- **Do not add retries to filing jobs** — KRA errors must fail fast and surface to the user.
-- **Do not log passwords** — plaintext `kraPassword` exists in job payloads; never log it or persist outside the payload.
+- **Do not add retries** to filing jobs — KRA errors must fail fast.
+- **Do not log passwords** — `kraPassword` is plaintext in job payloads; never log or persist it outside the payload.
 - **Worker concurrency must stay at 1** — increasing it risks KRA IP bans.
-- **No CI, no tests, no lint rules** — verify by manual type-checking (`tsc --noEmit`) and local worker runs.
-- **No CI/CD pipelines** — there is no `.github/` directory at all.
-- **Duplicate filing guard**: the API rejects identical pending jobs — an agent modifying filing parameters should be aware of the dedup key.
+- **No CI/GitHub Actions** — `.github/` does not exist. Verify manually with `tsc --noEmit` and `npm run test`.
+- **Duplicate filing guard**: modifying filing parameters changes the dedup key; be aware when editing enqueue logic.
 - **Search policy**: `AGENTS-node_modules.md` prohibits reading/traversing `node_modules/` without explicit user instruction.
-- **Deployment**: `deploy.sh` and `DEPLOYMENT.md` cover GCP Cloud Run + Firebase Hosting. `frontend/firebase.json` rewrites `/api/**` → Cloud Run. Dockerfile at `backend/Dockerfile`.
-- **`receipts/` is git-ignored** (`.gitignore` line 19).
-- **Work schedule + holiday proration**: `computePayrollEntry` now accepts optional `workScheduleConfig` and `holidays[]` to prorate `basicPay` against scheduled work days instead of assuming 30 days. `getScheduledWorkDays()` helper counts days with `hours>0` from the config JSON and excludes holidays.
-- **Rate vs proration separation**: `getScheduledWorkDays()` (excludes holidays) is used for **proration** (`daysWorked`, `prorationFactor`). `getScheduledDaysIncludingHolidays()` (includes holidays) is used for **rate calculations** (`dailyRate`, `hourlyRate`, `unpaidLeaveDeduction`, `attendanceDeduction`). This ensures the contractual hourly rate reflects paid holidays.
-- **Total scheduled hours from work schedule config**: `getTotalScheduledHours(config, period)` sums the per-day hours from the work schedule JSON for every scheduled day in the month (including holidays). E.g., Mon-Fri=9 hrs, Sat=4 hrs → total = (25 × 9) + (1 × 4) = 229 hrs. This replaces the old `dailyHoursFromCheckInCheckOut × scheduledDays` which assumed every day had identical hours.
-- **Hourly rate rounding**: computed rate rounded to 4 decimal places (`Math.round((basicPay / totalScheduledHours) * 10000) / 10000`) for precision.
-- **Attendance grid consistency**: Frontend `AttendanceCalendarGrid` computes `hourlyRate` using `getTotalScheduledHours()` (same as backend), so the displayed `Std Hourly` matches the payslip rate.
-- **Payslip uses stored values directly**: `generatePayslipPDF` reads `entry.attendanceDeduction`, `entry.unpaidLeaveDeduction`, and `entry.basicPay` directly from the `payroll_entries` row. It does NOT recompute `hourlyRate`, `dailyRate`, or deductions on-the-fly — that was causing mismatches between the engine and the PDF.
-
-## Enterprise Payroll Pipeline
-
-### New Endpoints
-- `POST /api/payroll/calculate-preview` — Backend-driven single-row preview. Accepts all raw inputs (basicPay, carBenefit, meals, nonCash, housingBenefit, otherBenefits, otherPension, postRetMedical, mortgage, insuranceRelief, pwd, payStructure, period). Returns computed statutory values (grossPay, shaDeduction, nssfDeduction, ahlDeduction, taxablePay, payeTax, netPay, etc.). Called from frontend on cell blur with 300ms debounce.
-- `POST /api/clients/:clientId/payroll-runs/:id/finalize` — Locks the run, creates `loan_transactions` for each loan deduction, decrements `remainingInstallments`, validates 1/3 rule (warning only, not hard stop), marks run status as 'closed'.
-- `POST /api/clients/:clientId/payroll-runs/:id/rollback` — Unlocks the run, deletes all `loan_transactions` for the run, restores `remainingInstallments` on loans, deletes all `payroll_adjustments` for the run, clears `lockedAt`.
-- `GET /api/clients/:clientId/payroll-runs/:id/adjustments` — List dynamic adjustments for a run.
-- `POST /api/clients/:clientId/payroll-runs/:id/adjustments` — Create a dynamic adjustment (employeeId, label, type, amount, isStatutory). Blocked if run is finalized.
-- `PUT /api/clients/:clientId/payroll-runs/:id/adjustments/:adjId` — Update an adjustment. Blocked if run is finalized.
-- `DELETE /api/clients/:clientId/payroll-runs/:id/adjustments/:adjId` — Delete an adjustment. Blocked if run is finalized.
-
-### Architecture Changes
-- **No frontend hardcoded math**: `calculateFields` removed from `PayrollWebView.tsx`. All computed columns (SHA, NSSF, AHL, Taxable Pay, PAYE, Net Pay) come from the backend preview endpoint or the generated entries API.
-- **Ledger-based loans**: `loan_transactions` table tracks every deduction. Loans only mutate `remainingInstallments` on `finalize`, never on draft `generate`. Rollback reverses transactions and restores balances.
-- **Dynamic adjustments**: `payroll_adjustments` table stores per-employee, per-run adjustments (allowance/deduction, free-form label, amount, isStatutory flag). `computePayrollEntry` accepts `adjustments: PayrollAdjustmentInput[]` parameter: allowances increase `benefits`/`grossPay` (and therefore statutory base), non-statutory deductions increase `otherDeductions`. `generateEntriesForRun` reads adjustments from DB and passes them to the engine.
-- **Lock/finalize/rollback**: `lockedAt` column on `payroll_runs` and `payroll_entries` tracks finalize state. Finalize creates loan transactions and locks; rollback reverses everything and unlocks.
-- **1/3 rule**: Minimum net pay must be >= 1/3 of gross pay. Checked in `finalize` endpoint; returns warnings but does NOT block. Admin can override.
-
-### New Tables
-- `loan_transactions` (`028_loan_transactions.ts`): clientId, employeeId, payrollRunId, loanId, amount, type, createdAt.
-- `payroll_adjustments` (`029_payroll_adjustments.ts` + `032_payroll_adjustments_employee_id.ts`): payrollRunId, employeeId, payrollEntryId, type, label, amount, isStatutory, createdAt.
-- `lockedAt` added to `payroll_runs` and `payroll_entries` (`030_add_locked_at.ts`).
-- `updatedAt` added to `payroll_entries` (`031_payroll_entries_updated_at.ts`).
+- **`receipts/` is git-ignored**.

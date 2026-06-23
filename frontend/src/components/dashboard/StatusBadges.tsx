@@ -1,6 +1,6 @@
 import { CheckCircle2, Clock, FileArchive } from 'lucide-react';
 import { TaxStatus } from '../../types';
-import { apiFetch } from '../../services/api';
+import { downloadAuthFile } from '../../utils/downloadAuthFile';
 
 export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: { status: TaxStatus; generatedAt?: string; lastFiledDate?: string; receiptUrl?: string }) {
     if (status === 'na') return <span className="text-slate-600">-</span>;
@@ -12,23 +12,9 @@ export function StatusBadge({ status, generatedAt, lastFiledDate, receiptUrl }: 
         </span>
     );
     if (status === 'filed') {
-        const handleDownload = async () => {
+        const handleDownload = () => {
             if (!receiptUrl) return;
-            try {
-                const res = await apiFetch(receiptUrl.replace(/^\/api/, ''));
-                if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-                const blob = await res.blob();
-                const objectUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = objectUrl;
-                a.download = receiptUrl.split('/').pop() || 'receipt.pdf';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(objectUrl);
-            } catch (e: any) {
-                alert('Failed to download receipt: ' + e.message);
-            }
+            downloadAuthFile(receiptUrl, 'receipt.pdf');
         };
         return (
             <span className="inline-flex flex-col items-center">

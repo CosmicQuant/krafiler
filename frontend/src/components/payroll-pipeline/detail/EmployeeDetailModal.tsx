@@ -378,9 +378,9 @@ export function EmployeeDetailModal({ employee, clientId, period, onClose, onSav
                                     <div className="space-y-1.5">
                                         {loans.map((loan: any) => (
                                             <div key={loan.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-                                                <span className="text-xs font-medium text-slate-700">{loan.type || 'Loan'}</span>
+                                                <span className="text-xs font-medium text-slate-700">{loan.loanType || 'Loan'} <span className="text-slate-500">{loan.employeeName || employee.employeeName || ''}</span></span>
                                                 <div className="flex items-center gap-3 text-xs text-slate-500">
-                                                    <span>KES {Number(loan.amount || 0).toLocaleString()}</span>
+                                                    <span>KES {Number(loan.principal || 0).toLocaleString()}</span>
                                                     <span>{loan.remainingInstallments || 0} left</span>
                                                     <span className="font-mono">KES {Number(loan.monthlyDeduction || 0).toLocaleString()}/mo</span>
                                                 </div>

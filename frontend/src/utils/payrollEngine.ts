@@ -13,6 +13,7 @@ export interface PayrollInput {
     dateLeft: string | null;
     employmentStatus: string;
     loanDeduction?: number;
+    otherDeductions?: number;
     unpaidLeaveDays?: number;
     payStructure?: 'fixed' | 'prorated';
     overtimePay?: number;
@@ -302,7 +303,7 @@ export function computePayrollEntry(
 
     const ahlDeduction = roundMoney(adjustedGrossPay * 0.015);
 
-    const otherDeductions = roundMoney(totalNonStatutoryDeductions);
+    const otherDeductions = roundMoney(input.otherDeductions ?? totalNonStatutoryDeductions);
 
     const otherPension = input.otherPension || 0;
     const nssfPensionCapped = Math.min(nssfDeduction + otherPension, 30000);
@@ -387,5 +388,6 @@ export function calculatePayrollPreview(
         taxablePay: computed.taxablePay,
         totalDeductions: computed.totalDeductions,
         loanDeduction: computed.loanDeduction,
+        otherDeductions: computed.otherDeductions,
     };
 }

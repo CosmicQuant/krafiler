@@ -217,8 +217,57 @@ async function readCsvRows(filePath: string): Promise<CsvRow[]> {
 }
 
 type ExtractVatPackageResult =
-    | { kind: 'csv'; nestedCsvDir: string; xlsFilePath?: string }
+    | { kind: 'csv'; nestedCsvDir: string; xlsFilePath: string }
     | { kind: 'xls-only'; nestedCsvDir: null; xlsFilePath: string };
+
+function findXlsFile(outputDir: string): string | undefined {
+    const extractedFiles = fsSync.readdirSync(outputDir);
+    return extractedFiles.find((f) => f.toLowerCase().endsWith('.xls') || f.toLowerCase().endsWith('.xlsx'));
+}
+
+type DepositDates = {
+    depositStartDate: string;
+    depositStartDatePid: string;
+};
+
+function parseSingleCellValue(sheetXml: string): Record<string, string> {
+    const singleCellMatch = sheetXml.match(/<SingleCellValue>([^<]*)<\/SingleCellValue>/);
+    if (!singleCellMatch) {
+        return {};
+    }
+
+    const raw = singleCellMatch[1];
+    const values: Record<string, string> = {};
+    // Entries are separated by @P_@ and each entry is name%V_@value
+    const entries = raw.split('@P_@');
+    for (const entry of entries) {
+        const separatorIndex = entry.indexOf('%V_@');
+        if (separatorIndex === -1) {
+            continue;
+        }
+        const name = entry.slice(0, separatorIndex);
+        const value = entry.slice(separatorIndex + '%V_@'.length);
+        if (name) {
+            values[name] = value;
+        }
+    }
+    return values;
+}
+
+function extractDepositDatesFromXls(xlsFilePath: string): DepositDates | null {
+    try {
+        const content = fsSync.readFileSync(xlsFilePath, 'utf8');
+        const values = parseSingleCellValue(content);
+        const depositStartDate = values['RetInf.DepositStartDate'];
+        const depositStartDatePid = values['RetInf.DepositStartDatePID'];
+        if (depositStartDate && depositStartDatePid) {
+            return { depositStartDate, depositStartDatePid };
+        }
+    } catch (err: any) {
+        console.warn(`Failed to extract deposit dates from ${xlsFilePath}: ${err.message}`);
+    }
+    return null;
+}
 
 async function extractVatPackage(sourceZipPath: string, outputDir: string): Promise<ExtractVatPackageResult> {
     // Verify the downloaded file is actually a ZIP
@@ -238,27 +287,34 @@ async function extractVatPackage(sourceZipPath: string, outputDir: string): Prom
     const outerZip = new AdmZip(sourceZipPath);
     outerZip.extractAllTo(outputDir, true);
 
+    const xlsFile = findXlsFile(outputDir);
+    const xlsFilePath = xlsFile ? path.join(outputDir, xlsFile) : undefined;
+
     const nestedZipPath = path.join(outputDir, 'csv.zip');
     if (fsSync.existsSync(nestedZipPath)) {
         const nestedDir = path.join(outputDir, 'nested-csv');
         await ensureDirectory(nestedDir);
         const nestedZip = new AdmZip(nestedZipPath);
         nestedZip.extractAllTo(nestedDir, true);
-        return { kind: 'csv', nestedCsvDir: nestedDir };
+        if (!xlsFilePath) {
+            throw new Error(
+                `Downloaded VAT package contained csv.zip but no .xls workbook. ` +
+                `Extracted contents: [${fsSync.readdirSync(outputDir).join(', ')}].`
+            );
+        }
+        return { kind: 'csv', nestedCsvDir: nestedDir, xlsFilePath };
     }
 
     // Some clients have no transactions for the period. KRA then returns a ZIP
     // that contains only the .xls workbook (no nested csv.zip). In that case we
     // generate a no-transaction VAT return using only the credit brought forward.
-    const extractedFiles = fsSync.readdirSync(outputDir);
-    const xlsFile = extractedFiles.find((f) => f.toLowerCase().endsWith('.xls') || f.toLowerCase().endsWith('.xlsx'));
-    if (xlsFile) {
-        return { kind: 'xls-only', nestedCsvDir: null, xlsFilePath: path.join(outputDir, xlsFile) };
+    if (xlsFilePath) {
+        return { kind: 'xls-only', nestedCsvDir: null, xlsFilePath };
     }
 
     throw new Error(
         `Downloaded VAT package did not contain the nested csv.zip file and no .xls workbook was found. ` +
-        `Extracted contents: [${extractedFiles.join(', ')}]. ` +
+        `Extracted contents: [${fsSync.readdirSync(outputDir).join(', ')}]. ` +
         `This usually means the wrong download button was clicked — ` +
         `the "Download Autopopulated VAT Return" button should produce a ZIP with csv.zip inside, ` +
         `but template download links only produce an .xls file.`
@@ -327,7 +383,7 @@ function mapSectionRows(params: {
             case 'B':
             case 'C': {
                 // Sales with PIN (10-col source; credit notes add J/K)
-                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, empty, CN invoice, CN date, empty, Rate]
+                // Output: 11 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, VAT, CN invoice, CN date, Rate]
                 const rate = section === 'B' ? 0.16 : 0.08;
                 vatAmount = round(taxableAmount * rate, 4);
                 const pin = (row[0] || '').trim();
@@ -340,10 +396,8 @@ function mapSectionRows(params: {
                     (row[5] || '').trim(),
                     formatXmlNumber(taxableAmount, 4),
                     formatXmlNumber(vatAmount, 4),
-                    '',
                     cnInvoice,
                     cnDate,
-                    '',
                     section === 'B' ? 'GNRL' : 'OTHR',
                 ];
                 break;
@@ -394,11 +448,13 @@ function mapSectionRows(params: {
             case 'F':
             case 'G': {
                 // Purchases with VAT (11-col source; credit notes add J/K)
-                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, CN invoice, CN date, Local, Rate]
+                // Output: 13 cols [Local/Digital Supply, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, CN invoice, CN date, Local/DST, Rate]
                 vatAmount = round(taxableAmount * (section === 'F' ? 0.16 : 0.08), 4);
                 const supplierPin = (row[1] || '').trim();
+                const locality = (row[0] || '').trim();
+                const classification = locality === 'Digital Supply' ? 'DST' : locality;
                 values = [
-                    (row[0] || '').trim(),
+                    locality,
                     supplierPin,
                     normalizeName(row[2] || '', lookup, supplierPin),
                     (row[3] || '').trim(),
@@ -409,7 +465,7 @@ function mapSectionRows(params: {
                     formatXmlNumber(vatAmount, 4),
                     cnInvoice,
                     cnDate,
-                    (row[0] || '').trim(),
+                    classification,
                     section === 'F' ? 'GNRL' : 'OTHR',
                 ];
                 break;
@@ -437,7 +493,7 @@ function mapSectionRows(params: {
             }
             case 'I': {
                 // Exempt purchases (8-col source; credit notes add J/K)
-                // Output: 13 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, CN invoice, CN date, Local, EXEMPT]
+                // Output: 10 cols [Local, PIN, Name, Date, Invoice, Desc, empty, Amount, Local, EXEMPT]
                 const supplierPin = (row[1] || '').trim();
                 values = [
                     (row[0] || '').trim(),
@@ -448,8 +504,6 @@ function mapSectionRows(params: {
                     (row[5] || '').trim(),
                     '',
                     formatXmlNumber(taxableAmount, 4),
-                    cnInvoice,
-                    cnDate,
                     (row[0] || '').trim(),
                     'EXEMPT',
                 ];
@@ -483,6 +537,17 @@ function mapSectionRows(params: {
         totalVat += vatAmount;
     }
 
+    // KRA lists Local purchases before Digital Supply purchases in Section F
+    if (section === 'F') {
+        lines.sort((left, right) => {
+            const leftIsLocal = left.values[0] === 'Local';
+            const rightIsLocal = right.values[0] === 'Local';
+            if (leftIsLocal && !rightIsLocal) return -1;
+            if (!leftIsLocal && rightIsLocal) return 1;
+            return 0;
+        });
+    }
+
     return { lines, totalBase, totalVat };
 }
 
@@ -498,12 +563,16 @@ function toCsvLine(values: string[]): string {
         .join(',');
 }
 
-async function writeCsvArtifact(filePath: string, rows: PreparedVatLineItem[]): Promise<boolean> {
+async function writeCsvArtifact(filePath: string, rows: PreparedVatLineItem[], trailingBlankColumns?: number): Promise<boolean> {
     if (rows.length === 0) {
         return false;
     }
 
-    const content = `${rows.map((row) => toCsvLine(row.values)).join('\n')}\n`;
+    const lines = rows.map((row) => toCsvLine(row.values));
+    if (trailingBlankColumns && trailingBlankColumns > 0) {
+        lines.push(','.repeat(trailingBlankColumns - 1));
+    }
+    const content = `${lines.join('\n')}\n`;
     await fs.writeFile(filePath, content, 'utf8');
     return true;
 }
@@ -527,6 +596,8 @@ function buildNamedValues(params: {
     periodFrom: string;
     periodTo: string;
     previousCredit: number;
+    depositStartDate?: string;
+    depositStartDatePid?: string;
     bWithPin: { totalBase: number; totalVat: number };
     bWithoutPin: { totalBase: number; totalVat: number };
     cWithPin: { totalBase: number; totalVat: number };
@@ -638,7 +709,7 @@ function buildNamedValues(params: {
         'SecA.RtnYear': returnYear,
         'SecA.TaxPayerPIN': params.taxpayerPin.toUpperCase(),
         'SecA.VatNonResident': 'No',
-        'SecB.OutputTaxCharged': formatXmlNumber(round(totalSalesVat, 2), 4),
+        'SecB.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
         'SecB.TotalSales': formatXmlNumber(totalSales, 4),
         'SecB.VATChargedOnGR': formatXmlNumber(generalSalesVat, 4),
         'SecB.VATChargedOnOR': formatXmlNumber(otherSalesVat, 4),
@@ -661,7 +732,7 @@ function buildNamedValues(params: {
         'TaxDue.AmountVatClaimableListTO': '0',
         'TaxDue.CrAdjVoucherDtlsTO': '0',
         'TaxDue.DbAdjVoucherDtlsTO': '0',
-        'TaxDue.OutputTaxCharged': formatXmlNumber(round(totalSalesVat, 2), 4),
+        'TaxDue.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
         'TaxDue.TotalVatPurCharged': formatXmlNumber(totalInputVatRounded, 2),
         'TaxDue.VATPaidDtlsTO': '0',
         'TaxDue.VATWhtTO': '0',
@@ -955,7 +1026,8 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
 
     if (cWithPin.lines.length > 0) {
         const cPath = path.join(generatedDir, 'C_Other_Rated_Sales_Dtls.csv');
-        if (await writeCsvArtifact(cPath, cWithPin.lines)) {
+        // KRA appends a blank row at the end of the C Other Rated Sales CSV
+        if (await writeCsvArtifact(cPath, cWithPin.lines, 11)) {
             generatedFiles.push(cPath);
             zipEntries.push({ path: cPath, name: 'C_Other_Rated_Sales_Dtls.csv' });
         }
@@ -1039,7 +1111,7 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const rZeroRatedSalesVat = dWithPin.totalVat + dWithoutPin.totalVat;
     const rExemptSalesTotal = eWithPin.totalBase + eWithoutPin.totalBase;
     const rExemptSalesVat = eWithPin.totalVat + eWithoutPin.totalVat;
-    const rTotalSalesVat = rGeneralSalesVat + rOtherSalesVat + rZeroRatedSalesVat + rExemptSalesVat;
+    const rTotalSalesVat = round(rGeneralSalesVat + rOtherSalesVat + rZeroRatedSalesVat + rExemptSalesVat, 2);
     const rTotalInputVat = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
     const rTotalInputRounded = round(rTotalInputVat, 2);
     const rFinalTaxPayable = round(rTotalSalesVat - rTotalInputRounded, 2);

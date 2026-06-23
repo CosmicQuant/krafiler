@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Calendar, Plus, ChevronRight, Banknote, X,
   CheckCircle2, XCircle, Pencil, Trash2, Search,
@@ -43,11 +43,20 @@ interface RightSidebarProps {
 export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
   const [loadingLoans, setLoadingLoans] = useState(true);
   const [loadingLeaves, setLoadingLeaves] = useState(true);
 
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+
+  const employeeNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of employees) map.set(String(e.id), e.employeeName);
+    return map;
+  }, [employees]);
+
+  const getLoanDisplayName = (l: Loan) => l.employeeName || employeeNameMap.get(String(l.employeeId)) || '-';
 
   const fetchLoans = useCallback(async () => {
     setLoadingLoans(true);
@@ -68,6 +77,16 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
     } catch { /* ignore */ }
     setLoadingLoans(false);
   }, [clientId, period]);
+
+  const fetchEmployees = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/clients/${clientId}/employees`);
+      if (res.ok) {
+        const data = await res.json();
+        setEmployees(data.map((e: any) => ({ ...e, id: String(e.id) })));
+      }
+    } catch { /* ignore */ }
+  }, [clientId]);
 
   const fetchLeaves = useCallback(async () => {
     setLoadingLeaves(true);
@@ -94,7 +113,8 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
   useEffect(() => {
     fetchLoans();
     fetchLeaves();
-  }, [fetchLoans, fetchLeaves]);
+    fetchEmployees();
+  }, [fetchLoans, fetchLeaves, fetchEmployees]);
 
   const topLoans = loans.slice(0, 5);
   const topLeaves = leaves.slice(0, 5);
@@ -124,7 +144,7 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
             {topLoans.map((ln) => (
               <div key={ln.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-2.5 py-1.5">
                 <div className="min-w-0">
-                  <p className="text-[10px] font-semibold text-slate-700 truncate">{ln.employeeName}</p>
+                  <p className="text-[10px] font-semibold text-slate-700 truncate">{getLoanDisplayName(ln)}</p>
                   <p className="text-[9px] text-slate-500">{ln.loanType} — {ln.remainingInstallments}/{ln.installments} left</p>
                 </div>
                 <div className="text-right shrink-0">
@@ -202,7 +222,7 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
       </div>
 
       {showLoanModal && (
-        <LoanListModal clientId={clientId} period={period} onClose={() => setShowLoanModal(false)} onRefresh={() => { fetchLoans(); onRefresh(); }} />
+        <LoanListModal clientId={clientId} period={period} employees={employees} onClose={() => setShowLoanModal(false)} onRefresh={() => { fetchLoans(); fetchEmployees(); onRefresh(); }} />
       )}
       {showLeaveModal && (
         <LeaveListModal clientId={clientId} period={period} onClose={() => setShowLeaveModal(false)} onRefresh={() => { fetchLeaves(); onRefresh(); }} />
@@ -213,23 +233,28 @@ export function RightSidebar({ clientId, period, onRefresh }: RightSidebarProps)
 
 /* ─── LoanListModal ─────────────────────────────────────────────── */
 
-function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: string; period?: string; onClose: () => void; onRefresh: () => void }) {
+function LoanListModal({ clientId, period, employees, onClose, onRefresh }: { clientId: string; period?: string; employees: any[]; onClose: () => void; onRefresh: () => void }) {
   const [loans, setLoans] = useState<Loan[]>([]);
-  const [employees, setEmployees] = useState<{ id: number; employeeName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Loan | null>(null);
   const [form, setForm] = useState<any>({});
+  const [mdTouched, setMdTouched] = useState(false);
+
+  const activeEmployees = useMemo(() => employees.filter((e: any) => e.employmentStatus === 'Active'), [employees]);
+  const employeeNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of employees) map.set(String(e.id), e.employeeName);
+    return map;
+  }, [employees]);
+  const getLoanDisplayName = (l: Loan) => l.employeeName || employeeNameMap.get(String(l.employeeId)) || '-';
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [loansRes, empRes] = await Promise.all([
-        apiFetch(`/clients/${clientId}/loans`),
-        apiFetch(`/clients/${clientId}/employees`),
-      ]);
+      const loansRes = await apiFetch(`/clients/${clientId}/loans`);
       if (loansRes.ok) {
         let data = await loansRes.json();
         if (period) {
@@ -242,10 +267,6 @@ function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: str
         }
         setLoans(data);
       }
-      if (empRes.ok) {
-        const emps = await empRes.json();
-        setEmployees(emps.filter((e: any) => e.employmentStatus === 'Active'));
-      }
     } catch { /* ignore */ }
     setLoading(false);
   }, [clientId, period]);
@@ -253,7 +274,9 @@ function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: str
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const filtered = loans.filter((l) => {
-    const matchesSearch = l.employeeName.toLowerCase().includes(search.toLowerCase()) || l.loanType.toLowerCase().includes(search.toLowerCase());
+    const name = (getLoanDisplayName(l) || '').toLowerCase();
+    const type = (l.loanType || '').toLowerCase();
+    const matchesSearch = name.includes(search.toLowerCase()) || type.includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'All' || l.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -284,6 +307,7 @@ function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: str
       setEditing(null);
       setForm({ employeeId: '', loanType: 'Salary Advance', principal: 0, monthlyDeduction: 0, installments: 1, remainingInstallments: 1, interestRate: 0, totalInterest: 0, status: 'Approved', notes: '' });
     }
+    setMdTouched(false);
     setShowForm(true);
   };
 
@@ -314,19 +338,38 @@ function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: str
           {showForm && (
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
               <div className="grid grid-cols-3 gap-2">
-                <select value={form.employeeId || ''} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs">
+                <select value={form.employeeId || ''} onChange={(e) => setForm({ ...form, employeeId: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900">
                   <option value="">Employee</option>
-                  {employees.map((e) => <option key={e.id} value={String(e.id)}>{e.employeeName}</option>)}
+                  {activeEmployees.map((e: any) => <option key={e.id} value={String(e.id)}>{e.employeeName}</option>)}
                 </select>
-                <select value={form.loanType} onChange={(e) => setForm({ ...form, loanType: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs">
+                <select value={form.loanType} onChange={(e) => setForm({ ...form, loanType: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900">
                   <option>Salary Advance</option><option>Emergency Loan</option><option>Normal Loan</option><option>Other</option>
                 </select>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs">
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900">
                   <option>Approved</option><option>Active</option><option>Paid</option><option>Defaulted</option>
                 </select>
-                <input type="number" placeholder="Principal" value={form.principal} onChange={(e) => setForm({ ...form, principal: parseFloat(e.target.value) || 0 })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs" />
-                <input type="number" placeholder="Monthly Deduction" value={form.monthlyDeduction} onChange={(e) => setForm({ ...form, monthlyDeduction: parseFloat(e.target.value) || 0 })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs" />
-                <input type="number" placeholder="Installments" value={form.installments} onChange={(e) => setForm({ ...form, installments: parseInt(e.target.value) || 0 })} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs" />
+                <input type="number" placeholder="Principal" value={form.principal} onChange={(e) => {
+                  const principal = parseFloat(e.target.value) || 0;
+                  const installments = form.installments || 1;
+                  const next: any = { ...form, principal };
+                  if (!mdTouched && principal > 0 && installments > 0) {
+                    next.monthlyDeduction = Math.round((principal / installments) * 100) / 100;
+                  }
+                  setForm(next);
+                }} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900" />
+                <input type="number" placeholder="Monthly Deduction" value={form.monthlyDeduction} onChange={(e) => { setMdTouched(true); setForm({ ...form, monthlyDeduction: parseFloat(e.target.value) || 0 }); }} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900" />
+                <input type="number" placeholder="Installments" value={form.installments} onChange={(e) => {
+                  const installments = parseInt(e.target.value) || 0;
+                  const principal = form.principal || 0;
+                  const next: any = { ...form, installments };
+                  if (!editing && installments > 0) {
+                    next.remainingInstallments = installments;
+                  }
+                  if (!mdTouched && principal > 0 && installments > 0) {
+                    next.monthlyDeduction = Math.round((principal / installments) * 100) / 100;
+                  }
+                  setForm(next);
+                }} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900" />
               </div>
               <div className="flex items-center justify-end gap-2">
                 <button onClick={() => setShowForm(false)} className="rounded border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">Cancel</button>
@@ -355,12 +398,12 @@ function LoanListModal({ clientId, period, onClose, onRefresh }: { clientId: str
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={7} className="py-4 text-center text-slate-400">No loans found</td></tr>
                 ) : filtered.map((l) => (
-                  <tr key={l.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-medium text-slate-900">{l.employeeName}</td>
-                    <td className="px-3 py-2 text-slate-600">{l.loanType}</td>
+                  <tr key={l.id} className="hover:bg-slate-50 text-slate-900">
+                    <td className="px-3 py-2 font-medium">{getLoanDisplayName(l)}</td>
+                    <td className="px-3 py-2 text-slate-700">{l.loanType}</td>
                     <td className="px-3 py-2 text-right font-mono">{Number(l.principal).toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-mono">{Number(l.monthlyDeduction).toLocaleString()}</td>
-                    <td className="px-3 py-2 text-center">{l.remainingInstallments}/{l.installments}</td>
+                    <td className="px-3 py-2 text-center text-slate-700">{l.remainingInstallments}/{l.installments}</td>
                     <td className="px-3 py-2 text-center">
                       <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold', l.status === 'Paid' ? 'bg-blue-50 text-blue-600' : l.status === 'Defaulted' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600')}>{l.status}</span>
                     </td>
@@ -424,7 +467,9 @@ function LeaveListModal({ clientId, period, onClose, onRefresh }: { clientId: st
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const filtered = requests.filter((r) => {
-    const matchesSearch = r.employeeName.toLowerCase().includes(search.toLowerCase()) || r.leaveType.toLowerCase().includes(search.toLowerCase());
+    const name = (r.employeeName || '').toLowerCase();
+    const type = (r.leaveType || '').toLowerCase();
+    const matchesSearch = name.includes(search.toLowerCase()) || type.includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'All' || r.status === statusFilter;
     return matchesSearch && matchesStatus;
   });

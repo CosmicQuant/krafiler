@@ -27,12 +27,17 @@ interface FirestoreJobDoc extends DocumentData {
     progress: number;
     message: string;
     payload?: {
+        payload?: {
+            taxObligationType?: string;
+            clientId?: string;
+        };
         taxObligationType?: string;
         clientId?: string;
     };
     result?: {
         receiptPath?: string;
         prnPath?: string;
+        prnResults?: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string }>;
         generatedZipUrl?: string;
         generatedZipLabel?: string;
         sourcePackageUrl?: string;
@@ -96,7 +101,7 @@ export function useJobListener(
             sortedDocs.forEach((docSnap) => {
                 const data = docSnap.data() as FirestoreJobDoc;
                 const jobId = docSnap.id;
-                const clientId = data.clientId || data.payload?.clientId;
+                const clientId = data.clientId || data.payload?.payload?.clientId || data.payload?.clientId;
                 if (!clientId) return; // Skip legacy jobs without client mapping
 
                 // Skip if we already have a more recent job for this client
@@ -116,7 +121,7 @@ export function useJobListener(
                     progress: typeof data.progress === 'number' ? data.progress : 0,
                     message: data.message || 'Processing...',
                     failedReason: data.error?.message || '',
-                    obligationType: data.payload?.taxObligationType || '',
+                    obligationType: data.payload?.payload?.taxObligationType || data.payload?.taxObligationType || '',
                     receiptUrl: resultReceiptUrl,
                     prnUrl: resultPrnUrl,
                     generatedZipUrl: resultGeneratedZipUrl,
@@ -133,7 +138,7 @@ export function useJobListener(
                         ? data.completedAt.toDate().toISOString()
                         : now;
 
-                    const obligationType = data.payload?.taxObligationType;
+                    const obligationType = data.payload?.payload?.taxObligationType || data.payload?.taxObligationType;
 
                     if (obligationType === 'vat') {
                         const vatUpdate: Partial<ClientObligation> = {};
@@ -211,7 +216,7 @@ export function useJobListener(
                                 ...mriUpdate,
                             };
                         }
-                    } else if (obligationType === 'nssf' || data.payload?.taxObligationType === 'nssf') {
+                    } else if (obligationType === 'nssf' || data.payload?.payload?.taxObligationType === 'nssf' || data.payload?.taxObligationType === 'nssf') {
                         const nssfUpdate: Partial<ClientObligation> = {};
                         if (data.status === 'completed' && resultReceiptUrl) {
                             nssfUpdate.nssf = 'filed';
@@ -224,7 +229,7 @@ export function useJobListener(
                                 ...nssfUpdate,
                             };
                         }
-                    } else if (obligationType === 'sha' || data.payload?.taxObligationType === 'sha') {
+                    } else if (obligationType === 'sha' || data.payload?.payload?.taxObligationType === 'sha' || data.payload?.taxObligationType === 'sha') {
                         const shaUpdate: Partial<ClientObligation> = {};
                         if (data.status === 'completed' && resultReceiptUrl) {
                             shaUpdate.sha = 'filed';

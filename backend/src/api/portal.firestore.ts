@@ -386,18 +386,21 @@ router.get('/payslip', async (req: PortalRequest, res) => {
         const earningsAmountX = 240;
         const deductionsAmountX = 550;
         let y = 40;
+        const pageContentW = 530;
+
+        // Header row: company info left, logo right
+        const headerY = y;
+        doc.fontSize(14).font('Helvetica-Bold').fillColor('#000').text((client as any)?.name || 'Company', leftX, headerY, { align: 'left', width: pageContentW - 80 });
+        doc.fontSize(8).font('Helvetica').fillColor('#666').text(`KRA PIN: ${(client as any)?.pin || ''}`, leftX, headerY + 16, { align: 'left', width: pageContentW - 80 });
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#000').text('PAYSLIP', leftX, headerY + 30, { align: 'left', width: pageContentW - 80 });
 
         if (logoLocalPath) {
             try {
-                doc.image(logoLocalPath, leftX, y, { width: 60 });
+                doc.image(logoLocalPath, leftX + pageContentW - 70, headerY, { width: 60 });
             } catch { /* ignore */ }
         }
 
-        doc.fontSize(14).font('Helvetica-Bold').text((client as any)?.name || 'Company', { align: 'center' });
-        doc.fontSize(8).font('Helvetica').text(`KRA PIN: ${(client as any)?.pin || ''}`, { align: 'center' });
-        doc.moveDown(0.3);
-        doc.fontSize(10).font('Helvetica-Bold').text('PAYSLIP', { align: 'center' });
-        doc.moveDown(0.3);
+        doc.moveDown(2.5);
 
         doc.fontSize(8).font('Helvetica');
         doc.text(`Employee: ${(emp as any).employeeName}`, leftX, doc.y);
@@ -465,18 +468,12 @@ router.get('/payslip', async (req: PortalRequest, res) => {
         doc.text('NSSF', rightX, dedY); doc.text(nssfDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
         doc.text('AHL', rightX, dedY); doc.text(ahlDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
 
-        if (unpaidLeaveDays > 0) {
-            doc.text(`Unpaid Leave (${unpaidLeaveDays} days)`, rightX, dedY);
-            doc.text(unpaidLeaveDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
-        }
-        if (absentDays > 0) {
-            doc.text(`Absenteeism (${absentDays} days)`, rightX, dedY);
-            doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
-        }
-        if (lateDays > 0) {
-            doc.text(`Lateness (${lateDays} hrs)`, rightX, dedY);
-            doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
-        }
+        doc.text(`Unpaid Leave (${unpaidLeaveDays} days)`, rightX, dedY);
+        doc.text(unpaidLeaveDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        doc.text(`Absenteeism (${absentDays} days)`, rightX, dedY);
+        doc.text(absentDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
+        doc.text(`Lateness (${lateDays} hrs)`, rightX, dedY);
+        doc.text(lateDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH;
         if (loanDeduction > 0) { doc.text('Loan Deduction', rightX, dedY); doc.text(loanDeduction.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
         if (otherDeductions > 0) { doc.text('Other Deductions', rightX, dedY); doc.text(otherDeductions.toFixed(2), deductionsAmountX, dedY); dedY += rowH; }
 

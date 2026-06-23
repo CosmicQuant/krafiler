@@ -209,13 +209,22 @@ export function RunHeader({
                                 )}
 
                                 {runStatus === 'approved' && (
-                                    <button
-                                        onClick={onFinalize}
-                                        disabled={loading}
-                                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-40"
-                                    >
-                                        <Lock className="h-3.5 w-3.5" /> Finalize
-                                    </button>
+                                    <>
+                                        <button
+                                            onClick={onGenerateEntries}
+                                            disabled={loading}
+                                            className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:opacity-40"
+                                        >
+                                            <Play className="h-3.5 w-3.5" /> Regenerate
+                                        </button>
+                                        <button
+                                            onClick={onFinalize}
+                                            disabled={loading}
+                                            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                                        >
+                                            <Lock className="h-3.5 w-3.5" /> Finalize
+                                        </button>
+                                    </>
                                 )}
 
                                 {runStatus === 'finalized' && (

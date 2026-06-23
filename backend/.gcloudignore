@@ -1,15 +1,14 @@
 # Cloud Build ignore file — prevents stale build artifacts from being sent to the build context
+# Paths are relative to the backend/ directory because builds are submitted from here.
 node_modules/
-backend/node_modules/
-backend/dist/
-frontend/node_modules/
-frontend/dist/
+dist/
+tmp/
+logs/
+uploads/output/
 
 .env
 .env.*
 !.env.example
-backend/.env
-frontend/.env
 
 *.log
 *.tmp
@@ -27,15 +26,8 @@ Thumbs.db
 *.sqlite-journal
 *.rdb
 
-backend/tmp/
-backend/test_output/
-backend/*.zip
-backend/uploads/output/
-
-frontend/public/clients/**/*.zip
-frontend/public/clients/**/*.xlsx
-frontend/public/clients/**/*.csv
+test_output/
+*.zip
 
 .archive/
 temp-*.tsx
-frontend/temp-*.tsx

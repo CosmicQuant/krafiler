@@ -26,6 +26,7 @@ interface PayrollEntry {
   nonCashBenefits: number;
   housingBenefit: number;
   otherBenefits: number;
+  typeOfHousing?: string;
   bonusPay: number;
   overtimePay: number;
   grossPay: number;
@@ -41,6 +42,10 @@ interface PayrollEntry {
   daysWorked: number;
   totalStdHours: number;
   personalRelief: number;
+  otherPension?: number;
+  postRetMedical?: number;
+  mortgageInterest?: number;
+  insuranceRelief?: number;
   _overrideKeys?: string[];
 }
 
@@ -65,6 +70,7 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
   const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkActionLoading, setBulkActionLoading] = useState<string | null>(null);
+  const [editedFields, setEditedFields] = useState<Map<number, Set<string>>>(new Map());
 
   const debounceRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
@@ -110,6 +116,7 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
       nonCashBenefits: entry.nonCashBenefits,
       housingBenefit: entry.housingBenefit,
       otherBenefits: entry.otherBenefits,
+      typeOfHousing: entry.typeOfHousing || 'Benefit not given',
       dateJoined: '',
       dateLeft: null,
       employmentStatus: 'Active',
@@ -144,6 +151,13 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
       return next;
     });
     setUnsavedIds((prev) => new Set(prev).add(entryId));
+    setEditedFields((prev) => {
+      const next = new Map(prev);
+      const fields = new Set(next.get(entryId) || []);
+      fields.add(String(field));
+      next.set(entryId, fields);
+      return next;
+    });
 
     if (debounceRef.current[entryId]) {
       clearTimeout(debounceRef.current[entryId]);
@@ -156,27 +170,28 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
   const autoSave = async (entryId: number) => {
     const entry = entries.find((e) => e.id === entryId);
     if (!entry || !runId) return;
+    const fields = editedFields.get(entryId);
+    if (!fields || fields.size === 0) return;
+
     try {
+      const payload: Record<string, any> = { employeeId: entry.employeeId };
+      // Only send fields the user actually edited in the table. Sending basicPay or
+      // absentDays unconditionally hardcodes them and blocks attendance-based updates.
+      const editableFields: (keyof PayrollEntry)[] = [
+        'basicPay', 'carBenefit', 'mealsBenefit', 'nonCashBenefits', 'housingBenefit',
+        'otherBenefits', 'bonusPay', 'overtimePay', 'insuranceRelief', 'otherPension',
+        'postRetMedical', 'mortgageInterest', 'otherDeductions', 'loanDeduction',
+      ];
+      for (const field of editableFields) {
+        if (fields.has(String(field))) {
+          payload[field] = (entry as any)[field];
+        }
+      }
+
       const res = await apiFetch(`/clients/${clientId}/payroll-runs/${runId}/update-entry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeId: entry.employeeId,
-          basicPay: entry.basicPay,
-          carBenefit: entry.carBenefit,
-          mealsBenefit: entry.mealsBenefit,
-          nonCashBenefits: entry.nonCashBenefits,
-          housingBenefit: entry.housingBenefit,
-          otherBenefits: entry.otherBenefits,
-          bonusPay: entry.bonusPay,
-          overtimePay: entry.overtimePay,
-          absentDays: entry.daysWorked,
-          lateHours: 0,
-          unpaidLeaveDays: 0,
-          insuranceRelief: 0,
-          otherDeductions: entry.otherDeductions,
-          loanDeduction: entry.loanDeduction,
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setUnsavedIds((prev) => {
@@ -184,10 +199,14 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
           next.delete(entryId);
           return next;
         });
-        onRefresh?.();
+        setEditedFields((prev) => {
+          const next = new Map(prev);
+          next.delete(entryId);
+          return next;
+        });
       }
     } catch {
-      // ignore
+      // ignore auto-save errors; user can retry via regenerate
     }
   };
 
@@ -247,7 +266,13 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
 
   const handleEmailPayslip = async (entry: PayrollEntry) => {
     try {
-      await apiFetch(`/clients/${clientId}/email/send-payslips`, {
+      const [y, m] = (period || '').split('-');
+      const periodParam = m && y ? `${m}${y}` : '';
+      const queryParams = new URLSearchParams();
+      if (periodParam) queryParams.set('period', periodParam);
+      if (runId) queryParams.set('runId', String(runId));
+      const url = `/clients/${clientId}/email/send-payslips${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeIds: [entry.employeeId] }),
@@ -281,7 +306,13 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
     if (ids.length === 0) return;
     setBulkActionLoading('payslip-email');
     try {
-      await apiFetch(`/clients/${clientId}/email/send-payslips`, {
+      const [y, m] = (period || '').split('-');
+      const periodParam = m && y ? `${m}${y}` : '';
+      const queryParams = new URLSearchParams();
+      if (periodParam) queryParams.set('period', periodParam);
+      if (runId) queryParams.set('runId', String(runId));
+      const url = `/clients/${clientId}/email/send-payslips${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeIds: ids }),
@@ -295,7 +326,11 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
     if (ids.length === 0) return;
     setBulkActionLoading('p9-email');
     try {
-      await apiFetch(`/clients/${clientId}/email/send-p9s`, {
+      const yearStr = period ? period.split('-')[0] : String(new Date().getFullYear());
+      const queryParams = new URLSearchParams({ year: yearStr });
+      if (runId) queryParams.set('runId', String(runId));
+      const url = `/clients/${clientId}/email/send-p9s?${queryParams.toString()}`;
+      await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeIds: ids }),
@@ -388,14 +423,8 @@ export function PayRegisterTable({ clientId, runId, period, refreshToken, onSele
       accessorKey: 'basicPay',
       header: () => <span className="text-right block">Basic Pay</span>,
       size: 90,
-      cell: ({ row }) => (
-        <input
-          type="number"
-          value={row.original.basicPay}
-          onChange={(e) => updateField(row.original.id, 'basicPay', parseFloat(e.target.value) || 0)}
-          onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-[80px] rounded border border-slate-200 bg-white px-1 py-0.5 text-right font-mono text-[10px] text-slate-900 focus:border-slate-400 focus:outline-none"
-        />
+      cell: ({ getValue }) => (
+        <span className="font-mono text-right block text-[10px] text-slate-900">{Number(getValue() || 0).toLocaleString()}</span>
       ),
     },
     {

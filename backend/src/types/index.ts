@@ -57,6 +57,8 @@ export interface NilReturnPayload {
     payeZipUrl?: string;
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
+    /** When true, download the current-month VAT transactions from the iTax homepage instead of filing a previous period. */
+    vatCurrentMonthDownload?: boolean;
     vatPreviousCredit?: number;
     /** User-supplied taxable sales to non-VAT-registered buyers to add to Section B without-PIN totals */
     sectionBWithoutPinSales?: number;
@@ -119,6 +121,8 @@ export interface FileNilReturnRequest {
     payeZipUrl?: string;
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
+    /** When true, download the current-month VAT transactions from the iTax homepage instead of filing a previous period. */
+    vatCurrentMonthDownload?: boolean;
     vatPreviousCredit?: number;
     sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;

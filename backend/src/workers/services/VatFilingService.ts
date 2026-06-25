@@ -1,6 +1,6 @@
 import { Page } from 'playwright';
 import { JobContext, FilingJob } from '../../types';
-import { resolveUploadArtifactPath, selectUploadFile, waitForFileInputSelection, ensureDeclarationAccepted, downloadVatAutoPopulatedReturn } from '../utils/filing-helpers';
+import { resolveUploadArtifactPath, selectUploadFile, waitForFileInputSelection, ensureDeclarationAccepted, downloadVatAutoPopulatedReturn, downloadVatTransactionsFromHomepage } from '../utils/filing-helpers';
 import { appendJobLog } from '../utils/job-helpers';
 
 export interface VatPrepareResult {
@@ -46,6 +46,33 @@ export class VatFilingService {
             return artifacts;
         } catch (error: any) {
             await appendJobLog(this.job, `VAT artifact preparation failed: ${error.message}`, {
+                progress: 75,
+                level: 'error',
+            });
+            throw error;
+        }
+    }
+
+    async prepareCurrentMonthFromHomepage(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
+        const sourceZipPath = await downloadVatTransactionsFromHomepage(this.page, this.job, options.kraPin);
+
+        try {
+            const artifacts = await import('../../scripts/vat-return-generator').then((mod) =>
+                mod.prepareVatReturnArtifacts({
+                    sourceZipPath,
+                    clientName: options.clientName,
+                    taxpayerPin: options.kraPin,
+                    periodFrom: options.periodFrom,
+                    periodTo: options.periodTo,
+                    previousCredit: options.previousCredit,
+                    sectionBWithoutPinSales: options.sectionBWithoutPinSales,
+                })
+            );
+
+            await appendJobLog(this.job, `Prepared current-month VAT ZIP ${artifacts.generatedZipLabel}`, { progress: 78 });
+            return artifacts;
+        } catch (error: any) {
+            await appendJobLog(this.job, `Current-month VAT artifact preparation failed: ${error.message}`, {
                 progress: 75,
                 level: 'error',
             });

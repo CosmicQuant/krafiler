@@ -67,6 +67,12 @@ export interface EmployeeMasterRecord {
     insuranceRelief: number;
     paye: number;
     selfAssessedPaye: number;
+    // Pre-computed values from payroll engine (used when available instead of recalculating)
+    grossPay?: number;
+    shaDeduction?: number;
+    nssfDeduction?: number;
+    ahlDeduction?: number;
+    payeTax?: number;
 }
 
 export class AxonDataExtractionEngine {
@@ -173,20 +179,44 @@ export class AxonDataExtractionEngine {
                             const fallbackGrossSalary = parseNum(record['Total Gross Pay (Ksh) (H)'] || record['Gross Pay (H)'] || record['Gross Pay']);
                             const totalCashPay = rawTotalCashPay || Math.max(0, fallbackGrossSalary - carBenefit - meals - nonCash - housingBenefit - otherBenefits);
                             const pwd = this.stripApostrophe(record['Persons with Disability(PWD)'] || 'No');
-                            const calculatedFields = calculatePayrollFields({
-                                employeeName: fullName,
-                                totalCashPay,
-                                carBenefit,
-                                meals,
-                                nonCash,
-                                housingBenefit,
-                                otherBenefits,
-                                pwd,
-                                otherPension,
-                                postRetMedical,
-                                mortgage,
-                                insuranceRelief,
-                            });
+                            const typeOfHousing = this.stripApostrophe(record['Type of Housing'] || 'Benefit not given');
+
+                            // Pre-computed values from the payroll engine (used when present).
+                            const grossPay = parseNum(record['Total Gross Pay (Ksh) (H)'] || record['Gross Pay (H)'] || record['Gross Pay']);
+                            const shaDeduction = parseNum(record['Social Health Insurance Fund (I)'] || record['SHA'] || record['SHIF']);
+                            const nssfDeduction = parseNum(record['NSSF Contribution (J)'] || record['NSSF']);
+                            const ahlDeduction = parseNum(record['Affordable Housing Levy (N)'] || record['AHL']);
+                            const taxablePay = parseNum(record['Taxable Pay(Ksh) (O)'] || record['Taxable Pay']);
+                            const payeTax = parseNum(record['PAYE Tax (Ksh) (R)'] || record['PAYE Tax']);
+                            const hasPrecomputed = !!(grossPay && shaDeduction && nssfDeduction && ahlDeduction && taxablePay && payeTax);
+
+                            const calculatedFields = hasPrecomputed
+                                ? {
+                                      grossSalary: grossPay,
+                                      shaContribution: shaDeduction,
+                                      nssfContribution: nssfDeduction,
+                                      ahl: ahlDeduction,
+                                      taxablePay,
+                                      personalRelief: totalCashPay > 0 || !!fullName.trim() ? 2400 : 0,
+                                      insuranceRelief,
+                                      paye: payeTax,
+                                      selfAssessedPaye: payeTax,
+                                  }
+                                : calculatePayrollFields({
+                                      employeeName: fullName,
+                                      totalCashPay,
+                                      carBenefit,
+                                      meals,
+                                      nonCash,
+                                      housingBenefit,
+                                      otherBenefits,
+                                      pwd,
+                                      otherPension,
+                                      postRetMedical,
+                                      mortgage,
+                                      insuranceRelief,
+                                      typeOfHousing,
+                                  });
 
                             employees.push({
                                 payrollNumber: this.stripApostrophe(record['Payroll Number (A)'] || record['Payroll Number'] || record['PayrollNo'] || record['EMP NO']),
@@ -207,9 +237,14 @@ export class AxonDataExtractionEngine {
                                 carBenefit: carBenefit,
                                 meals: meals,
                                 nonCash: nonCash,
-                                typeOfHousing: this.stripApostrophe(record['Type of Housing'] || 'Benefit not given'),
+                                typeOfHousing: typeOfHousing,
                                 housingBenefit: housingBenefit,
                                 otherBenefits: otherBenefits,
+                                grossPay,
+                                shaDeduction,
+                                nssfDeduction,
+                                ahlDeduction,
+                                payeTax,
                                 grossSalary: calculatedFields.grossSalary,
                                 shaContribution: calculatedFields.shaContribution,
                                 nssfContribution: calculatedFields.nssfContribution,

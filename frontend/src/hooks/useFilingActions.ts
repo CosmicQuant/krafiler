@@ -286,6 +286,67 @@ export function useFilingActions(deps: FilingActionsDeps) {
         }
     }, [handleDuplicateJob]);
 
+    const prepareCurrentMonthVat = useCallback(async (client: ClientObligation) => {
+        const d = getD();
+        const activeJobs = d.getActiveJobs();
+        const vatPreviousCreditVal = d.getVatPreviousCreditVals()[client.id] || '';
+        const vatSectionBWithoutPinVal = d.getVatSectionBWithoutPinVals()[client.id] || '';
+        try {
+            if (isPendingFilingJob(activeJobs[client.id])) {
+                console.log(`A VAT job is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
+                return;
+            }
+            const previousCredit = !vatPreviousCreditVal.trim() ? 0 : parseFloat(vatPreviousCreditVal);
+            if (!Number.isFinite(previousCredit) || previousCredit < 0) throw new Error(`Enter a valid non-negative VAT credit value for ${client.name}.`);
+            const sectionBWithoutPinSales = !vatSectionBWithoutPinVal.trim() ? 0 : parseFloat(vatSectionBWithoutPinVal);
+            if (!Number.isFinite(sectionBWithoutPinSales) || sectionBWithoutPinSales < 0) throw new Error(`Enter a valid non-negative Section B Without PIN sales amount for ${client.name}.`);
+
+            // Use today's date range for the current month download; the worker leaves the KRA-prepopulated dates alone.
+            const today = new Date();
+            const periodFrom = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+            const periodTo = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+            const res = await apiFetch('/tax/file-return', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clientId: client.id,
+                    clientName: client.name,
+                    kraPin: client.pin,
+                    kraPassword: client.password || client.iTaxPassword || '',
+                    periodFrom,
+                    periodTo,
+                    taxObligationType: 'vat',
+                    ownsRentalProperty: false,
+                    vatCurrentMonthDownload: true,
+                    vatPreviousCredit: previousCredit,
+                    sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
+                }),
+            });
+
+            const dataResp = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                if (res.status === 409 && dataResp.jobId) { handleDuplicateJob(client, dataResp, 'vat'); return; }
+                throw new Error(dataResp.message || dataResp.error || 'Failed to queue current-month VAT ZIP generation job.');
+            }
+
+            d.setActiveJobs((prev) => ({
+                ...prev,
+                [client.id]: {
+                    id: dataResp.jobId,
+                    state: (dataResp.jobState || 'waiting') as FilingJobState,
+                    progress: 0,
+                    message: 'Queueing current-month VAT ZIP generation job...',
+                    failedReason: '',
+                    obligationType: 'vat',
+                },
+            }));
+            d.setDashboardNotice({ tone: 'success', message: `Current-month VAT ZIP generation job queued for ${client.name}.` });
+        } catch (error: any) {
+            d.setDashboardNotice({ tone: 'error', message: error.message || `Failed to prepare current-month VAT for ${client.name}.` });
+        }
+    }, [handleDuplicateJob]);
+
     const confirmVatFiling = useCallback(async (client: ClientObligation) => {
         const d = getD();
         const activeJobs = d.getActiveJobs();
@@ -742,6 +803,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         generateAllZips,
         autoFile,
         prepareVat,
+        prepareCurrentMonthVat,
         confirmVatFiling,
         generatePrn,
         fileNssf,

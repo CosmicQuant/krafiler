@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { adminDb } from '../lib/firebaseAdmin';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { sendPayslipEmail, sendP9Email, verifyConnection } from '../services/emailService';
+import { sendPayslipEmail, sendP9Email, sendBulkEmail, verifyConnection } from '../services/emailService';
 import { AuthenticatedRequest } from '../middleware/verifyAuth';
 
 const router = Router();
@@ -115,9 +115,11 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
     try {
         const uid = req.user!.uid;
         const clientId = req.params.clientId;
-        const { employeeIds } = req.body;
+        const { employeeIds, includeP9 } = req.body;
         const period = (req.query.period as string) || '';
+        const runId = (req.query.runId as string) || '';
         const periodLabel = period ? `${period.substring(0, 2)}/${period.substring(2)}` : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        const taxYear = period ? period.substring(0, 4) : new Date().getFullYear().toString();
 
         let query = adminDb
             .collection('employees')
@@ -167,18 +169,40 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
                 continue;
             }
 
-            const pdfRes = await fetch(
-                `${baseUrl}/api/clients/${clientId}/payslip/${empData.kraPin}${period ? `?period=${period}` : ''}`,
-                { headers: { Authorization: authHeader } }
-            );
+            const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
 
-            if (!pdfRes.ok) {
+            // Payslip PDF
+            const payslipQuery = new URLSearchParams();
+            if (period) payslipQuery.set('period', period);
+            if (runId) payslipQuery.set('runId', runId);
+            const payslipUrl = `${baseUrl}/api/clients/${clientId}/payslip/${empData.kraPin}${payslipQuery.toString() ? `?${payslipQuery.toString()}` : ''}`;
+            const payslipRes = await fetch(payslipUrl, { headers: { Authorization: authHeader } });
+
+            if (!payslipRes.ok) {
                 results.push({ kraPin: empData.kraPin, employeeName: empData.employeeName, success: false, error: 'Failed to generate payslip' });
                 continue;
             }
 
-            const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
-            const filename = `Payslip_${empData.employeeName.replace(/\s+/g, '_')}_${periodLabel.replace(/\//g, '_')}.pdf`;
+            const payslipBuffer = Buffer.from(await payslipRes.arrayBuffer());
+            const payslipFilename = `Payslip_${empData.employeeName.replace(/\s+/g, '_')}_${periodLabel.replace(/\//g, '_')}.pdf`;
+            attachments.push({ filename: payslipFilename, content: payslipBuffer, contentType: 'application/pdf' });
+
+            // Optional P9 PDF
+            if (includeP9) {
+                const p9Query = new URLSearchParams({ year: taxYear });
+                if (runId) p9Query.set('runId', runId);
+                const p9Url = `${baseUrl}/api/clients/${clientId}/p9/${empData.kraPin}?${p9Query.toString()}`;
+                const p9Res = await fetch(p9Url, { headers: { Authorization: authHeader } });
+
+                if (!p9Res.ok) {
+                    results.push({ kraPin: empData.kraPin, employeeName: empData.employeeName, success: false, error: 'Failed to generate P9' });
+                    continue;
+                }
+
+                const p9Buffer = Buffer.from(await p9Res.arrayBuffer());
+                const p9Filename = `P9_${empData.employeeName.replace(/\s+/g, '_')}_${taxYear}.pdf`;
+                attachments.push({ filename: p9Filename, content: p9Buffer, contentType: 'application/pdf' });
+            }
 
             const { ref: historyRef, payload: historyPayload } = createEmailHistoryDoc({
                 ownerUid: uid,
@@ -193,19 +217,33 @@ router.post('/:clientId/email/send-payslips', async (req: AuthenticatedRequest, 
 
             await historyRef.set(historyPayload);
 
-            const emailResult = await sendPayslipEmail(
-                empData.email,
-                empData.employeeName,
-                companyName,
-                periodLabel,
-                pdfBuffer,
-                filename,
-                {
-                    emailHistoryId: historyRef.id,
-                    clientId,
-                    documentType: 'payslip',
-                }
-            );
+            const emailResult = includeP9
+                ? await sendBulkEmail(
+                    empData.email,
+                    `Payslip & P9 Tax Card — ${companyName} — ${periodLabel}`,
+                    `<p>Dear <strong>${empData.employeeName}</strong>,</p>
+<p>Your payslip${includeP9 ? ' and P9 tax card' : ''} for <strong>${periodLabel}</strong> from <strong>${companyName}</strong> are attached.</p>
+<p style="color:#666;font-size:12px;">This is an automated message from KRAFILER. Please do not reply.</p>`,
+                    attachments,
+                    {
+                        emailHistoryId: historyRef.id,
+                        clientId,
+                        documentType: 'payslip',
+                    }
+                )
+                : await sendPayslipEmail(
+                    empData.email,
+                    empData.employeeName,
+                    companyName,
+                    periodLabel,
+                    payslipBuffer,
+                    payslipFilename,
+                    {
+                        emailHistoryId: historyRef.id,
+                        clientId,
+                        documentType: 'payslip',
+                    }
+                );
 
             await updateEmailHistoryStatus(historyRef.id, {
                 status: emailResult.success ? 'sent' : 'failed',
@@ -240,6 +278,7 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
         const clientId = req.params.clientId;
         const { employeeIds } = req.body;
         const taxYear = (req.query.year as string) || new Date().getFullYear().toString();
+        const runId = (req.query.runId as string) || '';
 
         let query = adminDb
             .collection('employees')
@@ -275,8 +314,10 @@ router.post('/:clientId/email/send-p9s', async (req: AuthenticatedRequest, res) 
                 continue;
             }
 
+            const p9Query = new URLSearchParams({ year: taxYear });
+            if (runId) p9Query.set('runId', runId);
             const pdfRes = await fetch(
-                `${baseUrl}/api/clients/${clientId}/p9/${empData.kraPin}?year=${taxYear}`,
+                `${baseUrl}/api/clients/${clientId}/p9/${empData.kraPin}?${p9Query.toString()}`,
                 { headers: { Authorization: authHeader } }
             );
 

@@ -20,6 +20,10 @@ function formatMoney(n: number): string {
     return n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function roundMoney(n: number): number {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 // ─── Employees CRUD ──────────────────────────────────────────────────────────
 
 // GET /api/clients/:clientId/employees
@@ -532,6 +536,8 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const nonCash = payrollEntry?.nonCashBenefits ?? (parseFloat(String(emp['Non Cash Benefits (D)'] || '0')) || 0);
         const housingBenefit = payrollEntry?.housingBenefit ?? (parseFloat(String(emp['Housing Benefit (F)'] || '0')) || 0);
         const otherBenefits = payrollEntry?.otherBenefits ?? (parseFloat(String(emp['Other Benefits (G)'] || '0')) || 0);
+        const bonusPay = payrollEntry?.bonusPay ?? (parseFloat(String(emp['Bonus Pay'] || '0')) || 0);
+        const overtimePay = payrollEntry?.overtimePay ?? (parseFloat(String(emp['Overtime Pay'] || '0')) || 0);
 
         const shaDed = payrollEntry?.shaDeduction ?? (parseFloat(String(emp['Social Health Insurance Fund (I)'] || '0')) || 0);
         const nssfDed = payrollEntry?.nssfDeduction ?? (parseFloat(String(emp['NSSF Contribution (J)'] || '0')) || 0);
@@ -550,6 +556,12 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         const statutoryDeductionsTotal = shaDed + nssfDed + ahl + payeTax + otherPension + postRetMedical + loanDeduction + otherDeductions;
         const totalDeductions = statutoryDeductionsTotal;
         const netPay = payrollEntry?.netPay ?? (grossPay - totalDeductions);
+
+        // Total earnings before attendance deductions; total gross pay is earnings less attendance deductions.
+        const totalEarningsPay = roundMoney(
+            totalCashPay + carBenefit + meals + nonCash + housingBenefit + otherBenefits + overtimePay + bonusPay
+        );
+        const totalGrossPayFull = roundMoney(totalEarningsPay - attendanceDeductionsTotal);
 
         // Resolve logo (GCS or local)
         const { resolveLogoPath } = await import('../lib/cloudStorage');
@@ -619,7 +631,7 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         doc.text('Amount (KES)', colValX - 60, y);
         y += 16;
 
-        const earnings = [
+        const earnings: [string, number][] = [
             ['Basic / Cash Pay', totalCashPay],
             ['Car/Transport Benefit', carBenefit],
             ['Meals', meals],
@@ -627,6 +639,8 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
             ['Housing Benefit', housingBenefit],
             ['Other Benefits', otherBenefits],
         ];
+        if (overtimePay > 0) earnings.push(['Overtime Pay', overtimePay]);
+        if (bonusPay > 0) earnings.push(['Bonus Pay', bonusPay]);
 
         doc.fontSize(8).font('Helvetica').fillColor('#333');
         earnings.forEach(([label, amount]) => {
@@ -635,9 +649,15 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
             y += 12;
         });
 
+        doc.rect(col1X, y, pageWidth, 1).fill('#eee');
+        y += 6;
+        doc.font('Helvetica-Bold').fillColor('#000');
+        doc.text('Total Earnings Pay', col1X, y);
+        doc.text(formatMoney(totalEarningsPay), colValX, y, { align: 'right' });
+        y += 18;
+
         // ── Attendance Deductions (reduce gross pay) ──
         doc.fontSize(9).font('Helvetica-Bold').fillColor('#000');
-        y += 6;
         doc.text('Attendance Deductions', col1X, y);
         doc.text('Amount (KES)', colValX - 60, y);
         y += 16;
@@ -658,7 +678,11 @@ router.get('/:clientId/payslip/:employeeKraPin', async (req: AuthenticatedReques
         doc.rect(col1X, y, pageWidth, 1).fill('#eee');
         y += 6;
         doc.font('Helvetica-Bold').fillColor('#000');
-        doc.text('Gross Pay', col1X, y);
+        doc.text('Total Gross Pay', col1X, y);
+        doc.text(formatMoney(totalGrossPayFull), colValX, y, { align: 'right' });
+        y += 12;
+        doc.font('Helvetica').fillColor('#666');
+        doc.text('Taxable Gross Pay', col1X, y);
         doc.text(formatMoney(grossPay), colValX, y, { align: 'right' });
         y += 18;
 
@@ -1029,9 +1053,11 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             if (entriesSnapshot.empty) continue;
             const entry = entriesSnapshot.docs[0].data() as any;
 
+            // P9 Basic Salary (column A) includes basic pay plus taxable bonus.
+            const taxableBonus = entry.taxableBonus ?? entry.bonusPay ?? 0;
             monthlyData.push({
                 monthIndex,
-                basicPay: entry.basicPay || 0,
+                basicPay: (entry.basicPay || 0) + taxableBonus,
                 carBenefit: entry.carBenefit || 0,
                 mealsBenefit: entry.mealsBenefit || 0,
                 nonCashBenefits: entry.nonCashBenefits || 0,
@@ -1054,7 +1080,10 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
         const { resolveLogoPath } = await import('../lib/cloudStorage');
         const p9LogoPath = await resolveLogoPath(client as any, uid);
 
-        const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
+        // KRA logo: prefer backend assets (production), fall back to frontend public (local dev).
+        const backendKraLogo = path.resolve(__dirname, '..', '..', 'assets', 'kra.png');
+        const frontendKraLogo = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
+        const kraLogoPath = fs.existsSync(backendKraLogo) ? backendKraLogo : (fs.existsSync(frontendKraLogo) ? frontendKraLogo : null);
 
         generateP9WithPdfKit(res, {
             companyName: (client as any).name,
@@ -1072,7 +1101,7 @@ router.get('/:clientId/p9/:employeeKraPin', async (req: AuthenticatedRequest, re
             taxYear,
             monthlyData,
             logoPath: p9LogoPath,
-            kraLogoPath: fs.existsSync(kraLogoPath) ? kraLogoPath : null,
+            kraLogoPath,
         });
     } catch (err) {
         console.error('Error generating P9:', err);

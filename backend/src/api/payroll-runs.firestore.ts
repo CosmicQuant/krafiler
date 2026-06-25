@@ -264,7 +264,10 @@ async function generateEntriesForRun(
         const e = d.data() as any;
         if (e.overrides) {
             try {
-                overridesByEmployee.set(String(e.employeeId), JSON.parse(e.overrides));
+                const parsed = JSON.parse(e.overrides);
+                // Basic pay must always come from attendance / employee master, never from an override.
+                delete parsed.basicPay;
+                overridesByEmployee.set(String(e.employeeId), parsed);
             } catch { /* ignore */ }
         }
     }
@@ -374,6 +377,7 @@ async function generateEntriesForRun(
                 mortgageInterest: overrides.mortgageInterest !== undefined ? overrides.mortgageInterest : (emp.mortgageInterest || 0),
                 insuranceRelief: overrides.insuranceRelief !== undefined ? overrides.insuranceRelief : (emp.insuranceRelief || 0),
                 bonusPay: overrides.bonusPay !== undefined ? overrides.bonusPay : (emp.bonusPay || 0),
+                typeOfHousing: overrides.typeOfHousing !== undefined ? overrides.typeOfHousing : (emp.typeOfHousing || 'Benefit not given'),
                 standardCheckIn: emp.standardCheckIn || '08:00',
                 standardCheckOut: emp.standardCheckOut || '17:00',
             },
@@ -455,6 +459,7 @@ async function generateEntriesForRun(
         // Persist any user overrides so they survive future regenerations.
         const empOverrides = overridesByEmployee.get(emp.id);
         entry.overrides = empOverrides ? JSON.stringify(empOverrides) : null;
+        entry.typeOfHousing = emp.typeOfHousing || 'Benefit not given';
         return entry;
     });
 
@@ -496,9 +501,15 @@ async function generateEntriesForRun(
                 overtimePay: entry.overtimePay,
                 absentDays: entry.absentDays,
                 lateDays: entry.lateDays,
+                otherPension: entry.otherPension || 0,
+                postRetMedical: entry.postRetMedical || 0,
+                mortgageInterest: entry.mortgageInterest || 0,
+                insuranceRelief: entry.insuranceRelief || 0,
+                pwd: entry.pwd || 'No',
                 bonusPay: entry.bonusPay || 0,
                 taxableBonus: entry.taxableBonus || 0,
                 nonTaxableBonus: entry.nonTaxableBonus || 0,
+                typeOfHousing: entry.typeOfHousing || 'Benefit not given',
                 attendanceDeduction: entry.attendanceDeduction || 0,
                 originalBasicPay: entry.originalBasicPay || 0,
                 scheduledWorkDays: entry.scheduledWorkDays || 0,
@@ -779,8 +790,9 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
         if (!employeeId) return res.status(400).json({ message: 'employeeId is required' });
 
         const allowedOverrides = [
-            'basicPay', 'carBenefit', 'mealsBenefit', 'nonCashBenefits',
+            'carBenefit', 'mealsBenefit', 'nonCashBenefits',
             'housingBenefit', 'otherBenefits', 'bonusPay', 'insuranceRelief',
+            'otherPension', 'postRetMedical', 'mortgageInterest',
             'absentDays', 'lateHours', 'overtimePay', 'otherDeductions', 'loanDeduction', 'hourlyRate',
         ];
 
@@ -810,6 +822,8 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
         if (entry.overrides) {
             try {
                 existingOverrides = JSON.parse(entry.overrides);
+                // Basic pay must always come from attendance / employee master, never from an override.
+                delete existingOverrides.basicPay;
             } catch { /* ignore */ }
         }
         const mergedOverrides = { ...existingOverrides, ...overridePayload };
@@ -896,10 +910,10 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
                     ? (mergedOverrides.lateHours !== undefined ? mergedOverrides.lateHours : entry.lateDays)
                     : 0,
                 pwd: emp.pwd || 'No',
-                otherPension: emp.otherPension || 0,
-                postRetMedical: emp.postRetMedical || 0,
-                mortgageInterest: emp.mortgageInterest || 0,
-                insuranceRelief: mergedOverrides.insuranceRelief !== undefined ? mergedOverrides.insuranceRelief : (entry.insuranceRelief || 0),
+                otherPension: mergedOverrides.otherPension !== undefined ? mergedOverrides.otherPension : (entry.otherPension !== undefined ? entry.otherPension : (emp.otherPension || 0)),
+                postRetMedical: mergedOverrides.postRetMedical !== undefined ? mergedOverrides.postRetMedical : (entry.postRetMedical !== undefined ? entry.postRetMedical : (emp.postRetMedical || 0)),
+                mortgageInterest: mergedOverrides.mortgageInterest !== undefined ? mergedOverrides.mortgageInterest : (entry.mortgageInterest !== undefined ? entry.mortgageInterest : (emp.mortgageInterest || 0)),
+                insuranceRelief: mergedOverrides.insuranceRelief !== undefined ? mergedOverrides.insuranceRelief : (entry.insuranceRelief !== undefined ? entry.insuranceRelief : (emp.insuranceRelief || 0)),
                 bonusPay: mergedOverrides.bonusPay !== undefined ? mergedOverrides.bonusPay : entry.bonusPay,
                 standardCheckIn: emp.standardCheckIn || '08:00',
                 standardCheckOut: emp.standardCheckOut || '17:00',
@@ -933,6 +947,10 @@ router.post('/:clientId/payroll-runs/:id/update-entry', async (req: Authenticate
             updateSet.taxableBonus = computed.taxableBonus;
             updateSet.nonTaxableBonus = computed.nonTaxableBonus;
             updateSet.overtimePay = computed.overtimePay;
+            updateSet.otherPension = computed.otherPension;
+            updateSet.postRetMedical = computed.postRetMedical;
+            updateSet.mortgageInterest = computed.mortgageInterest;
+            updateSet.insuranceRelief = computed.insuranceRelief;
             updateSet.daysWorked = computed.daysWorked;
             updateSet.absentDays = computed.absentDays;
             updateSet.lateDays = computed.lateDays;
@@ -1799,23 +1817,37 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
             row.push(emp?.typeOfEmployee || 'Primary Employee');
             row.push(emp?.pwd || 'No');
             row.push(emp?.exemptionCert || '');
-            row.push(e.basicPay || 0);
-            row.push(emp?.carBenefit || 0);
-            row.push(emp?.mealsBenefit || 0);
-            row.push(emp?.nonCashBenefits || 0);
-            row.push(emp?.typeOfHousing || 'Benefit not given');
-            row.push(emp?.housingBenefit || 0);
-            row.push(emp?.otherBenefits || 0);
+            // Prefer payroll-entry values (they include sidebar overrides) over employee master data.
+            const carBenefit = e.carBenefit ?? emp?.carBenefit ?? 0;
+            const mealsBenefit = e.mealsBenefit ?? emp?.mealsBenefit ?? 0;
+            const nonCashBenefits = e.nonCashBenefits ?? emp?.nonCashBenefits ?? 0;
+            const housingBenefit = e.housingBenefit ?? emp?.housingBenefit ?? 0;
+            const otherBenefits = e.otherBenefits ?? emp?.otherBenefits ?? 0;
+            const otherPension = e.otherPension ?? emp?.otherPension ?? 0;
+            const postRetMedical = e.postRetMedical ?? emp?.postRetMedical ?? 0;
+            const mortgageInterest = e.mortgageInterest ?? emp?.mortgageInterest ?? 0;
+            const insuranceRelief = e.insuranceRelief ?? emp?.insuranceRelief ?? 0;
+
+            // Total Cash Pay (A) includes basic pay plus taxable bonus.
+            const taxableBonus = e.taxableBonus ?? e.bonusPay ?? 0;
+            row.push((e.basicPay || 0) + taxableBonus);
+            row.push(carBenefit);
+            row.push(mealsBenefit);
+            row.push(nonCashBenefits);
+            const housingType = e.typeOfHousing || emp?.typeOfHousing || 'Benefit not given';
+            row.push(housingType);
+            row.push(housingType === 'Benefit not given' ? '' : housingBenefit);
+            row.push(otherBenefits);
             row.push(e.grossPay || 0);
             row.push(e.shaDeduction || 0);
             row.push(e.nssfDeduction || 0);
-            row.push(emp?.otherPension || 0);
-            row.push(emp?.postRetMedical || 0);
-            row.push(emp?.mortgageInterest || 0);
+            row.push(otherPension);
+            row.push(postRetMedical);
+            row.push(mortgageInterest);
             row.push(e.ahlDeduction || 0);
             row.push(e.taxablePay || 0);
             row.push(2400);
-            row.push(emp?.insuranceRelief || 0);
+            row.push(insuranceRelief);
             row.push(e.payeTax || 0);
             row.push(e.payeTax || 0);
             csvLines.push(row.map((v) => String(v ?? '')).join(','));
@@ -2212,8 +2244,16 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
             console.log('[approvals] New approvals inserted');
         }
 
-        // Build absent records to insert
+        // Build absent records to upsert. Existing records for the same employee+date
+        // are overwritten to Absent so that previously-saved Present/Late records do
+        // not block the approved absent status.
         const newRecords: any[] = [];
+        const recordsToUpdate: { ref: any; data: any }[] = [];
+        const existingDocMap = new Map<string, any>();
+        for (const d of existingAfterCleanup.docs) {
+            const data = d.data() as any;
+            existingDocMap.set(`${data.employeeId}-${data.date}`, d.ref);
+        }
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
         for (const ea of employeeApprovals) {
@@ -2249,8 +2289,9 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
                 : workDays.slice(-absentCount);
 
             for (const dateStr of absentDates) {
-                if (effectiveExistingSet.has(`${(emp as any).id}-${dateStr}`)) continue;
-                newRecords.push({
+                const mapKey = `${(emp as any).id}-${dateStr}`;
+                const existingRef = existingDocMap.get(mapKey);
+                const baseRecord = {
                     ownerUid: uid,
                     clientId,
                     employeeId: (emp as any).id,
@@ -2261,10 +2302,27 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
                     checkOut: '',
                     status: 'Absent',
                     notes: 'Marked absent from review',
-                    createdAt: nowIso,
-                    updatedAt: nowIso,
-                });
+                    updatedAt: Timestamp.now(),
+                };
+                if (existingRef) {
+                    recordsToUpdate.push({ ref: existingRef, data: baseRecord });
+                } else {
+                    newRecords.push({ ...baseRecord, createdAt: Timestamp.now() });
+                }
             }
+        }
+
+        if (recordsToUpdate.length > 0) {
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < recordsToUpdate.length; i += BATCH_SIZE) {
+                const chunk = recordsToUpdate.slice(i, i + BATCH_SIZE);
+                const batch = adminDb.batch();
+                for (const { ref, data } of chunk) {
+                    batch.update(ref, data);
+                }
+                await batch.commit();
+            }
+            console.log(`[approvals] Updated ${recordsToUpdate.length} existing records to Absent`);
         }
 
         if (newRecords.length > 0) {
@@ -2275,7 +2333,7 @@ router.post('/:clientId/attendance-payroll-approve', async (req: AuthenticatedRe
                 for (const r of chunk) {
                     const docId = `${r.clientId}_${r.employeeId}_${r.date}`;
                     const docRef = adminDb.collection('attendanceRecords').doc(docId);
-                    batch.set(docRef, { ...r, updatedAt: Timestamp.now() });
+                    batch.set(docRef, r);
                 }
                 await batch.commit();
             }

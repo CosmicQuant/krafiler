@@ -10,6 +10,7 @@ export interface PayrollInput {
     nonCashBenefits?: number;
     housingBenefit?: number;
     otherBenefits?: number;
+    typeOfHousing?: string;
     dateJoined: string;
     dateLeft: string | null;
     employmentStatus: string;
@@ -266,7 +267,18 @@ export function computePayrollEntry(
     const nonCashBenefits = roundMoney(input.nonCashBenefits || 0);
     const housingBenefit = roundMoney(input.housingBenefit || 0);
     const otherBenefits = roundMoney(input.otherBenefits || 0);
-    const totalBenefits = roundMoney(carBenefit + mealsBenefit + nonCashBenefits + housingBenefit + otherBenefits);
+    const typeOfHousing = input.typeOfHousing || 'Benefit not given';
+
+    // Taxable benefit amounts for gross pay / NSSF / SHA / PAYE:
+    // - Car & Other benefits: included in full.
+    // - Meals: only the amount above KES 5,000 is taxable.
+    // - Non-cash: included in full only if total > KES 5,000.
+    // - Housing: included only if a housing type is provided (not "Benefit not given").
+    const taxableMeals = Math.max(0, mealsBenefit - 5000);
+    const taxableNonCash = nonCashBenefits > 5000 ? nonCashBenefits : 0;
+    const housingGiven = typeOfHousing !== 'Benefit not given';
+    const taxableHousing = housingGiven ? housingBenefit : 0;
+    const totalBenefits = roundMoney(carBenefit + taxableMeals + taxableNonCash + taxableHousing + otherBenefits);
 
     const unpaidLeaveDays = input.unpaidLeaveDays || 0;
     // Daily rate for deductions uses scheduledDaysIncludingHolidays because holidays are paid days off
@@ -330,7 +342,7 @@ export function computePayrollEntry(
     const nssfPensionCapped = Math.min(nssfDeduction + otherPension, 30000);
     const postRetMedicalCapped = Math.min(input.postRetMedical || 0, 15000);
     const mortgageInterestCapped = Math.min(input.mortgageInterest || 0, 30000);
-    const pwdExemption = (input.pwd === 'Yes') ? 12500 : 0;
+    const pwdExemption = (input.pwd === 'Yes') ? 150000 : 0;
 
     const taxablePay = roundMoney(Math.max(0, adjustedGrossPay - shaDeduction - nssfPensionCapped - postRetMedicalCapped - mortgageInterestCapped - ahlDeduction - pwdExemption));
 

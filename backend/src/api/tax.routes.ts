@@ -232,6 +232,23 @@ const validateFilingRequest = [
             return true;
         }),
 
+    body('vatCurrentMonthDownload')
+        .custom((value: unknown, { req }) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+
+            if (typeof value !== 'boolean' && value !== 'true' && value !== 'false') {
+                throw new Error('vatCurrentMonthDownload must be a boolean when provided');
+            }
+
+            if (`${value}` === 'true' && req.body.taxObligationType !== 'vat') {
+                throw new Error('vatCurrentMonthDownload is only supported for VAT filings');
+            }
+
+            return true;
+        }),
+
     body('vatPreviousCredit')
         .custom((value: unknown, { req }) => {
             if (value === undefined || value === null || value === '') {
@@ -290,7 +307,7 @@ router.post(
             return;
         }
 
-        const { kraPin, clientId, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
+        const { kraPin, clientId, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatCurrentMonthDownload, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -322,6 +339,7 @@ router.post(
                 payeZipUrl: typeof payeZipUrl === 'string' ? payeZipUrl : undefined,
                 vatZipUrl: typeof vatZipUrl === 'string' ? vatZipUrl : undefined,
                 prepareVatOnly: prepareVatOnly === true,
+                vatCurrentMonthDownload: vatCurrentMonthDownload === true,
                 vatPreviousCredit: typeof vatPreviousCredit === 'number'
                     ? vatPreviousCredit
                     : vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
@@ -400,6 +418,7 @@ router.post(
                     ...(payeZipUrl && { payeZipUrl }),
                     ...(vatZipUrl && { vatZipUrl }),
                     ...(prepareVatOnly === true && { prepareVatOnly: true }),
+                    ...(vatCurrentMonthDownload === true && { vatCurrentMonthDownload: true }),
                     ...(vatPreviousCredit !== undefined && vatPreviousCredit !== null && vatPreviousCredit !== ''
                         ? { vatPreviousCredit: Number(vatPreviousCredit) }
                         : {}),

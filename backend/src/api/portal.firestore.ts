@@ -537,6 +537,7 @@ router.get('/p9', async (req: PortalRequest, res) => {
         const benefits = e.benefits || 0;
         const overtimePay = e.overtimePay || 0;
         const bonusPay = (e.bonusPay || 0) + (e.nonTaxableBonus || 0);
+        const taxableBonus = e.taxableBonus ?? e.bonusPay ?? 0;
         const grossPay = e.grossPay || (basicPay + benefits + overtimePay + bonusPay);
         const shaDed = e.shaDeduction || Math.round(grossPay * 0.0275 * 100) / 100;
         const nssfDed = e.nssfDeduction || Math.round(Math.min(grossPay * 0.06, 6480) * 100) / 100;
@@ -547,7 +548,8 @@ router.get('/p9', async (req: PortalRequest, res) => {
         const taxYear = new Date().getFullYear().toString();
         const monthNum = new Date().getMonth() + 1;
 
-        const totalCashPay = basicPay || 0;
+        // P9 Basic Salary (column A) includes basic pay plus taxable bonus.
+        const totalCashPay = (basicPay || 0) + taxableBonus;
         const carBenefit = e.carBenefit || (emp as any).carBenefit || 0;
         const meals = e.mealsBenefit || (emp as any).mealsBenefit || 0;
         const nonCash = e.nonCashBenefits || (emp as any).nonCashBenefits || 0;
@@ -579,8 +581,11 @@ router.get('/p9', async (req: PortalRequest, res) => {
             } catch { /* ignore */ }
         }
         try {
-            const kraLogoPath = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
-            if (fs.existsSync(kraLogoPath)) doc.image(kraLogoPath, leftMargin + pageWidth - 60, y, { width: 55 });
+            // KRA logo: prefer backend assets (production), fall back to frontend public (local dev).
+            const backendKraLogo = path.resolve(__dirname, '..', '..', 'assets', 'kra.png');
+            const frontendKraLogo = path.resolve(__dirname, '..', '..', '..', 'frontend', 'public', 'logos', 'kra.png');
+            const kraLogoPath = fs.existsSync(backendKraLogo) ? backendKraLogo : (fs.existsSync(frontendKraLogo) ? frontendKraLogo : null);
+            if (kraLogoPath) doc.image(kraLogoPath, leftMargin + pageWidth - 60, y, { width: 55 });
         } catch { /* ignore */ }
         y += 60;
 

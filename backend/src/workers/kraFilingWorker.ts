@@ -1937,8 +1937,9 @@ export async function processFilingJob(job: JobContext): Promise<{
     const isMriReturn = taxObligationType === 'monthly_rental_income';
     const isTotReturn = taxObligationType === 'turnover_tax';
     const isPayeUpload = taxObligationType === 'paye' && !!(payload as any).payeZipUrl;
-    const isVatPrepareOnly = taxObligationType === 'vat' && (payload as any).prepareVatOnly === true;
-    const isVatUpload = taxObligationType === 'vat' && !!(payload as any).vatZipUrl && !isVatPrepareOnly;
+    const isVatPrepareOnly = taxObligationType === 'vat' && (payload as any).prepareVatOnly === true && (payload as any).vatCurrentMonthDownload !== true;
+    const isVatCurrentMonthDownload = taxObligationType === 'vat' && (payload as any).vatCurrentMonthDownload === true;
+    const isVatUpload = taxObligationType === 'vat' && !!(payload as any).vatZipUrl && !isVatPrepareOnly && !isVatCurrentMonthDownload;
     const vatPreviousCredit = typeof (payload as any).vatPreviousCredit === 'number'
         ? (payload as any).vatPreviousCredit
         : Number((payload as any).vatPreviousCredit ?? 0) || 0;
@@ -2258,7 +2259,7 @@ export async function processFilingJob(job: JobContext): Promise<{
         const mriFilingService = new MriFilingService(page, job);
 
         // ── Step 8: Navigate to Returns submenu ──────────────────────────────────
-        await setJobStep(job, 50, isTotReturn ? 'Opening the KRA ToT return form' : isMriReturn ? 'Opening the KRA MRI return form' : isPayeUpload ? 'Opening the KRA PAYE return form' : (isVatPrepareOnly || isVatUpload) ? 'Opening the KRA VAT return form' : 'Opening the KRA nil return form');
+        await setJobStep(job, 50, isTotReturn ? 'Opening the KRA ToT return form' : isMriReturn ? 'Opening the KRA MRI return form' : isPayeUpload ? 'Opening the KRA PAYE return form' : (isVatPrepareOnly || isVatUpload) ? 'Opening the KRA VAT return form' : isVatCurrentMonthDownload ? 'Preparing current-month VAT download from homepage' : 'Opening the KRA nil return form');
 
         // Take a screenshot and dump the nav menu so we can discover the real selectors
         if (KRA_DEBUG_ARTIFACTS) {
@@ -2395,7 +2396,7 @@ export async function processFilingJob(job: JobContext): Promise<{
         // ── For VAT preparation: extract credit and withholding from portal ──
         let creditBroughtForward = 0;
         let withholdingAmount = 0;
-        if (isVatPrepareOnly || isVatUpload) {
+        if (isVatPrepareOnly || isVatUpload || isVatCurrentMonthDownload) {
             try {
                 creditBroughtForward = await extractVatCreditBroughtForward(page, context, job);
                 if (creditBroughtForward !== 0) {
@@ -2413,6 +2414,81 @@ export async function processFilingJob(job: JobContext): Promise<{
             } catch (e: any) {
                 await appendJobLog(job, `Could not extract withholding from portal: ${e.message}`, { progress: 47, level: 'warn' });
             }
+        }
+
+        // ── Current-month VAT download from homepage ─────────────────────────────
+        if (isVatCurrentMonthDownload) {
+            await setJobStep(job, 60, 'Downloading current-month VAT transactions from the iTax homepage');
+
+            const effectivePreviousCredit = (creditBroughtForward + withholdingAmount) !== 0
+                ? (creditBroughtForward + withholdingAmount)
+                : vatPreviousCredit;
+            if (creditBroughtForward !== 0 || withholdingAmount !== 0) {
+                await appendJobLog(job, `Using portal-extracted credit for current-month VAT: KES ${effectivePreviousCredit} (credit: ${creditBroughtForward}, withholding: ${withholdingAmount})`, { progress: 60 });
+            }
+
+            const vatFilingService = new VatFilingService(page, job);
+            const preparedVat = await vatFilingService.prepareCurrentMonthFromHomepage({
+                kraPin,
+                clientName: resolvedClientName,
+                periodFrom,
+                periodTo,
+                previousCredit: effectivePreviousCredit,
+                sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
+            });
+
+            const vatSummaryWithWithholding = {
+                ...preparedVat.vatSummary,
+                withholdingAmount,
+            };
+
+            if (context) {
+                await context.close();
+            }
+            if (browser) {
+                await browser.close();
+            }
+            context = undefined;
+            browser = undefined;
+
+            try {
+                if (payload.clientId) {
+                    const clientUpdate: Record<string, any> = {
+                        vat: 'generated',
+                        status: { vat: 'generated' },
+                        vatZipUrl: preparedVat.generatedZipUrl,
+                        vatZipLabel: preparedVat.generatedZipLabel,
+                        vatSourcePackageUrl: preparedVat.sourcePackageUrl,
+                        vatSourcePackageLabel: preparedVat.sourcePackageLabel,
+                        vatSummary: vatSummaryWithWithholding,
+                        vatPreparedAt: new Date().toISOString(),
+                    };
+                    const currentPeriodFrom = payload.periodFrom || periodFrom || '';
+                    if (currentPeriodFrom) {
+                        const periodMatch = currentPeriodFrom.match(/^(\d{4})-(\d{2})/);
+                        if (periodMatch) {
+                            clientUpdate.vatPeriod = `${periodMatch[1]}-${periodMatch[2]}`;
+                        }
+                    }
+                    await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                    await appendJobLog(job, `Saved current-month VAT ZIP to client workspace`, { progress: 95 });
+                }
+            } catch (persistErr: any) {
+                console.error(`[Worker][${jobId}] Failed to persist current-month VAT artifacts:`, persistErr.message);
+                await appendJobLog(job, `Warning: current-month VAT ZIP generated but could not be saved to client workspace`, { progress: 95, level: 'info' });
+            }
+
+            await setJobStep(job, 100, 'Current-month VAT ZIP generation completed');
+            return {
+                receiptPath: '',
+                receiptNumber: null,
+                credentialUpdate,
+                vatSummary: vatSummaryWithWithholding,
+                generatedZipUrl: preparedVat.generatedZipUrl,
+                generatedZipLabel: preparedVat.generatedZipLabel,
+                sourcePackageUrl: preparedVat.sourcePackageUrl,
+                sourcePackageLabel: preparedVat.sourcePackageLabel,
+            };
         }
 
         // ── Robust Returns menu navigation ──────────────────────────────────────

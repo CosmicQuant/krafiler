@@ -6,6 +6,7 @@ export interface PayrollCalculationInput {
     nonCash?: number;
     housingBenefit?: number;
     otherBenefits?: number;
+    typeOfHousing?: string;
     pwd?: string;
     otherPension?: number;
     postRetMedical?: number;
@@ -40,17 +41,26 @@ export function calculatePayrollFields(input: PayrollCalculationInput): PayrollC
     const nonCash = input.nonCash || 0;
     const housingBenefit = input.housingBenefit || 0;
     const otherBenefits = input.otherBenefits || 0;
+    const typeOfHousing = input.typeOfHousing || 'Benefit not given';
     const otherPension = input.otherPension || 0;
     const postRetMedical = input.postRetMedical || 0;
     const mortgage = input.mortgage || 0;
     const insuranceRelief = input.insuranceRelief || 0;
 
-    const grossSalary = roundMoney(totalCashPay + carBenefit + meals + nonCash + housingBenefit + otherBenefits);
+    // Apply the same benefit inclusion rules as the payroll engine.
+    const taxableMeals = Math.max(0, meals - 5000);
+    const taxableNonCash = nonCash > 5000 ? nonCash : 0;
+    const housingGiven = typeOfHousing !== 'Benefit not given';
+    const taxableHousing = housingGiven ? housingBenefit : 0;
+    const grossSalary = roundMoney(totalCashPay + carBenefit + taxableMeals + taxableNonCash + taxableHousing + otherBenefits);
     const shaContribution = grossSalary > 0 ? roundMoney(grossSalary * 0.0275) : 0;
     const nssfContribution = grossSalary > 0 ? roundMoney(Math.min(grossSalary * 0.06, 6480)) : 0;
     const ahl = grossSalary > 0 ? roundMoney(grossSalary * 0.015) : 0;
     const pwdExemption = isPwdExempt(input.pwd) ? 150000 : 0;
-    const taxablePay = roundMoney(Math.max(0, grossSalary - shaContribution - nssfContribution - otherPension - postRetMedical - mortgage - ahl - pwdExemption));
+    const nssfPensionCapped = Math.min(nssfContribution + otherPension, 30000);
+    const postRetMedicalCapped = Math.min(postRetMedical, 15000);
+    const mortgageCapped = Math.min(mortgage, 30000);
+    const taxablePay = roundMoney(Math.max(0, grossSalary - shaContribution - nssfPensionCapped - postRetMedicalCapped - mortgageCapped - ahl - pwdExemption));
     const personalRelief = totalCashPay > 0 || !!input.employeeName?.trim() ? 2400 : 0;
 
     const paye = roundMoney(Math.max(

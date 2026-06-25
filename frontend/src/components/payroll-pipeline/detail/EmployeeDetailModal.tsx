@@ -63,7 +63,7 @@ const dropdownOptions: Record<string, string[]> = {
     pwd: ['No', 'Yes'],
     employmentStatus: ['Active', 'Terminated', 'Resigned', 'Suspended'],
     employmentType: ['Permanent', 'Contract', 'Casual', 'Intern'],
-    typeOfHousing: ['Benefit not given', 'Own House', 'Rented', 'Company Provided', 'Living with Parents'],
+    typeOfHousing: ['Benefit not given', "Employer's Owned House", "Employer's Rented House", 'Agriculture Farm', 'House to Non full time service Director'],
     payStructure: ['fixed', 'prorated'],
 };
 

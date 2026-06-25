@@ -37,15 +37,17 @@ interface Desk20thViewProps {
   vatSectionBWithoutPinVals: Record<string, string>;
   setVatSectionBWithoutPinVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onPrepareVat: (client: ClientObligation) => Promise<void>;
+  onPrepareCurrentMonthVat?: (client: ClientObligation) => Promise<void>;
   onConfirmVatFiling: (client: ClientObligation) => Promise<void>;
-  onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
-  onFileMri: (client: ClientObligation) => Promise<void>;
   onFileTot: (client: ClientObligation) => Promise<void>;
+  onGenerateTotZip: (client: ClientObligation) => Promise<void>;
+  onFileMri: (client: ClientObligation, amount: number) => Promise<void>;
   onAutoFile: (client: ClientObligation) => Promise<void>;
-  onAutoFileNssf: (client: ClientObligation) => void;
-    onGenerateTotZip: (client: ClientObligation) => Promise<void>;
+  onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
+  onFileNil: (client: ClientObligation, periodFrom: string, periodTo: string, ownsRentalProperty: boolean) => Promise<void>;
+  onCancelJob?: (client: ClientObligation) => Promise<void>;
+  cancellingClientIds?: Record<string, boolean>;
   fixedType?: 'vat' | 'tot' | 'mri' | 'dst';
-  onSelectClient?: (client: ClientObligation) => void;
 }
 
 export function Desk20thView({
@@ -62,15 +64,17 @@ export function Desk20thView({
   vatSectionBWithoutPinVals,
   setVatSectionBWithoutPinVals,
   onPrepareVat,
+  onPrepareCurrentMonthVat,
   onConfirmVatFiling,
-  onGeneratePrn,
-  onFileMri,
   onFileTot,
-  onAutoFile,
-  onAutoFileNssf,
   onGenerateTotZip,
+  onFileMri,
+  onAutoFile,
+  onGeneratePrn,
+  onFileNil,
+  onCancelJob,
+  cancellingClientIds,
   fixedType,
-  onSelectClient,
 }: Desk20thViewProps) {
 
   let obligations: { client: ClientObligation; type: string; status: TaxStatus }[] = [];
@@ -501,6 +505,18 @@ export function Desk20thView({
                               )}
                               {vatGenerateActionLabel}
                             </button>
+                            {onPrepareCurrentMonthVat && (
+                              <button
+                                onClick={() => void onPrepareCurrentMonthVat(ob.client)}
+                                disabled={isPendingFilingJob(relevantJob as any)}
+                                className="flex w-full justify-center items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-100 hover:text-indigo-500 transition shadow-sm drop-shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {isPendingFilingJob(relevantJob as any) && (
+                                  <RefreshCw className="h-3 w-3 animate-spin" />
+                                )}
+                                Current Month VAT ZIP
+                              </button>
+                            )}
                             <button
                               onClick={() => void onConfirmVatFiling(ob.client)}
                               disabled={

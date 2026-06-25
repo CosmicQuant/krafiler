@@ -30,6 +30,7 @@ interface VatClientViewProps {
     vatSectionBWithoutPinVals: Record<string, string>;
     setVatSectionBWithoutPinVals: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     onPrepareVat: (client: ClientObligation) => Promise<void>;
+    onPrepareCurrentMonthVat: (client: ClientObligation) => Promise<void>;
     onConfirmVatFiling: (client: ClientObligation) => Promise<void>;
     onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
     onCancelJob?: (client: ClientObligation) => Promise<void>;
@@ -43,6 +44,7 @@ export function VatClientView({
     vatSectionBWithoutPinVals,
     setVatSectionBWithoutPinVals,
     onPrepareVat,
+    onPrepareCurrentMonthVat,
     onConfirmVatFiling,
     onGeneratePrn,
     onCancelJob,
@@ -316,6 +318,16 @@ export function VatClientView({
                             <RefreshCw className="h-3 w-3 animate-spin" />
                         )}
                         {vatGenerateActionLabel}
+                    </button>
+                    <button
+                        onClick={() => void onPrepareCurrentMonthVat(client)}
+                        disabled={isPendingFilingJob(relevantJob as any)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-5 py-2.5 text-xs font-bold text-indigo-600 hover:bg-indigo-100 hover:text-indigo-500 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isPendingFilingJob(relevantJob as any) && (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                        )}
+                        Generate Current Month VAT ZIP
                     </button>
                     <button
                         onClick={() => void onConfirmVatFiling(client)}

@@ -26,6 +26,7 @@ interface FilingGuardInput {
     payeZipUrl?: string;
     vatZipUrl?: string;
     prepareVatOnly?: boolean;
+    vatCurrentMonthDownload?: boolean;
     vatPreviousCredit?: number;
     sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;
@@ -51,6 +52,7 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         payeZipUrl: input.payeZipUrl?.trim() ?? '',
         vatZipUrl: input.vatZipUrl?.trim() ?? '',
         prepareVatOnly: Boolean(input.prepareVatOnly),
+        vatCurrentMonthDownload: Boolean(input.vatCurrentMonthDownload),
         vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
         printPrnOnly: Boolean(input.printPrnOnly),
     });
@@ -83,6 +85,7 @@ export async function findDuplicatePendingFiling(
             payeZipUrl: pendingJobData.payload.payeZipUrl,
             vatZipUrl: pendingJobData.payload.vatZipUrl,
             prepareVatOnly: pendingJobData.payload.prepareVatOnly,
+            vatCurrentMonthDownload: pendingJobData.payload.vatCurrentMonthDownload,
             vatPreviousCredit: pendingJobData.payload.vatPreviousCredit,
             printPrnOnly: pendingJobData.payload.printPrnOnly,
         });

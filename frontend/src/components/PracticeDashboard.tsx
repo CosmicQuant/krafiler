@@ -442,10 +442,10 @@ export default function PracticeDashboard() {
                 vatSectionBWithoutPinVals={vatSectionBWithoutPinVals}
                 setVatSectionBWithoutPinVals={setVatSectionBWithoutPinVals}
                 onPrepareVat={filingActions.prepareVat}
+                onPrepareCurrentMonthVat={filingActions.prepareCurrentMonthVat}
                 onConfirmVatFiling={filingActions.confirmVatFiling}
                 onGeneratePrn={filingActions.generatePrn}
                 onCancelJob={filingActions.cancelAutoFile}
-                cancellingClientIds={cancellingClientIds}
                 setClients={setClients}
               />
             )}

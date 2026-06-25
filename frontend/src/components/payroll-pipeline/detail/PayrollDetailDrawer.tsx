@@ -160,7 +160,7 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
       const res = await apiFetch(`/clients/${clientId}/attendance?dateFrom=${period}-01&dateTo=${period}-${String(lastDay).padStart(2, '0')}`);
       if (res.ok) {
         const data = await res.json();
-        setAttendanceRecords(data.filter((r: any) => r.employeeId === entry.employeeId));
+        setAttendanceRecords(data.filter((r: any) => String(r.employeeId) === String(entry.employeeId)));
       }
     } catch { /* ignore */ }
   }, [clientId, entry.employeeId, period]);
@@ -233,7 +233,6 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employeeId: entry.employeeId,
-          basicPay: draft.basicPay,
           carBenefit: draft.carBenefit,
           mealsBenefit: draft.mealsBenefit,
           nonCashBenefits: draft.nonCashBenefits,
@@ -241,6 +240,10 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
           otherBenefits: draft.otherBenefits,
           bonusPay: draft.bonusPay,
           overtimePay: draft.overtimePay,
+          otherPension: draft.otherPension,
+          postRetMedical: draft.postRetMedical,
+          mortgageInterest: draft.mortgageInterest,
+          insuranceRelief: draft.insuranceRelief,
           otherDeductions: draft.otherDeductions,
           loanDeduction: draft.loanDeduction,
         }),
@@ -326,6 +329,7 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     nonCashBenefits: draft.nonCashBenefits ?? entry.nonCashBenefits,
     housingBenefit: draft.housingBenefit ?? entry.housingBenefit,
     otherBenefits: draft.otherBenefits ?? entry.otherBenefits,
+    typeOfHousing: employee?.typeOfHousing || 'Benefit not given',
     dateJoined: employee?.dateJoined || '',
     dateLeft: null,
     employmentStatus: employee?.employmentStatus || 'Active',
@@ -334,7 +338,12 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     mortgageInterest: draft.mortgageInterest ?? 0,
     insuranceRelief: draft.insuranceRelief ?? 0,
     bonusPay: draft.bonusPay ?? entry.bonusPay,
+    overtimePay: draft.overtimePay ?? entry.overtimePay,
     pwd: employee?.pwd || 'No',
+    otherPension: draft.otherPension ?? entry.otherPension ?? 0,
+    postRetMedical: draft.postRetMedical ?? entry.postRetMedical ?? 0,
+    mortgageInterest: draft.mortgageInterest ?? entry.mortgageInterest ?? 0,
+    insuranceRelief: draft.insuranceRelief ?? entry.insuranceRelief ?? 0,
     loanDeduction: draft.loanDeduction ?? entry.loanDeduction ?? 0,
     otherDeductions: draft.otherDeductions ?? entry.otherDeductions ?? 0,
   }, period || '2026-01', false);
@@ -458,10 +467,16 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
     if (!employee?.id) return;
     setError(null);
     try {
-      const res = await apiFetch(`/clients/${clientId}/email/send-payslips`, {
+      const [y, m] = (period || '').split('-');
+      const periodParam = m && y ? `${m}${y}` : '';
+      const queryParams = new URLSearchParams();
+      if (periodParam) queryParams.set('period', periodParam);
+      if (runId) queryParams.set('runId', String(runId));
+      const url = `/clients/${clientId}/email/send-payslips${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+      const res = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeIds: [employee.id] }),
+        body: JSON.stringify({ employeeIds: [employee.id], includeP9: true }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -493,7 +508,7 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
             <button onClick={handleDownloadP9} title="Download P9" className="rounded p-1.5 text-slate-400 hover:bg-slate-100 transition">
               <Download className="h-4 w-4" />
             </button>
-            <button onClick={handleEmailPayslip} title="Email Payslip" className="rounded p-1.5 text-slate-400 hover:bg-slate-100 transition">
+            <button onClick={handleEmailPayslip} title="Email Payslip & P9" className="rounded p-1.5 text-slate-400 hover:bg-slate-100 transition">
               <Mail className="h-4 w-4" />
             </button>
             <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 transition">
@@ -592,8 +607,13 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
           {activeTab === 'payroll' && (
             <div className="space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600">Edit Payroll</h4>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-medium text-slate-600">Basic Pay</label>
+                <span className="w-28 rounded border border-slate-100 bg-slate-50 px-2 py-1 text-right font-mono text-xs text-slate-500">
+                  {Number((draft as any).basicPay ?? entry.basicPay ?? 0).toLocaleString()}
+                </span>
+              </div>
               {[
-                { key: 'basicPay', label: 'Basic Pay' },
                 { key: 'carBenefit', label: 'Car Benefit' },
                 { key: 'mealsBenefit', label: 'Meals' },
                 { key: 'nonCashBenefits', label: 'Non-Cash' },
@@ -601,19 +621,40 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
                 { key: 'otherBenefits', label: 'Other Benefits' },
                 { key: 'bonusPay', label: 'Bonus Pay' },
                 { key: 'overtimePay', label: 'Overtime' },
+                { key: 'otherPension', label: 'Other Pension' },
+                { key: 'postRetMedical', label: 'Post-Retirement Medical' },
+                { key: 'mortgageInterest', label: 'Mortgage Interest' },
+                { key: 'insuranceRelief', label: 'Insurance Relief' },
                 { key: 'loanDeduction', label: 'Loan Deduction' },
                 { key: 'otherDeductions', label: 'Other Deductions' },
-              ].map((f) => (
-                <div key={f.key} className="flex items-center justify-between gap-3">
-                  <label className="text-xs font-medium text-slate-600">{f.label}</label>
-                  <input
-                    type="number"
-                    value={(draft as any)[f.key] ?? (entry as any)[f.key] ?? 0}
-                    onChange={(e) => updateDraft(f.key as keyof PayrollEntry, parseFloat(e.target.value) || 0)}
-                    className="w-28 rounded border border-slate-200 bg-white px-2 py-1 text-right font-mono text-xs text-slate-900 focus:border-slate-400 focus:outline-none"
-                  />
-                </div>
-              ))}
+              ].map((f) => {
+                const isHousing = f.key === 'housingBenefit';
+                const housingDisabled = isHousing && (employee?.typeOfHousing || 'Benefit not given') === 'Benefit not given';
+                return (
+                  <div key={f.key} className="flex items-center justify-between gap-3">
+                    <label className={cn('text-xs font-medium', housingDisabled ? 'text-slate-400' : 'text-slate-600')}>
+                      {f.label}
+                      {isHousing && (
+                        <span className="ml-1 text-[10px] font-normal text-slate-400">
+                          ({employee?.typeOfHousing || 'Benefit not given'})
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="number"
+                      value={housingDisabled ? 0 : ((draft as any)[f.key] ?? (entry as any)[f.key] ?? 0)}
+                      onChange={(e) => updateDraft(f.key as keyof PayrollEntry, parseFloat(e.target.value) || 0)}
+                      disabled={housingDisabled}
+                      className={cn(
+                        'w-28 rounded border px-2 py-1 text-right font-mono text-xs focus:outline-none',
+                        housingDisabled
+                          ? 'border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed'
+                          : 'border-slate-200 bg-white text-slate-900 focus:border-slate-400'
+                      )}
+                    />
+                  </div>
+                );
+              })}
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button onClick={() => setDraft({ ...entry })} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Reset</button>
                 <button onClick={handleSavePayroll} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-40">
@@ -729,6 +770,28 @@ export function PayrollDetailDrawer({ entry, clientId, runId, period, onClose, o
                       <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</label>
                       <select value={employee.employmentStatus || 'Active'} onChange={(e) => updateEmployee('employmentStatus', e.target.value)} className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none">
                         <option>Active</option><option>Terminated</option><option>Resigned</option><option>Suspended</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">PWD</label>
+                      <select value={employee.pwd || 'No'} onChange={(e) => updateEmployee('pwd', e.target.value)} className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none">
+                        <option>No</option><option>Yes</option>
+                      </select>
+                    </div>
+                    {(employee.pwd || 'No') === 'Yes' && (
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Exemption Certificate</label>
+                        <input type="text" value={employee.exemptionCert || ''} onChange={(e) => updateEmployee('exemptionCert', e.target.value)} className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none" />
+                      </div>
+                    )}
+                    <div>
+                      <label className="mb-1 block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Type of Housing</label>
+                      <select value={employee.typeOfHousing || 'Benefit not given'} onChange={(e) => updateEmployee('typeOfHousing', e.target.value)} className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-900 focus:border-slate-400 focus:outline-none">
+                        <option>Benefit not given</option>
+                        <option>Employer&apos;s Owned House</option>
+                        <option>Employer&apos;s Rented House</option>
+                        <option>Agriculture Farm</option>
+                        <option>House to Non full time service Director</option>
                       </select>
                     </div>
                     <div>

@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { JobContext } from '../../types';
 import { appendJobLog } from './job-helpers';
+import { logger } from '../../logger';
 import { waitForPortalReadyWithReload, findMatchingPortalMessage, waitForMatchingPortalMessage, waitForDialogMessage, snapshotPageControls } from './portal-helpers';
 import { selectOptionByTextPatterns, setPortalDateField } from './form-helpers';
 
@@ -406,47 +407,204 @@ export async function downloadVatAutoPopulatedReturn(page: any, job: JobContext,
  *   5. Accept the confirmation dialog and capture the download.
  */
 export async function downloadVatTransactionsFromHomepage(page: any, job: JobContext, kraPin: string): Promise<string> {
-    const homepageUrlMatch = /actionCode=showOnlineServicesHomeLclick/;
+    const homepageUrlMatch = /actionCode=showOnlineServicesHomeLnclick/;
     const currentUrl = page.url();
     if (!homepageUrlMatch.test(currentUrl)) {
         await appendJobLog(job, 'Navigating to KRA iTax homepage for current-month VAT download', { progress: 70 });
-        await page.goto('https://itax.kra.go.ke/KRA-Portal/main.htm?actionCode=showOnlineServicesHomeLclick', { waitUntil: 'networkidle' });
-        await page.waitForTimeout(3_000);
+
+        // Prefer clicking the Home tab; direct URL navigation sometimes returns a cached-page error.
+        const homeSelectors = [
+            'a#homePageLink',
+            'a:has-text("Go to Home Page")',
+            'a:has-text("Home")',
+            'a.mainMenu:has-text("Home")',
+            'a[href*="showOnlineServicesHomeLclick"]',
+            'a[href*="loadOnlineServicesPage"]',
+            'li:has-text("Home") a',
+            'td:has-text("Home") a',
+        ];
+        let homeClicked = false;
+        for (const sel of homeSelectors) {
+            const home = page.locator(sel).first();
+            if (await home.count().catch(() => 0) > 0) {
+                try {
+                    await home.click();
+                    await page.waitForTimeout(3_000);
+                    homeClicked = true;
+                    await appendJobLog(job, 'Clicked Home tab to reach iTax homepage', { progress: 70 });
+                    break;
+                } catch { /* try next selector */ }
+            }
+        }
+
+        if (!homeClicked) {
+            // The authenticated dashboard lives at login.htm; showOnlineServicesHomeLnclick can redirect to the
+            // public landing page when the session is interpreted as stale in headless mode.
+            await page.goto('https://itax.kra.go.ke/KRA-Portal/login.htm', { waitUntil: 'networkidle' });
+            await page.waitForTimeout(3_000);
+        }
+
+        // Wait for the dashboard Tax Type control to appear (the homepage loads sections asynchronously).
+        await page.waitForSelector('select, label:has-text("Tax Type")', { state: 'attached', timeout: 15_000 }).catch(() => {});
+    }
+
+    // Helper: find the Tax Type <select> robustly. In headless mode visibility checks can be unreliable,
+    // so we inspect options directly and accept selects even if Playwright reports them not "visible".
+    async function findTaxTypeSelect(): Promise<any | null> {
+        // The KRA dashboard uses id="mnth" / name="whtCertiHdrDTO.month" for the Tax Type dropdown.
+        const taxTypeSelectors = [
+            'select#mnth',
+            'select[name="whtCertiHdrDTO.month"]',
+            'select#taxType',
+            'select[name="taxType"]',
+            'select[id*="taxType" i]',
+            'select[name*="taxType" i]',
+            'select#taxtype',
+            'select[name="taxtype"]',
+        ];
+        for (const sel of taxTypeSelectors) {
+            const candidate = page.locator(sel).first();
+            if (await candidate.count().catch(() => 0) > 0) return candidate;
+        }
+
+        // Find by associated label text.
+        const labelSelect = page.locator('label:has-text("Tax Type") + select, label:has-text("Tax Type") ~ select, td:has-text("Tax Type") select').first();
+        if (await labelSelect.count().catch(() => 0) > 0) return labelSelect;
+
+        // Fallback: scan all <select> elements for one with VAT and Income Tax options.
+        const allSelects = await page.locator('select').all();
+        for (const sel of allSelects) {
+            try {
+                const options = await sel.evaluate((el: HTMLSelectElement) =>
+                    Array.from(el.options).map((o) => ({ text: o.text.trim(), value: o.value }))
+                );
+                if (
+                    options.some((o: any) => /VAT/i.test(o.text) && o.value === 'vat') &&
+                    options.some((o: any) => o.text.includes('--Select--') || o.text.includes('Income Tax'))
+                ) {
+                    return sel;
+                }
+            } catch { continue; }
+        }
+        return null;
     }
 
     // 1. Select VAT from the Tax Type dropdown.
-    const taxTypeSelectors = [
-        'select#taxType',
-        'select[name="taxType"]',
-        'select[id*="taxType" i]',
-        'select:has-text("Tax Type")',
-    ];
-    let taxTypeSelect: any = null;
-    for (const sel of taxTypeSelectors) {
-        const candidate = page.locator(sel).filter({ visible: true }).first();
-        if (await candidate.count().catch(() => 0) > 0) {
-            taxTypeSelect = candidate;
-            break;
-        }
+    let taxTypeSelect = await findTaxTypeSelect();
+
+    // If still not found, refresh the homepage and try once more.
+    if (!taxTypeSelect) {
+        await appendJobLog(job, 'Tax Type dropdown not found immediately, refreshing homepage...', { progress: 70 });
+        await page.goto('https://itax.kra.go.ke/KRA-Portal/login.htm', { waitUntil: 'networkidle' });
+        await page.waitForTimeout(4_000);
+        taxTypeSelect = await findTaxTypeSelect();
     }
+
     if (!taxTypeSelect) {
         const snapshot = await snapshotPageControls(page);
         await appendJobLog(job, `Tax Type dropdown not found on homepage. Snapshot: ${snapshot}`, { progress: 70, level: 'error' });
         throw new Error('Could not locate the Tax Type dropdown on the KRA homepage');
     }
-    await taxTypeSelect.selectOption({ label: 'Value Added Tax (VAT)' });
-    await appendJobLog(job, 'Selected VAT from homepage Tax Type dropdown', { progress: 71 });
-    await page.waitForTimeout(2_000);
+
+    // The KRA dashboard dropdown uses values "Select", "it", "vat" and the onchange handler
+    // getCurrentYearandMonth() populates dates, shows the VAT Transactions link and fetches dashboard data.
+    // We force the value and invoke the handler directly to avoid Playwright visibility/event issues.
+    const selectResult = await page.evaluate(() => {
+        const el = document.getElementById('mnth') as HTMLSelectElement | null;
+        if (!el) return { error: 'mnth select not found' };
+        const today = new Date();
+        const day = String(today.getDate()).padStart(2, '0');
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const year = today.getFullYear();
+        const dateFrom = `01/${month}/${year}`;
+        const dateTo = `${day}/${month}/${year}`;
+
+        el.value = 'vat';
+
+        const fromDt = document.getElementById('chkDashBoardFromDt') as HTMLInputElement | null;
+        const toDt = document.getElementById('chkDashBoardToDt') as HTMLInputElement | null;
+        if (fromDt) fromDt.value = dateFrom;
+        if (toDt) toDt.value = dateTo;
+
+        const vatDownloads = document.getElementById('vatDownloads');
+        const vatTransactions = document.getElementById('vatTransactions');
+        const itDownloads = document.getElementById('itDownloads');
+        const itTransactions = document.getElementById('itTransactions');
+        if (vatDownloads) vatDownloads.style.display = '';
+        if (vatTransactions) vatTransactions.style.display = '';
+        if (itDownloads) itDownloads.style.display = 'none';
+        if (itTransactions) itTransactions.style.display = 'none';
+
+        const isVatRegistered = document.getElementById('isVatRegistered') as HTMLInputElement | null;
+        if (isVatRegistered && (isVatRegistered.value === '' || isVatRegistered.value === 'null' || isVatRegistered.value === null)) {
+            isVatRegistered.value = 'Y';
+        }
+
+        if (typeof (window as any).getCurrentYearandMonth === 'function') {
+            try {
+                (window as any).getCurrentYearandMonth();
+            } catch (e: any) {
+                return { error: `getCurrentYearandMonth threw: ${e.message}`, value: el.value };
+            }
+        }
+        if (typeof (window as any).fetchDashboardInfo === 'function') {
+            try {
+                (window as any).fetchDashboardInfo();
+            } catch (e: any) {
+                return { error: `fetchDashboardInfo threw: ${e.message}`, value: el.value };
+            }
+        }
+        return {
+            value: el.value,
+            selectedIndex: el.selectedIndex,
+            selectedText: el.options[el.selectedIndex]?.text ?? null,
+            handlerExists: typeof (window as any).getCurrentYearandMonth === 'function',
+            fetchDashboardInfoExists: typeof (window as any).fetchDashboardInfo === 'function',
+            isVatRegistered: isVatRegistered?.value ?? null,
+        };
+    });
+    logger.info({ jobId: job.id ?? (job.data as any).jobId, selectResult }, 'VAT Tax Type dropdown selection result');
+    await appendJobLog(job, `Selected VAT from homepage Tax Type dropdown: ${JSON.stringify(selectResult)}`, { progress: 71 });
+    await page.waitForTimeout(3_000);
+
+    // Debug: dump homepage HTML and hidden form fields after VAT selection.
+    try {
+        const debugInfo = await page.evaluate(() => {
+            const select = Array.from(document.querySelectorAll('select')).find((s) => {
+                const options = Array.from(s.options).map((o) => o.text);
+                return options.some((o) => /VAT/i.test(o));
+            });
+            const hiddenFields: Record<string, string> = {};
+            document.querySelectorAll('input[type="hidden"]').forEach((el) => {
+                const name = (el as HTMLInputElement).name || (el as HTMLInputElement).id;
+                if (name) hiddenFields[name] = (el as HTMLInputElement).value;
+            });
+            return {
+                selectId: select?.id,
+                selectName: select?.name,
+                selectValue: (select as HTMLSelectElement)?.value,
+                selectedOption: select ? (select as HTMLSelectElement).options[(select as HTMLSelectElement).selectedIndex]?.text : null,
+                hiddenFields,
+                htmlLength: document.documentElement.outerHTML.length,
+            };
+        });
+        await appendJobLog(job, `Homepage debug after VAT select: ${JSON.stringify(debugInfo)}`, { progress: 71 });
+        const html = await page.evaluate(() => document.documentElement.outerHTML);
+        const htmlPath = path.join(TMP_DIR, `${(job as any).id || Date.now()}_homepage_after_vat.html`);
+        await fs.writeFile(htmlPath, html, 'utf8');
+        await appendJobLog(job, `Homepage HTML saved: ${htmlPath}`, { progress: 71 });
+    } catch (e: any) {
+        await appendJobLog(job, `Failed to dump homepage debug: ${e.message}`, { progress: 71 });
+    }
 
     // 2. Wait for From Date / To Date to auto-populate (best-effort; they may already be set).
-    for (const name of ['txtPeriodFrom', 'txtPeriodTo', 'periodFrom', 'periodTo']) {
-        const input = page.locator(`input[name="${name}"], input#${name}`).filter({ visible: true }).first();
+    for (const id of ['chkDashBoardFromDt', 'chkDashBoardToDt', 'txtPeriodFrom', 'txtPeriodTo', 'periodFrom', 'periodTo']) {
+        const input = page.locator(`input#${id}, input[name="${id}"]`).first();
         if (await input.count().catch(() => 0) > 0) {
             try {
-                await input.waitFor({ state: 'visible', timeout: 5_000 });
-                const value = await input.inputValue().catch(() => '');
+                const value = await input.inputValue({ timeout: 5_000 }).catch(() => '');
                 if (value && value.trim().length > 0) {
-                    await appendJobLog(job, `Homepage date field ${name} auto-populated: ${value}`, { progress: 72 });
+                    await appendJobLog(job, `Homepage date field ${id} auto-populated: ${value}`, { progress: 72 });
                 }
             } catch { /* ignore */ }
         }
@@ -466,91 +624,122 @@ export async function downloadVatTransactionsFromHomepage(page: any, job: JobCon
     };
     page.on('dialog', dialogHandler);
 
-    // 4. Find and click the "VAT Transactions" download link/button.
-    const vatTransactionsSelectors = [
-        'a:has-text("VAT Transactions")',
-        'button:has-text("VAT Transactions")',
-        'input[type="button"][value*="VAT Transactions" i]',
-        'input[type="submit"][value*="VAT Transactions" i]',
-        'a[href*="VAT"]:has-text("Transactions")',
-        'text=VAT Transactions',
-    ];
-    let trigger: any = null;
-    let matchedSelector = '';
-    for (const sel of vatTransactionsSelectors) {
-        const candidate = page.locator(sel).filter({ visible: true }).first();
-        if (await candidate.count().catch(() => 0) > 0) {
-            trigger = candidate;
-            matchedSelector = sel;
-            break;
-        }
+    // 4. Wait for the VAT Transactions link to become visible after selecting VAT.
+    try {
+        await page.locator('#vatTransactions').waitFor({ state: 'visible', timeout: 10_000 });
+        await appendJobLog(job, 'VAT Transactions link is visible on homepage', { progress: 73 });
+    } catch {
+        await appendJobLog(job, 'VAT Transactions link did not become visible; will attempt direct JS download trigger', { progress: 73 });
     }
-    if (!trigger) {
-        const snapshot = await snapshotPageControls(page);
-        await appendJobLog(job, `VAT Transactions link not found on homepage. Snapshot: ${snapshot}`, { progress: 73, level: 'error' });
-        page.off('dialog', dialogHandler);
-        throw new Error('Could not locate the "VAT Transactions" download link on the KRA homepage');
-    }
-
-    const triggerLabel = await trigger.evaluate((element: HTMLElement) => {
-        return element.textContent?.trim() || (element as HTMLInputElement).value || element.id || 'download link';
-    }).catch(() => 'download link');
-    await appendJobLog(job, `Found current-month VAT download control: "${triggerLabel}" (selector: ${matchedSelector})`, { progress: 73 });
 
     const sourceZipPath = path.join(TMP_DIR, `${Date.now()}_${kraPin}_VAT_current_month.zip`);
 
-    // 5. Capture the download.
+    // 5. Capture the download via direct JS invocation of KRA's downloadTimsInvoices().
+    // The link is often reported as not visible in headless Chromium, so we bypass Playwright clicking.
     let download: any = null;
     try {
         [download] = await Promise.all([
             page.waitForEvent('download', { timeout: 60_000 }),
-            trigger.click({ force: true }).catch(() => trigger.click()),
+            page.evaluate(() => {
+                const isVatRegistered = document.getElementById('isVatRegistered') as HTMLInputElement | null;
+                if (isVatRegistered && isVatRegistered.value !== 'Y' && isVatRegistered.value !== '1') {
+                    isVatRegistered.value = 'Y';
+                }
+                if (typeof (window as any).downloadTimsInvoices === 'function') {
+                    (window as any).downloadTimsInvoices();
+                    return { method: 'downloadTimsInvoices()' };
+                }
+                const form = document.getElementById('loginAdminForm') as HTMLFormElement | null;
+                if (form) {
+                    form.action = 'eReturns.htm?actionCode=downloadTimsInvoices';
+                    form.submit();
+                    return { method: 'loginAdminForm.submit' };
+                }
+                throw new Error('downloadTimsInvoices function and loginAdminForm are both unavailable');
+            }),
         ]);
         await download.saveAs(sourceZipPath);
         await appendJobLog(job, `Downloaded current-month VAT transactions via browser download event: ${sourceZipPath}`, { progress: 74 });
         page.off('dialog', dialogHandler);
         return sourceZipPath;
     } catch (primaryErr: any) {
-        await appendJobLog(job, `Primary download capture failed: ${primaryErr.message}. Trying JS fallback...`, { progress: 73 });
+        logger.info({ jobId: job.id ?? (job.data as any).jobId, error: primaryErr.message }, 'Primary download capture failed');
+        await appendJobLog(job, `Primary download capture failed: ${primaryErr.message}. Trying response capture fallback...`, { progress: 73 });
     }
 
-    // 6. Fallback: capture via response.
+    // 6. Fallback: capture via response / direct JS invocation.
     let capturedBuffer: Buffer | null = null;
     let capturedFilename = `${Date.now()}_${kraPin}_VAT_current_month.zip`;
+    const candidateResponses: { url: string; ctype: string; cd: string; size: number }[] = [];
     const responseHandler = async (response: any) => {
         const url = response.url();
         const headers = response.headers();
         const cd = headers['content-disposition'] || '';
-        if (!cd.includes('attachment') && !url.includes('downloadAmendmentForm')) return;
+        const ctype = headers['content-type'] || '';
+        const looksLikeZip =
+            cd.includes('attachment') ||
+            url.includes('downloadAmendmentForm') ||
+            url.toLowerCase().includes('downloadtims') ||
+            url.toLowerCase().includes('download') ||
+            ctype.includes('zip') ||
+            ctype.includes('octet-stream');
+        if (!looksLikeZip) return;
         try {
             const buffer = await response.body();
-            capturedBuffer = buffer;
-            const filenameMatch = cd.match(/filename="([^"]+)"/);
-            if (filenameMatch) {
-                capturedFilename = filenameMatch[1].replace(/[:\/\\*?"<>|]/g, '_');
+            if (buffer && buffer.length > 0) {
+                candidateResponses.push({ url, ctype, cd, size: buffer.length });
+            }
+            if (!capturedBuffer && buffer && buffer.length > 0) {
+                capturedBuffer = buffer;
+                const filenameMatch = cd.match(/filename="([^"]+)"/);
+                if (filenameMatch) {
+                    capturedFilename = filenameMatch[1].replace(/[:\/\\*?"<>|]/g, '_');
+                }
             }
         } catch { /* ignore */ }
     };
     page.on('response', responseHandler);
 
     try {
+        await appendJobLog(job, 'Triggering VAT Transactions download via JS fallback...', { progress: 73 });
         await page.evaluate(() => {
+            // Prefer the known KRA function if exposed.
+            if (typeof (window as any).downloadTimsInvoices === 'function') {
+                (window as any).downloadTimsInvoices();
+                return 'downloadTimsInvoices()';
+            }
             const link = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('VAT Transactions'));
             if (link) {
                 (link as HTMLElement).click();
-            } else {
-                const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"]')).find((b) => (b as HTMLInputElement).value?.includes('VAT Transactions'));
-                if (btn) (btn as HTMLElement).click();
+                return 'link.click';
             }
+            const btn = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"]')).find((b) => (b as HTMLInputElement).value?.includes('VAT Transactions'));
+            if (btn) {
+                (btn as HTMLElement).click();
+                return 'btn.click';
+            }
+            return 'none';
         });
-        await page.waitForTimeout(8_000);
+        await page.waitForTimeout(12_000);
     } finally {
         page.off('response', responseHandler);
         page.off('dialog', dialogHandler);
     }
 
+    await appendJobLog(job, `VAT download candidate responses: ${JSON.stringify(candidateResponses)}`, { progress: 73 });
+
     if (!capturedBuffer || (capturedBuffer as Buffer).length === 0) {
         throw new Error('Failed to download current-month VAT transactions from KRA homepage');
+    }
+
+    // Verify the captured payload is actually a ZIP, not an HTML error page.
+    const isZip = (capturedBuffer as Buffer).slice(0, 4).toString('hex') === '504b0304';
+    const looksLikeHtml = (capturedBuffer as Buffer).slice(0, 100).toString().trim().toLowerCase().startsWith('<!doctype') ||
+        (capturedBuffer as Buffer).slice(0, 100).toString().trim().toLowerCase().startsWith('<html');
+    if (!isZip || looksLikeHtml) {
+        const errorPreview = (capturedBuffer as Buffer).slice(0, 500).toString().replace(/\s+/g, ' ');
+        await appendJobLog(job, `KRA returned non-ZIP response for VAT Transactions download: ${errorPreview}`, { progress: 73, level: 'error' });
+        throw new Error('KRA returned an HTML/error page instead of a ZIP for VAT Transactions. The dashboard may need additional interaction (e.g. waiting for dashboard data to load).');
     }
 
     const fallbackPath = path.join(TMP_DIR, capturedFilename);

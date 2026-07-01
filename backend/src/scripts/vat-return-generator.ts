@@ -84,6 +84,8 @@ export type PrepareVatReturnParams = {
     periodFrom: string;
     periodTo: string;
     previousCredit: number;
+    /** VAT withheld by agents during the period, claimed as a credit against tax payable */
+    withholdingAmount?: number;
     /** User-entered taxable sales to non-VAT-registered buyers, added to Section B without-PIN totals */
     sectionBWithoutPinSales?: number;
 };
@@ -596,6 +598,7 @@ function buildNamedValues(params: {
     periodFrom: string;
     periodTo: string;
     previousCredit: number;
+    withholdingAmount?: number;
     depositStartDate?: string;
     depositStartDatePid?: string;
     bWithPin: { totalBase: number; totalVat: number };
@@ -627,7 +630,8 @@ function buildNamedValues(params: {
     const totalInputVatExact = params.fPurchases.totalVat + params.gPurchases.totalVat + params.hPurchases.totalVat + params.iPurchases.totalVat + params.jPurchases.totalVat;
     const totalInputVatRounded = round(totalInputVatExact, 2);
     const finalTaxPayable = round(totalSalesVat - totalInputVatRounded, 2);
-    const netVatBalance = round(finalTaxPayable - params.previousCredit, 2);
+    const withholdingAmount = round(params.withholdingAmount ?? 0, 2);
+    const netVatBalance = round(finalTaxPayable - params.previousCredit - withholdingAmount, 2);
     const periodEnd = new Date(params.periodTo);
     const monthCode = String(periodEnd.getMonth() + 1).padStart(2, '0');
     const returnYear = String(periodEnd.getFullYear());
@@ -693,7 +697,7 @@ function buildNamedValues(params: {
         'Sch8.AmtBfrVATWithoutPINTO': '0',
         'Sch8.InputTaxPurchDtlsExemptTO': formatXmlNumber(params.iPurchases.totalBase, 4),
         'Sch8.PurchaseAmtWithPINTO': formatXmlNumber(params.iPurchases.totalBase, 4),
-        'Sch8.WithHoldingVATDtlsTO': '0',
+        'Sch8.WithHoldingVATDtlsTO': formatXmlNumber(withholdingAmount, 4),
         'searchOffset': '',
         'searchoffset_Section_C': '',
         'SearchOffset_Section_F': '',
@@ -735,14 +739,14 @@ function buildNamedValues(params: {
         'TaxDue.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
         'TaxDue.TotalVatPurCharged': formatXmlNumber(totalInputVatRounded, 2),
         'TaxDue.VATPaidDtlsTO': '0',
-        'TaxDue.VATWhtTO': '0',
+        'TaxDue.VATWhtTO': formatXmlNumber(withholdingAmount, 4),
         'templateInfo.formId': '4',
         'templateInfo.moduleId': '2',
         'templateInfo.obligId': '9',
         'templateInfo.ofcVrsn': 'EXCEL 1997-2003',
         'templateInfo.tempType': 'XLS',
         'templateInfo.tempVrsn': '15.0.11',
-        'WithHolding.ListTO': '0',
+        'WithHolding.ListTO': formatXmlNumber(withholdingAmount, 4),
     };
 }
 
@@ -820,6 +824,7 @@ async function buildNoTransactionVatArtifacts(
         periodFrom: params.periodFrom,
         periodTo: params.periodTo,
         previousCredit: params.previousCredit,
+        withholdingAmount: params.withholdingAmount ?? 0,
         bWithPin: zeroTotals,
         bWithoutPin: zeroTotals,
         cWithPin: zeroTotals,
@@ -846,12 +851,13 @@ async function buildNoTransactionVatArtifacts(
     const sourcePackageArtifact = await copyArtifactToClientWorkspace(params.sourceZipPath, params.clientName);
     const generatedZipArtifact = await copyArtifactToClientWorkspace(finalZipPath, params.clientName, finalZipFileName);
 
-    const netVatBalance = round(0 - params.previousCredit, 2);
+    const withholdingAmount = round(params.withholdingAmount ?? 0, 2);
+    const netVatBalance = round(0 - params.previousCredit - withholdingAmount, 2);
     const resultSummary: PreparedVatReturnSummary = {
         inputVat: 0,
         outputVat: 0,
         previousCredit: round(params.previousCredit, 2),
-        withholdingAmount: 0,
+        withholdingAmount,
         payableVat: 0,
         netVatBalance,
         sales: [
@@ -987,13 +993,15 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const totalInputVatExact = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
     const totalInputVatRounded = round(totalInputVatExact, 2);
     const finalTaxPayable = round(totalSalesVat - totalInputVatRounded, 2);
-    const netVatBalance = round(finalTaxPayable - params.previousCredit, 2);
+    const withholdingAmount = round(params.withholdingAmount ?? 0, 2);
+    const netVatBalance = round(finalTaxPayable - params.previousCredit - withholdingAmount, 2);
 
     const namedValues = buildNamedValues({
         taxpayerPin: params.taxpayerPin,
         periodFrom: params.periodFrom,
         periodTo: params.periodTo,
         previousCredit: params.previousCredit,
+        withholdingAmount,
         bWithPin,
         bWithoutPin,
         cWithPin,
@@ -1115,13 +1123,14 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const rTotalInputVat = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
     const rTotalInputRounded = round(rTotalInputVat, 2);
     const rFinalTaxPayable = round(rTotalSalesVat - rTotalInputRounded, 2);
-    const rNetVatBalance = round(rFinalTaxPayable - params.previousCredit, 2);
+    const rWithholdingAmount = round(params.withholdingAmount ?? 0, 2);
+    const rNetVatBalance = round(rFinalTaxPayable - params.previousCredit - rWithholdingAmount, 2);
 
     const resultSummary: PreparedVatReturnSummary = {
         inputVat: rTotalInputRounded,
         outputVat: round(rTotalSalesVat, 2),
         previousCredit: round(params.previousCredit, 2),
-        withholdingAmount: 0, // Will be populated by worker if withholding exists
+        withholdingAmount: rWithholdingAmount,
         payableVat: rFinalTaxPayable,
         netVatBalance: rNetVatBalance,
         sales: [

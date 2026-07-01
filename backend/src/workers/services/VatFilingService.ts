@@ -26,7 +26,7 @@ export class VatFilingService {
         this.job = job;
     }
 
-    async prepareFromPortal(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
+    async prepareFromPortal(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; withholdingAmount?: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
         const sourceZipPath = await downloadVatAutoPopulatedReturn(this.page, this.job, options.kraPin);
 
         try {
@@ -38,6 +38,7 @@ export class VatFilingService {
                     periodFrom: options.periodFrom,
                     periodTo: options.periodTo,
                     previousCredit: options.previousCredit,
+                    withholdingAmount: options.withholdingAmount,
                     sectionBWithoutPinSales: options.sectionBWithoutPinSales,
                 })
             );
@@ -53,7 +54,7 @@ export class VatFilingService {
         }
     }
 
-    async prepareCurrentMonthFromHomepage(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
+    async prepareCurrentMonthFromHomepage(options: { kraPin: string; clientName: string; periodFrom: string; periodTo: string; previousCredit: number; withholdingAmount?: number; sectionBWithoutPinSales?: number }): Promise<VatPrepareResult> {
         const sourceZipPath = await downloadVatTransactionsFromHomepage(this.page, this.job, options.kraPin);
 
         try {
@@ -65,6 +66,7 @@ export class VatFilingService {
                     periodFrom: options.periodFrom,
                     periodTo: options.periodTo,
                     previousCredit: options.previousCredit,
+                    withholdingAmount: options.withholdingAmount,
                     sectionBWithoutPinSales: options.sectionBWithoutPinSales,
                 })
             );

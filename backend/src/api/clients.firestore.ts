@@ -57,6 +57,29 @@ function defaultFiledPeriods(): Record<TaxObligationType, string[]> {
     };
 }
 
+/**
+ * Flatten the nested `status` object into top-level obligation fields that the
+ * frontend dashboard expects (e.g. `client.vat`, `client.paye`). Also maps the
+ * snake_case income-tax keys to camelCase.
+ */
+function flattenClientStatus(data: any): Record<string, any> {
+    const status = data?.status || {};
+    return {
+        paye: status.paye ?? 'na',
+        nssf: status.nssf ?? 'na',
+        sha: status.sha ?? 'na',
+        vat: status.vat ?? 'na',
+        tot: status.tot ?? 'na',
+        mri: status.mri ?? 'na',
+        dst: status.dst ?? 'na',
+        eLevy: status.eLevy ?? 'na',
+        incomeTaxResidentIndividual: status.income_tax_resident_individual ?? 'na',
+        incomeTaxNonResidentIndividual: status.income_tax_non_resident_individual ?? 'na',
+        incomeTaxCompany: status.income_tax_company ?? 'na',
+        exciseDuty: status.excise_duty ?? 'na',
+    };
+}
+
 // ─── GET /api/clients ─────────────────────────────────────────────────────────
 router.get('/', async (req: AuthenticatedRequest, res) => {
     try {
@@ -72,6 +95,7 @@ router.get('/', async (req: AuthenticatedRequest, res) => {
                 const client: any = {
                     id: doc.id,
                     ...data,
+                    ...flattenClientStatus(data),
                     // Flatten credentials for frontend compatibility
                     password: data.credentials?.kraPassword || null,
                     iTaxPassword: data.credentials?.kraPassword || null,
@@ -118,6 +142,7 @@ router.get('/:id', async (req: AuthenticatedRequest, res) => {
         const result: any = {
             id: doc.id,
             ...data,
+            ...flattenClientStatus(data),
             // Flatten credentials for frontend compatibility
             password: data.credentials?.kraPassword || null,
             iTaxPassword: data.credentials?.kraPassword || null,
@@ -227,7 +252,7 @@ router.post('/', async (req: AuthenticatedRequest, res) => {
             clientCount: FieldValue.increment(1),
         });
 
-        res.status(201).json({ id: docRef.id, ...newClient });
+        res.status(201).json({ id: docRef.id, ...newClient, ...flattenClientStatus(newClient) });
     } catch (err) {
         console.error('Error creating client:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -286,7 +311,8 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
 
         await docRef.update(updateData);
         const updated = await docRef.get();
-        res.json({ id: updated.id, ...updated.data() });
+        const updatedData = updated.data();
+        res.json({ id: updated.id, ...updatedData, ...flattenClientStatus(updatedData) });
     } catch (err) {
         console.error('Error updating client:', err);
         res.status(500).json({ message: 'Internal server error' });
@@ -326,7 +352,8 @@ router.put('/:id/status', async (req: AuthenticatedRequest, res) => {
 
         await docRef.update(updateData);
         const updated = await docRef.get();
-        res.json({ id: updated.id, ...updated.data() });
+        const updatedData = updated.data();
+        res.json({ id: updated.id, ...updatedData, ...flattenClientStatus(updatedData) });
     } catch (err) {
         console.error('Error updating client status:', err);
         res.status(500).json({ message: 'Internal server error' });

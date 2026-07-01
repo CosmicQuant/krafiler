@@ -2420,9 +2420,7 @@ export async function processFilingJob(job: JobContext): Promise<{
         if (isVatCurrentMonthDownload) {
             await setJobStep(job, 60, 'Downloading current-month VAT transactions from the iTax homepage');
 
-            const effectivePreviousCredit = (creditBroughtForward + withholdingAmount) !== 0
-                ? (creditBroughtForward + withholdingAmount)
-                : vatPreviousCredit;
+            const effectivePreviousCredit = creditBroughtForward !== 0 ? creditBroughtForward : vatPreviousCredit;
             if (creditBroughtForward !== 0 || withholdingAmount !== 0) {
                 await appendJobLog(job, `Using portal-extracted credit for current-month VAT: KES ${effectivePreviousCredit} (credit: ${creditBroughtForward}, withholding: ${withholdingAmount})`, { progress: 60 });
             }
@@ -2434,13 +2432,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                 periodFrom,
                 periodTo,
                 previousCredit: effectivePreviousCredit,
+                withholdingAmount,
                 sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
             });
 
-            const vatSummaryWithWithholding = {
-                ...preparedVat.vatSummary,
-                withholdingAmount,
-            };
+            const vatSummaryWithWithholding = preparedVat.vatSummary;
 
             if (context) {
                 await context.close();
@@ -2725,10 +2721,9 @@ export async function processFilingJob(job: JobContext): Promise<{
         await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : isNilReturnExplicit ? 'Confirming the nil return period and rental-property answer' : 'Confirming the return period and rental-property answer');
 
     if (!isNilReturnExplicit && isVatPrepareOnly) {
-        // Use credit brought forward + withholding from portal if available, otherwise fall back to frontend value
-        const effectivePreviousCredit = (creditBroughtForward + withholdingAmount) !== 0
-            ? (creditBroughtForward + withholdingAmount)
-            : vatPreviousCredit;
+        // Use credit brought forward from portal if available, otherwise fall back to frontend value.
+        // Withholding is tracked separately so it appears in its own XML field and dashboard line.
+        const effectivePreviousCredit = creditBroughtForward !== 0 ? creditBroughtForward : vatPreviousCredit;
         if (creditBroughtForward !== 0 || withholdingAmount !== 0) {
             await appendJobLog(job, `Using portal-extracted credit: KES ${effectivePreviousCredit} (credit: ${creditBroughtForward}, withholding: ${withholdingAmount})`, { progress: 70 });
         }
@@ -2739,14 +2734,11 @@ export async function processFilingJob(job: JobContext): Promise<{
             periodFrom,
             periodTo,
             previousCredit: effectivePreviousCredit,
+            withholdingAmount,
             sectionBWithoutPinSales: sectionBWithoutPinSales > 0 ? sectionBWithoutPinSales : undefined,
         });
 
-        // Add withholding amount to the summary
-        const vatSummaryWithWithholding = {
-            ...preparedVat.vatSummary,
-            withholdingAmount,
-        };
+        const vatSummaryWithWithholding = preparedVat.vatSummary;
 
         if (context) {
             await context.close();

@@ -30,8 +30,7 @@ Start commands:
 - Root shortcuts: `npm run dev:backend`, `npm run dev:frontend`
 
 Utility scripts:
-- `cd backend && npm run tot` — one-off ToT filing script.
-- `cd backend && npm run generate:tot` — ToT ZIP generator.
+- `cd backend && npm run generate:tot` — ToT ZIP generator (`packageToTZip`).
 
 ## Critical Setup
 
@@ -53,8 +52,8 @@ Utility scripts:
 |---|---|---|
 | `npm run test` | backend | `tsc && node --test dist/services/payrollEngine.test.js`. Passes. |
 | `npx tsc --noEmit` | backend | Required safety net; dev server uses `ts-node-dev --transpile-only`, so runtime errors can slip through. |
-| `npx tsc --noEmit` | frontend | `noUnusedLocals` / `noUnusedParameters` enabled — stricter than backend. |
-| `npx eslint .` | either | ESLint 9 flat configs exist in both packages but are not wired to npm scripts. |
+| `npx tsc --noEmit` | frontend | `noUnusedLocals` / `noUnusedParameters` enabled — stricter than backend. **Currently fails** with pre-existing errors in `Desk20thView.tsx` and `PayrollDetailDrawer.tsx`. |
+| `npx eslint .` | either | ESLint 9 flat configs exist but are not wired to scripts and currently do not run cleanly (backend is missing a transitive dependency; frontend does not install ESLint). |
 
 - `.prettierrc` exists at repo root (4-space tabs, single quotes, 120 width) but is not wired to an npm script.
 - `backend/tsconfig.json` excludes `src/db/migrations`, `src/db/schema.ts`, `src/db/kysely.ts`, `src/scripts/migrateSqliteToFirestore.ts`, and `src/services/complianceFileGenerator.ts`.
@@ -74,9 +73,10 @@ Key backend vars from `.env.example` and code:
 | Variable | Purpose |
 |---|---|
 | `JWT_SECRET` | Signs employee-portal JWT tokens. |
+| `ENCRYPTION_SECRET` / `ENCRYPTION_SALT` | Present in `.env.example`, but credential encryption is currently disabled; KRA passwords flow plaintext through the queue. |
 | `GEMMA4_API_KEY` / `GEMMA4_MODEL` | Solves KRA arithmetic captcha via Google's generativelanguage API (default model `gemma-4-31b-it`). `GEMINI_API_KEY` in `.env.example` is stale and unused. |
-| `USE_PUBSUB` | Enable Pub/Sub queueing. Current code is Pub/Sub-only. |
-| `PUBSUB_TOPIC` | Topic name for filing jobs (default: `filing-jobs`). |
+| `PUBSUB_TOPIC` | Topic name for filing jobs (default: `filing-jobs`). Pub/Sub is unconditional; `USE_PUBSUB` in `.env.example` is not read by code. |
+| `FIREBASE_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT` | Override the hardcoded GCP project (`taxpulse-498006`). |
 | `PORT` | API default `3001`; worker service default `8080`. |
 | `ALLOWED_ORIGIN` | CORS origin, default `http://localhost:3000`. |
 | `DEV_BYPASS_AUTH` | `true` for local dev only; never in production. |
@@ -84,7 +84,7 @@ Key backend vars from `.env.example` and code:
 | `PLAYWRIGHT_SLOW_MO` | Millisecond delay between Playwright actions (debug). |
 | `KRA_BROWSER_CHANNEL` | `chrome` or `msedge`. |
 | `KRA_BROWSER_EXECUTABLE_PATH` | Exact browser path. |
-| `KRA_REUSE_BROWSER_PROFILE` | Persist profile across jobs. |
+| `KRA_REUSE_BROWSER_PROFILE` | Persist profile across jobs. Defaults to `true` locally, but `deploy.sh` sets `false` for Cloud Run to avoid profile-lock failures blocking subsequent jobs on the same instance. |
 | `KRA_BROWSER_PROFILE_DIR` | Profile directory path. |
 | `KRA_OTP_CODE` | Pre-set OTP for mobile verification. |
 | `KRA_DEBUG_ARTIFACTS` | Dump login page debug info. |
@@ -129,7 +129,7 @@ Located at `backend/src/workers/services/`:
 
 ## API Routes
 
-Routes are mounted in `backend/src/server.ts:101-138` and `backend/src/server.compute.ts:100-136`.
+Routes are mounted in `backend/src/server.ts:118-155` and `backend/src/server.compute.ts:117-153`.
 
 ### `/api/tax` — KRA Filing (`backend/src/api/tax.routes.ts`)
 - `POST /api/tax/file-return` (+ legacy `POST /api/tax/file-nil-return`) — enqueue filing job. Rate limited: 10 req / 15 min per IP (`server.ts`); 100 req / 15 min (`server.compute.ts`).

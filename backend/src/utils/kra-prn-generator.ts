@@ -48,28 +48,91 @@ export async function generatePRNSlip(
             throw new Error(`Unsupported tax type for PRN generation: ${config.taxType}`);
         }
 
-        console.log('[PRN] Hovering over Payments menu and clicking Payment Registration...');
-        await page.waitForTimeout(2000);
-        
-        await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const payments = links.find(l => l.textContent && l.textContent.trim() === 'Payments');
-            if (payments) {
-                payments.dispatchEvent(new MouseEvent('mouseover', { view: window, bubbles: true, cancelable: true }));
+        console.log('[PRN] Navigating to Payment Registration...');
+
+        // Wait for the dashboard/menu to be present.
+        try {
+            await page.waitForFunction(() => {
+                return Array.from(document.querySelectorAll('a')).some(l => l.textContent?.trim() === 'Payments');
+            }, { timeout: 30_000 });
+        } catch {
+            console.log('[PRN] Payments menu not found within 30s, proceeding anyway');
+        }
+        await page.waitForTimeout(1500);
+
+        // Try to open Payment Registration. KRA's menu often requires a real hover, and
+        // the submenu link may not be considered visible in headless Chromium, so we try
+        // Playwright hover first, then fall back to JS evaluation.
+        let paymentRegistrationOpened = false;
+        for (let attempt = 0; attempt < 3 && !paymentRegistrationOpened; attempt++) {
+            try {
+                const paymentsLocator = page.locator('a:has-text("Payments")').first();
+                if (await paymentsLocator.count() > 0) {
+                    await paymentsLocator.hover();
+                    await page.waitForTimeout(1500);
+                    const prLocator = page.locator('a:has-text("Payment Registration")').first();
+                    if (await prLocator.count() > 0) {
+                        await prLocator.click();
+                        paymentRegistrationOpened = true;
+                        console.log('[PRN] Clicked Payment Registration via Playwright locator');
+                    }
+                }
+            } catch (locatorErr: any) {
+                console.log(`[PRN] Playwright Payment Registration click attempt ${attempt + 1} failed:`, locatorErr.message);
             }
-        });
-        await page.waitForTimeout(1000);
-        
-        await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const pr = links.find(l => l.textContent && l.textContent.trim() === 'Payment Registration');
-            if (pr) pr.click();
-            else if (typeof (window as any).showPaymentRegForm === 'function') {
-                (window as any).showPaymentRegForm();
+
+            if (!paymentRegistrationOpened) {
+                // Fallback: use JS to hover and click
+                await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('a'));
+                    const payments = links.find(l => l.textContent && l.textContent.trim() === 'Payments');
+                    if (payments) {
+                        payments.dispatchEvent(new MouseEvent('mouseover', { view: window, bubbles: true, cancelable: true }));
+                        payments.dispatchEvent(new MouseEvent('mouseenter', { view: window, bubbles: true, cancelable: true }));
+                    }
+                });
+                await page.waitForTimeout(1500);
+
+                const clicked = await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('a'));
+                    const pr = links.find(l => l.textContent && l.textContent.trim() === 'Payment Registration');
+                    if (pr) {
+                        pr.click();
+                        return 'link';
+                    }
+                    if (typeof (window as any).showPaymentRegForm === 'function') {
+                        (window as any).showPaymentRegForm();
+                        return 'function';
+                    }
+                    return false;
+                });
+                if (clicked) {
+                    paymentRegistrationOpened = true;
+                    console.log(`[PRN] Opened Payment Registration via JS ${clicked}`);
+                }
             }
-        });
-        
-        await page.waitForTimeout(5000);
+
+            if (paymentRegistrationOpened) {
+                // Wait for the page to respond. KRA sometimes navigates to an Applicant Type
+                // page with a Next button, and sometimes directly to the Tax Form page.
+                await page.waitForTimeout(5000);
+                const onTaxForm = await page.evaluate(() => !!document.querySelector('select#cmbTaxHead'));
+                const onApplicantType = await page.evaluate(() => {
+                    const inputs = Array.from(document.querySelectorAll('input[type="button"], input[type="submit"], button, a'));
+                    return inputs.some(el => (el.getAttribute('value') || el.textContent || '').trim() === 'Next');
+                });
+                if (onTaxForm || onApplicantType) {
+                    console.log(`[PRN] Payment Registration page reached (taxForm=${onTaxForm}, applicantType=${onApplicantType})`);
+                    break;
+                }
+                console.log('[PRN] Payment Registration did not reach expected page, retrying...');
+                paymentRegistrationOpened = false;
+            }
+        }
+
+        if (!paymentRegistrationOpened) {
+            throw new Error('Could not navigate to Payment Registration. The KRA menu may have changed.');
+        }
 
         console.log('[PRN] Checking if already on Tax Form page...');
         const alreadyOnTaxForm = await page.evaluate(() => !!document.querySelector('select#cmbTaxHead'));

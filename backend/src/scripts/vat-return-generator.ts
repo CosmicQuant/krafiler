@@ -176,9 +176,10 @@ function normalizeName(value: string, lookup: Map<string, string>, key: string):
         return trimmed;
     }
 
-    // KRA rejects blank supplier/customer names in the uploaded CSVs. Use a non-empty
-    // placeholder when the autopopulated source does not provide a name.
-    return lookup.get(key) || 'name of purchase';
+    // KRA rejects blank supplier/customer names in the uploaded CSVs. Use the same
+    // placeholder the KRA Excel utility uses when the autopopulated source does not
+    // provide a name.
+    return lookup.get(key) || 'Name of Purchaser';
 }
 
 function escapeXml(value: string): string {
@@ -476,7 +477,8 @@ function mapSectionRows(params: {
             }
             case 'H': {
                 // Zero-rated purchases (9-col source; credit notes add J/K)
-                // Output: 13 cols [Local, PIN, Name, Date, Invoice, empty, Desc, empty, Amount, CN invoice, CN date, Local, ZERO]
+                // Output: 11 cols [Local, PIN, Name, Date, Invoice, empty, Desc, empty, Amount, Local, ZERO]
+                // Note: the KRA Excel utility does NOT include CN invoice/date columns for section H.
                 const supplierPin = (row[1] || '').trim();
                 values = [
                     (row[0] || '').trim(),
@@ -488,8 +490,6 @@ function mapSectionRows(params: {
                     (row[6] || '').trim(),
                     '',
                     formatXmlNumber(taxableAmount, 4),
-                    cnInvoice,
-                    cnDate,
                     (row[0] || '').trim(),
                     'ZERO',
                 ];

@@ -302,11 +302,26 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
         }
 
         if (obligations !== undefined) {
-            const normalized = obligations
-                .split(',')
-                .map((s: string) => normalizeObligationToken(s))
-                .filter(Boolean) as TaxObligationType[];
+            const normalized = [...new Set(
+                obligations
+                    .split(',')
+                    .map((s: string) => normalizeObligationToken(s))
+                    .filter(Boolean)
+            )] as TaxObligationType[];
             updateData.obligations = normalized;
+
+            // Reconcile the nested status object with the new obligations list.
+            const currentStatus = doc.data()?.status || defaultStatus();
+            const nextStatus: Record<string, FilingStatus> = { ...currentStatus };
+            for (const ob of Object.keys(defaultStatus())) {
+                if (normalized.includes(ob as TaxObligationType)) {
+                    // Newly added obligations default to 'due' if they were previously 'na' or missing.
+                    nextStatus[ob] = nextStatus[ob] && nextStatus[ob] !== 'na' ? nextStatus[ob] : 'due';
+                } else {
+                    nextStatus[ob] = 'na';
+                }
+            }
+            updateData.status = nextStatus;
         }
 
         await docRef.update(updateData);

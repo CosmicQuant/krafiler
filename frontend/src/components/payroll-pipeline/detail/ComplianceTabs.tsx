@@ -402,17 +402,10 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                 })()}
                 {/* PRN download link after filing is completed */}
                 {(() => {
-                  // Build a list of PRN URLs to show for this obligation
+                  // Build a list of PRN URLs to show for this obligation.
+                  // Show PRN links whenever PRN data exists, not only when the obligation is
+                  // marked filed, so standalone PRN generation jobs are visible immediately.
                   const prnEntries: Array<{ label: string; url: string }> = [];
-                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
-                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
-                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
-                    : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
-                    : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
-                    : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
-                    : false;
-
-                  if (!isFiled) return null;
 
                   // For PAYE, show all 3 PRNs (PAYE, NITA, AHL) if available
                   if (activeConfig.key === 'paye') {
@@ -443,6 +436,14 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                   }
 
                   if (prnEntries.length === 0) return null;
+
+                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
+                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
+                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
+                    : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
+                    : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
+                    : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
+                    : false;
 
                   return (
                     <div className="flex flex-col gap-1.5 mt-1">

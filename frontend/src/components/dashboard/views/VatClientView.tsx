@@ -5,7 +5,7 @@
  * side by side, plus credit brought forward and Section B input fields.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Download, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 import { downloadAuthFile } from '../../../utils/downloadAuthFile';
@@ -56,6 +56,20 @@ export function VatClientView({
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(
         vatClients[0] || null
     );
+
+    // Keep the selected client in sync with the global clients array so that
+    // updates from completed jobs (e.g. generated ZIP / source package URLs)
+    // are reflected immediately without forcing the user to switch clients.
+    useEffect(() => {
+        if (!selectedClient) {
+            setSelectedClient(vatClients[0] || null);
+            return;
+        }
+        const updated = vatClients.find((c) => c.id === selectedClient.id);
+        if (updated && updated !== selectedClient) {
+            setSelectedClient(updated);
+        }
+    }, [vatClients, selectedClient]);
 
     const client = selectedClient || vatClients[0];
     if (!client) {

@@ -176,7 +176,9 @@ function normalizeName(value: string, lookup: Map<string, string>, key: string):
         return trimmed;
     }
 
-    return lookup.get(key) || '';
+    // KRA rejects blank supplier/customer names in the uploaded CSVs. Use a non-empty
+    // placeholder when the autopopulated source does not provide a name.
+    return lookup.get(key) || 'name of purchase';
 }
 
 function escapeXml(value: string): string {

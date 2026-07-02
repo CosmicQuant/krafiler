@@ -3002,12 +3002,74 @@ export async function processFilingJob(job: JobContext): Promise<{
                 await page.waitForTimeout(4000);
             }
 
-            // ── Handle post-submit confirmation pages (e.g., MRI "Yes" button) ───────
-            const yesConfirm = page.locator('a:has-text("Yes"), a.btn:has-text("Yes"), a[onclick*="accepted"]').filter({ visible: true }).first();
-            if (await yesConfirm.count() > 0) {
-                await appendJobLog(job, 'Post-submit confirmation (Yes) detected — clicking', { progress: 82 });
-                await yesConfirm.click();
-                await page.waitForTimeout(4000);
+            // ── Handle post-submit confirmation / survey dialog ──────────────────────
+            // KRA sometimes renders a confirmation/survey dialog after submission. The
+            // buttons are often anchors with onclick="accepted()"/"notAccepted()" that
+            // are not considered visible in headless Chromium, so we invoke the JS
+            // functions directly and wait for the receipt page to settle.
+            let confirmationClicked = false;
+            for (let confirmAttempt = 0; confirmAttempt < 3; confirmAttempt++) {
+                try {
+                    const confirmResult = await page.evaluate(() => {
+                        const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+                        const yesBtn = elements.find((el) => {
+                            const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                            const text = (el.textContent || (el as HTMLInputElement).value || '').trim().toLowerCase();
+                            return onclick.includes('accepted()') || onclick.includes('accepted();') || text === 'yes' || text.startsWith('yes ');
+                        }) as HTMLElement | undefined;
+                        const notNowBtn = elements.find((el) => {
+                            const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                            const text = (el.textContent || (el as HTMLInputElement).value || '').trim().toLowerCase();
+                            return onclick.includes('notaccepted()') || onclick.includes('notaccepted();') || text === 'not now' || text.includes('not now');
+                        }) as HTMLElement | undefined;
+
+                        // Prefer "Yes" when it looks like a submission confirmation;
+                        // prefer "Not Now" when it's clearly a survey.
+                        if (yesBtn && notNowBtn) {
+                            // Survey usually pairs Yes (take survey) with Not Now (dismiss).
+                            // We want to proceed to the receipt page, so click Not Now.
+                            notNowBtn.click();
+                            return 'not-now';
+                        }
+                        if (yesBtn) {
+                            yesBtn.click();
+                            return 'yes';
+                        }
+                        if (notNowBtn) {
+                            notNowBtn.click();
+                            return 'not-now';
+                        }
+                        return false;
+                    });
+                    if (confirmResult) {
+                        confirmationClicked = true;
+                        await appendJobLog(job, `Post-submit ${confirmResult === 'yes' ? 'confirmation (Yes)' : 'survey dismissed (Not Now)'} detected via JS — clicked`, { progress: 82 });
+                        await page.waitForTimeout(confirmResult === 'yes' ? 5000 : 3000);
+                        break;
+                    }
+                } catch (confirmErr: any) {
+                    console.log(`[Worker][${jobId}] Confirmation click attempt ${confirmAttempt + 1} failed (non-critical):`, confirmErr.message);
+                }
+                await page.waitForTimeout(1000);
+            }
+
+            // Fallback using Playwright locators (headed mode) if JS evaluation didn't find anything
+            if (!confirmationClicked) {
+                const yesConfirm = page.locator('a:has-text("Yes"), a.btn:has-text("Yes"), a[onclick*="accepted"], [onclick*="accepted"]').first();
+                const notNowConfirm = page.locator('a:has-text("Not Now"), a.btn:has-text("Not Now"), a[onclick*="notAccepted"], [onclick*="notAccepted"]').first();
+                try {
+                    if (await notNowConfirm.count() > 0) {
+                        await appendJobLog(job, 'Post-submit survey (Not Now) detected — clicking', { progress: 82 });
+                        await notNowConfirm.click();
+                        await page.waitForTimeout(4000);
+                    } else if (await yesConfirm.count() > 0) {
+                        await appendJobLog(job, 'Post-submit confirmation (Yes) detected — clicking', { progress: 82 });
+                        await yesConfirm.click();
+                        await page.waitForTimeout(4000);
+                    }
+                } catch {
+                    // ignore
+                }
             }
 
             page.off('dialog', dialogHandler);
@@ -3089,22 +3151,31 @@ export async function processFilingJob(job: JobContext): Promise<{
             // Wait a moment for KRA to render the receipt/acknowledgment link
             await page.waitForTimeout(1_500);
 
-            // First try Playwright locators for known KRA receipt link texts
+            // First try Playwright locators for known KRA receipt link texts/functions.
+            // Keep the action selectors (downloadReturnsReceipt/downloadReceipt) before text-only
+            // selectors so we don't accidentally match side-menu "Consult and Reprint..." links.
             const receiptLinkSelectors = [
-                'a:has-text("Download Returns Receipt")',
-                'a:has-text("Acknowledgment Receipt")',
-                'a:has-text("Acknowledgement Receipt")',
-                'a:has-text("Return Receipt")',
-                '#downloadReceipt',
-                'a[href*="downloadReturnsReceipt" i]',
                 'a[onclick*="downloadReturnsReceipt" i]',
-                'a[href*="downloadreceipt" i]',
+                'a[href*="downloadReturnsReceipt" i]',
                 'a[onclick*="downloadreceipt" i]',
+                'a[href*="downloadreceipt" i]',
+                'input[onclick*="downloadReturnsReceipt" i]',
+                'input[onclick*="downloadreceipt" i]',
+                'button[onclick*="downloadReturnsReceipt" i]',
+                'button[onclick*="downloadreceipt" i]',
+                'a:has-text("Download Returns Receipt")',
+                'a:has-text("Download Receipt")',
+                'input[value*="Download Returns Receipt" i]',
+                'input[value*="Download Receipt" i]',
+                '#downloadReceipt',
+                '#downloadReturnsReceipt',
             ];
 
             for (const selector of receiptLinkSelectors) {
                 try {
-                    const locator = page.locator(selector).filter({ visible: true }).first();
+                    // Headless Chromium often reports KRA's receipt links as not visible,
+                    // so try without the visibility filter first.
+                    const locator = page.locator(selector).first();
                     if (await locator.count() > 0) {
                         const el = await locator.evaluate((node: HTMLElement) => ({
                             id: node.id ?? '',
@@ -3123,62 +3194,68 @@ export async function processFilingJob(job: JobContext): Promise<{
                 }
             }
 
-            // Fallback: inspect all links but reject nav/error/problem links.
+            // Fallback: inspect all interactive elements but reject nav/error/problem links.
+            // Use a scoring system so real download actions beat side-menu text matches.
             if (!downloadMeta) {
-                receiptPageLinks = await page.$$eval(
-                    'a',
-                    (els: HTMLAnchorElement[]) => els.map((el) => ({
-                        id: el.id ?? '',
-                        href: el.getAttribute('href') ?? '',
-                        onclick: el.getAttribute('onclick') ?? '',
-                        text: (el.textContent ?? '').trim(),
-                        className: el.className ?? '',
-                        tagName: 'a',
-                    })).filter((el) => el.text.length > 0 || el.onclick.length > 0)
+                const interactiveElements = await page.$$eval(
+                    'a, button, input[type="button"], input[type="submit"]',
+                    (els: HTMLElement[]) => els.map((el) => {
+                        const inputEl = el as HTMLInputElement;
+                        return {
+                            id: el.id ?? '',
+                            href: el.getAttribute('href') ?? '',
+                            onclick: el.getAttribute('onclick') ?? '',
+                            text: (el.textContent ?? inputEl.value ?? '').trim(),
+                            className: el.className ?? '',
+                            tagName: el.tagName.toLowerCase(),
+                        };
+                    }).filter((el) => el.text.length > 0 || el.onclick.length > 0)
                 );
+                receiptPageLinks = interactiveElements;
                 if (KRA_DEBUG_ARTIFACTS) {
-                    console.log(`[Worker][${jobId}] Receipt page links:`, JSON.stringify(receiptPageLinks, null, 2));
+                    console.log(`[Worker][${jobId}] Receipt page interactive elements:`, JSON.stringify(receiptPageLinks, null, 2));
                 }
 
-                const receiptLinkPatterns = /download|receipt|acknowledg(?:e)?ment|print/i;
-                const problemLinkPatterns = /reportProblem|report\s*problem|contactUs|contact\s*us|help|support/i;
-                downloadMeta = receiptPageLinks.find(
-                    (link) =>
-                        !problemLinkPatterns.test(link.href) &&
-                        !problemLinkPatterns.test(link.onclick) &&
-                        !problemLinkPatterns.test(link.text) &&
-                        !link.className.toLowerCase().includes('mainmenu') &&
-                        !link.className.toLowerCase().includes('topmenu') &&
-                        (link.onclick.toLowerCase().includes('downloadreturnsreceipt') ||
-                         link.onclick.toLowerCase().includes('downloadreceipt') ||
-                         link.href.toLowerCase().includes('downloadreturnsreceipt') ||
-                         link.href.toLowerCase().includes('downloadreceipt') ||
-                         link.id.toLowerCase().includes('download') ||
-                         link.id.toLowerCase().includes('receipt') ||
-                         receiptLinkPatterns.test(link.text))
-                );
-            }
+                const problemLinkPatterns = /reportProblem|report\s*problem|contactUs|contact\s*us|help|support|consult|reprint|loadReprintAckDtlsForm|showEReturns|fileReturn|viewEReturns/i;
+                const sideMenuClasses = /mainmenu|topmenu|submenu|sidebar/i;
+                const navOnclickPatterns = /loadPage|showMenu|javascript:show|javascript:load/i;
 
-            // Fallback: scan buttons and inputs if no anchor matched
-            if (!downloadMeta) {
-                const buttonMeta = await page.$$eval(
-                    'button, input[type="button"], input[type="submit"]',
-                    (els: (HTMLButtonElement | HTMLInputElement)[]) =>
-                        els
-                            .filter((el) => {
-                                const text = (el.textContent ?? el.getAttribute('value') ?? '').trim();
-                                return /download|receipt|acknowledg(?:e)?ment|print/i.test(text);
-                            })
-                            .map((el) => ({
-                                id: el.id ?? '',
-                                onclick: el.getAttribute('onclick') ?? '',
-                                text: (el.textContent ?? el.getAttribute('value') ?? '').trim(),
-                                tagName: el.tagName.toLowerCase(),
-                            }))[0]
-                ).catch(() => undefined);
+                const scoreElement = (link: typeof interactiveElements[0]): number => {
+                    const href = link.href.toLowerCase();
+                    const onclick = link.onclick.toLowerCase();
+                    const text = link.text.toLowerCase();
+                    const cls = link.className.toLowerCase();
 
-                if (buttonMeta) {
-                    downloadMeta = buttonMeta as any;
+                    // Reject obvious non-download elements
+                    if (problemLinkPatterns.test(href) || problemLinkPatterns.test(onclick) || problemLinkPatterns.test(text)) return -1;
+                    if (sideMenuClasses.test(cls)) return -1;
+                    if (navOnclickPatterns.test(onclick) && !onclick.includes('download')) return -1;
+
+                    let score = 0;
+                    if (onclick.includes('downloadreturnsreceipt')) score += 100;
+                    if (onclick.includes('downloadreceipt')) score += 90;
+                    if (href.includes('downloadreturnsreceipt')) score += 100;
+                    if (href.includes('downloadreceipt')) score += 90;
+                    if (link.id.toLowerCase().includes('downloadreceipt')) score += 80;
+                    if (text.includes('download returns receipt')) score += 70;
+                    if (text.includes('download receipt')) score += 60;
+                    if (text.includes('return receipt')) score += 40;
+                    if (text.includes('acknowledgment') || text.includes('acknowledgement')) score += 20;
+                    if (text.includes('receipt')) score += 30;
+                    if (text.includes('print')) score += 10;
+                    // Slight penalty for very long text (usually side-menu navigation)
+                    if (text.length > 50) score -= 20;
+                    return score;
+                };
+
+                const scored = interactiveElements
+                    .map((link) => ({ link, score: scoreElement(link) }))
+                    .filter((item) => item.score > 0)
+                    .sort((a, b) => b.score - a.score);
+
+                if (scored.length > 0) {
+                    downloadMeta = scored[0].link;
+                    await appendJobLog(job, `Selected receipt link by score ${scored[0].score}: ${JSON.stringify(downloadMeta)}`, { progress: 85 });
                 }
             }
 
@@ -3218,25 +3295,36 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         await navigationDelay();
 
-        // ── Step 12: Close iTax Survey popup if present ──────────────────────────
-        // KRA sometimes shows a survey modal that blocks the receipt download link.
+        // ── Step 12: Close iTax Survey / confirmation popup if present ───────────
+        // KRA sometimes shows a survey/confirmation modal that blocks the receipt download link.
         try {
-            const surveyDismissed = await page.evaluate(() => {
-                // Look for the survey dialog's "Not Now" button by its text
-                const buttons = Array.from(document.querySelectorAll('button, input[type="button"], a'));
-                const notNowBtn = buttons.find((el) => {
-                    const text = (el.textContent ?? el.getAttribute('value') ?? '').trim().toLowerCase();
-                    return text === 'not now' || text.includes('not now');
+            const popupDismissed = await page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+                // Prefer "Not Now" to dismiss surveys; prefer "Yes"/"accepted" if we still
+                // need to confirm the submission.
+                const notNowBtn = elements.find((el) => {
+                    const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                    const text = (el.textContent || (el as HTMLInputElement).value || '').trim().toLowerCase();
+                    return onclick.includes('notaccepted()') || text === 'not now' || text.includes('not now');
                 }) as HTMLElement | undefined;
                 if (notNowBtn) {
                     notNowBtn.click();
-                    return true;
+                    return 'not-now';
+                }
+                const yesBtn = elements.find((el) => {
+                    const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                    const text = (el.textContent || (el as HTMLInputElement).value || '').trim().toLowerCase();
+                    return onclick.includes('accepted()') || text === 'yes' || text.startsWith('yes ');
+                }) as HTMLElement | undefined;
+                if (yesBtn) {
+                    yesBtn.click();
+                    return 'yes';
                 }
                 return false;
             });
-            if (surveyDismissed) {
-                await appendJobLog(job, 'Dismissed iTax survey popup', { progress: 90 });
-                await page.waitForTimeout(1000);
+            if (popupDismissed) {
+                await appendJobLog(job, `Dismissed iTax ${popupDismissed === 'yes' ? 'confirmation' : 'survey'} popup`, { progress: 90 });
+                await page.waitForTimeout(2000);
             }
         } catch (surveyErr: any) {
             console.log(`[Worker][${jobId}] Survey dismissal attempt failed (non-critical):`, surveyErr.message);
@@ -3254,9 +3342,9 @@ export async function processFilingJob(job: JobContext): Promise<{
         if (downloadMeta.id) {
             downloadSelector = `#${downloadMeta.id}`;
         } else if (downloadMeta.onclick) {
-            downloadSelector = `a[onclick*="${downloadMeta.onclick.slice(0, 40).replace(/"/g, '\\"')}"]`;
+            downloadSelector = `[onclick*="${downloadMeta.onclick.slice(0, 40).replace(/"/g, '\\"')}"]`;
         } else if (downloadMeta.href) {
-            downloadSelector = `a[href*="${downloadMeta.href.slice(0, 40).replace(/"/g, '\\"')}"]`;
+            downloadSelector = `[href*="${downloadMeta.href.slice(0, 40).replace(/"/g, '\\"')}"]`;
         } else if (downloadMeta.text) {
             const tag = (downloadMeta as any).tagName || 'a';
             downloadSelector = `${tag}:has-text("${downloadMeta.text.slice(0, 40).replace(/"/g, '\\"')}")`;
@@ -3268,10 +3356,11 @@ export async function processFilingJob(job: JobContext): Promise<{
             let receiptDownloaded = false;
         try {
             // KRA's receipt link may use href="javascript:downloadReturnsReceipt()" which does not
-            // trigger Playwright's download event. Intercept the PDF/form-post response AND listen
-            // for a native download event as a fallback.
+            // trigger Playwright's download event. Intercept the PDF/form-post response, listen
+            // for a native download event, and watch for popups as fallbacks.
             let responseResolved = false;
             let downloadResolved = false;
+            let popupResolved = false;
 
             const pdfResponsePromise = new Promise<any>((resolve) => {
                 const handler = async (response: any) => {
@@ -3316,9 +3405,34 @@ export async function processFilingJob(job: JobContext): Promise<{
                 page.on('download', downloadHandler);
             });
 
-            // Use JS click to bypass visibility checks on hidden tab/menu links
+            const popupPromise = new Promise<any>((resolve) => {
+                const timeout = setTimeout(() => {
+                    if (!popupResolved) {
+                        page.off('popup', popupHandler);
+                        resolve(null);
+                    }
+                }, 60_000);
+                const popupHandler = async (popup: any) => {
+                    popupResolved = true;
+                    clearTimeout(timeout);
+                    page.off('popup', popupHandler);
+                    resolve(popup);
+                };
+                page.on('popup', popupHandler);
+            });
+
+            // Use JS click to bypass visibility checks on hidden tab/menu links.
+            // Prefer directly invoking KRA's known receipt download function whenever
+            // the element points to it.
             let clicked = false;
-            if (downloadMeta.text === 'Direct receipt function') {
+            const shouldUseDirectFunction =
+                downloadMeta.text === 'Direct receipt function' ||
+                (downloadMeta.onclick || '').toLowerCase().includes('downloadreturnsreceipt') ||
+                (downloadMeta.onclick || '').toLowerCase().includes('downloadreceipt') ||
+                (downloadMeta.href || '').toLowerCase().includes('downloadreturnsreceipt') ||
+                (downloadMeta.href || '').toLowerCase().includes('downloadreceipt');
+
+            if (shouldUseDirectFunction) {
                 clicked = await page.evaluate(() => {
                     try {
                         if (typeof (window as any).downloadReturnsReceipt === 'function') {
@@ -3338,27 +3452,9 @@ export async function processFilingJob(job: JobContext): Promise<{
                         return false;
                     }
                 });
-            } else if (downloadMeta.href && downloadMeta.href.toLowerCase().includes('downloadreturnsreceipt')) {
-                // Directly invoke the KRA receipt function when we know the href pattern
-                clicked = await page.evaluate(() => {
-                    try {
-                        if (typeof (window as any).downloadReturnsReceipt === 'function') {
-                            (window as any).downloadReturnsReceipt();
-                            return true;
-                        }
-                        return false;
-                    } catch {
-                        return false;
-                    }
-                });
-                if (!clicked) {
-                    clicked = await page.evaluate((sel) => {
-                        const el = document.querySelector(sel) as HTMLElement;
-                        if (el) { el.click(); return true; }
-                        return false;
-                    }, downloadSelector);
-                }
-            } else {
+            }
+
+            if (!clicked) {
                 clicked = await page.evaluate((sel) => {
                     const el = document.querySelector(sel) as HTMLElement;
                     if (el) { el.click(); return true; }
@@ -3370,9 +3466,10 @@ export async function processFilingJob(job: JobContext): Promise<{
                 throw new Error('Receipt download link not found or not clickable');
             }
 
-            // Race response interception against native download event
+            // Race response interception, native download event, and popup detection
             const pdfResponse = await pdfResponsePromise;
             const downloadEvent = await downloadEventPromise;
+            const popupPage = await popupPromise;
 
             if (pdfResponse) {
                 const buffer = await pdfResponse.body();
@@ -3383,8 +3480,50 @@ export async function processFilingJob(job: JobContext): Promise<{
                 await downloadEvent.saveAs(receiptPath);
                 receiptDownloaded = true;
                 console.log(`[Worker][${jobId}] Receipt saved via download event: ${receiptPath}`);
+            } else if (popupPage) {
+                // Receipt opened in a popup/tab; wait for it to load and capture the PDF response
+                await popupPage.waitForLoadState('domcontentloaded').catch(() => undefined);
+                const popupUrl = popupPage.url().toLowerCase();
+                await appendJobLog(job, `Receipt opened in popup: ${popupUrl}`, { progress: 91 });
+                try {
+                    const popupResponse = await popupPage.waitForResponse(
+                        (response: any) => {
+                            const url = response.url().toLowerCase();
+                            const ct = (response.headerValue('content-type') || '').toLowerCase();
+                            return ct.includes('pdf') || ct.includes('octet-stream') || url.includes('.pdf') || url.includes('receipt');
+                        },
+                        { timeout: 15_000 }
+                    );
+                    const buffer = await popupResponse.body();
+                    await fs.writeFile(receiptPath, buffer);
+                    receiptDownloaded = true;
+                    console.log(`[Worker][${jobId}] Receipt saved via popup response interception: ${receiptPath}`);
+                } catch (popupErr: any) {
+                    // If no PDF response, try printing the popup to PDF as last resort
+                    await popupPage.pdf({ path: receiptPath, format: 'A4' });
+                    receiptDownloaded = true;
+                    console.log(`[Worker][${jobId}] Receipt saved via popup print-to-PDF: ${receiptPath}`);
+                }
+                await popupPage.close().catch(() => undefined);
             } else {
-                throw new Error('No PDF response detected after clicking receipt link');
+                // Last resort: wait briefly then check if the current page itself is now a PDF
+                await page.waitForTimeout(3000);
+                const currentUrl = page.url().toLowerCase();
+                if (currentUrl.includes('.pdf') || currentUrl.includes('receipt')) {
+                    const mainResponse = await page.waitForResponse(
+                        (response: any) => response.url().toLowerCase() === currentUrl,
+                        { timeout: 10_000 }
+                    ).catch(() => null);
+                    if (mainResponse) {
+                        const buffer = await mainResponse.body();
+                        await fs.writeFile(receiptPath, buffer);
+                        receiptDownloaded = true;
+                        console.log(`[Worker][${jobId}] Receipt saved from current page navigation: ${receiptPath}`);
+                    }
+                }
+                if (!receiptDownloaded) {
+                    throw new Error('No PDF response detected after clicking receipt link');
+                }
             }
 
             // Validate the saved file is actually a PDF

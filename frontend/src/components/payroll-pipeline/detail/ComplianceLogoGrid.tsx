@@ -177,10 +177,11 @@ export function ComplianceLogoGrid({ client, runId, period, runStatus, onRefresh
                     setFilingType(null);
                     return;
                 }
+                const nssfPeriod = period ? `${period.split('-')[1]}/${period.split('-')[0]}` : '';
                 const res = await apiFetch(`/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: '' }),
+                    body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: nssfPeriod }),
                 });
                 const data = await res.json();
                 if (res.ok) setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`);

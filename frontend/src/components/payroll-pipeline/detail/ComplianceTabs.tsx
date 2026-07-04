@@ -185,7 +185,8 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
       if (type === 'nssf') {
         const nssfUrl = state?.nssfFileUrl;
         if (!nssfUrl) { setError('NSSF file not available. Generate compliance files first.'); setFilingType(null); return; }
-        const res = await apiFetch(`/tax/file-nssf-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: '' }) });
+        const nssfPeriod = period ? `${period.split('-')[1]}/${period.split('-')[0]}` : '';
+        const res = await apiFetch(`/tax/file-nssf-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: nssfPeriod }) });
          const data = await res.json(); if (res.ok) { setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, nssf: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'NSSF filing failed');
       } else if (type === 'paye') {
         const payeUrl = state?.payeZipUrl; const [ys, ms] = period.split('-'); const lastDay = new Date(parseInt(ys), parseInt(ms), 0).getDate();

@@ -669,20 +669,73 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
 
         const jobId = uuidv4();
 
-        const effectivePeriod = typeof period === 'string' ? period : (() => {
+        function getCurrentNssfPeriod(): string {
             const now = new Date();
             const year = now.getFullYear();
             let month = now.getMonth() + 1;
-            if (now.getDate() <= 9) { month = month - 1; if (month === 0) month = 12; }
+            // NSSF filing deadline is the 15th; before the 15th we file the previous month.
+            if (now.getDate() <= 15) {
+                month = month - 1;
+                if (month === 0) {
+                    month = 12;
+                }
+            }
             return `${String(month).padStart(2, '0')}/${year}`;
-        })();
+        }
+
+        function parseNssfPeriod(input: string): { mmYYYY: string; periodFrom: string; periodTo: string } | null {
+            const trimmed = (input || '').trim();
+            if (!trimmed) return null;
+
+            // MM/YYYY or M/YYYY
+            if (trimmed.includes('/')) {
+                const [mmStr, yyyyStr] = trimmed.split('/');
+                const mm = parseInt(mmStr, 10);
+                const yyyy = parseInt(yyyyStr, 10);
+                if (!isNaN(mm) && !isNaN(yyyy) && mm >= 1 && mm <= 12) {
+                    const lastDay = new Date(yyyy, mm, 0).getDate();
+                    return {
+                        mmYYYY: `${String(mm).padStart(2, '0')}/${yyyy}`,
+                        periodFrom: `${yyyy}-${String(mm).padStart(2, '0')}-01`,
+                        periodTo: `${yyyy}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+                    };
+                }
+            }
+
+            // YYYY-MM
+            if (trimmed.includes('-')) {
+                const [yyyyStr, mmStr] = trimmed.split('-');
+                const yyyy = parseInt(yyyyStr, 10);
+                const mm = parseInt(mmStr, 10);
+                if (!isNaN(mm) && !isNaN(yyyy) && mm >= 1 && mm <= 12) {
+                    const lastDay = new Date(yyyy, mm, 0).getDate();
+                    return {
+                        mmYYYY: `${String(mm).padStart(2, '0')}/${yyyy}`,
+                        periodFrom: `${yyyy}-${String(mm).padStart(2, '0')}-01`,
+                        periodTo: `${yyyy}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        const periodInput = typeof period === 'string' ? period : '';
+        const parsedPeriod = parseNssfPeriod(periodInput) || {
+            mmYYYY: getCurrentNssfPeriod(),
+            periodFrom: '',
+            periodTo: '',
+        };
+        const effectivePeriod = parsedPeriod.mmYYYY;
+        const periodFrom = parsedPeriod.periodFrom || new Date().toISOString();
+        const periodTo = parsedPeriod.periodTo || new Date().toISOString();
 
         // NSSF credentials flow plaintext (encryption disabled for testing).
         const payload: NilReturnPayload = {
             kraPin: nssfUsername,
             kraPassword: nssfPassword,
-            periodFrom: new Date().toISOString(),
-            periodTo: new Date().toISOString(),
+            periodFrom,
+            periodTo,
             taxObligationType: 'nssf',
             ownsRentalProperty: false,
             nssfFileUrl: nssfFileUrl,

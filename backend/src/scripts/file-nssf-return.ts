@@ -232,6 +232,17 @@ export async function fileNssfReturn(job: any, username: string, password: strin
         }
 
         console.log(`  Target row: period=${targetRow.period}, state=${targetRow.state}, action=${targetRow.action}`);
+        await updateProgress(2, `Submission period found: ${targetRow.period} (${targetRow.state})`, 38);
+
+        function isTerminalState(state: string): boolean {
+            const s = state.toUpperCase();
+            return s.includes('SUBMISSION') && !s.includes('CHECK') && !s.includes('TO BE')
+                || s.includes('SUBMITTED')
+                || s.includes('PAID')
+                || s.includes('ACKNOWLEDGED')
+                || s.includes('SUCCESSFUL')
+                || s.includes('APPROVED');
+        }
 
         // ── Helper: refresh and re-scan target row ─────────────────────
         async function refreshTarget() {
@@ -384,8 +395,14 @@ export async function fileNssfReturn(job: any, username: string, password: strin
         }
 
         // State 5: Already SUBMITTED
-        if (currentRow && currentRow.state.includes('SUBMISSION') && !currentRow.state.includes('CHECK') && !currentRow.state.includes('TO BE')) {
+        if (currentRow && isTerminalState(currentRow.state)) {
+            await updateProgress(6, `Submission is already in terminal state: ${currentRow.state}`, 80);
             console.log(`  State is already ${currentRow.state} — filing was already complete!`);
+        }
+
+        // Guard: if we reach here without having progressed the submission, something is wrong.
+        if (currentRow && !isTerminalState(currentRow.state) && !currentRow.state.includes('TO BE SUBMITTED') && !currentRow.state.includes('IN PROGRESS') && !currentRow.state.includes('SUBMISSION CHECK') && !currentRow.state.includes('OPENED PERIOD')) {
+            throw new Error(`Unrecognized NSSF submission state for ${submissionPeriod}: "${currentRow.state}". Manual intervention may be required.`);
         }
 
         // ── 7. Proceed to Payment Order ─────────────────────────────────
@@ -569,6 +586,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                 }, periodNorm);
 
                 console.log('  Drag discovery result:', JSON.stringify(dragResult, null, 2));
+                await updateProgress(8, `Drag discovery: ${dragResult.ok ? 'ok' : (dragResult as any).reason || 'failed'}`, 96);
 
                 if (dragResult.ok) {
                     const { sx, sy, dx, dy, handleTag, handleClass } = dragResult as any;
@@ -629,9 +647,11 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                 }, periodNorm);
 
                 console.log('  After-drag check:', moveCheck);
+                await updateProgress(8, `After-drag check: ${moveCheck.moved ? 'moved' : (moveCheck.noSelectedPanel ? 'no selected panel' : 'not moved')}`, 96);
 
                 if (!moveCheck.moved) {
                     console.log('  Row not in Selected panel — trying click + as fallback...');
+                    await updateProgress(8, 'Row not moved — trying + button fallback', 96);
                     const clickResult = await page.evaluate((periodText) => {
                         const isVisible = (el: Element) => {
                             const rect = el.getBoundingClientRect();
@@ -671,10 +691,12 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     }, periodNorm);
 
                     console.log('  + click result:', clickResult);
+                    await updateProgress(8, `+ button fallback: ${(clickResult as any).clicked ? 'clicked' : (clickResult as any).reason || 'failed'}`, 96);
                     await delay(3000);
                 }
             } catch (dragErr: any) {
                 console.error('Drag-and-drop failed:', dragErr.message);
+                await updateProgress(8, `Drag-and-drop error: ${dragErr.message}`, 96, 'error');
             }
 
             // Save Payment Order
@@ -705,6 +727,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     const txt = (await dlg.textContent()) || '';
                     if (txt.includes('successfully saved') || txt.includes('System Notice') || txt.includes('Payment Order')) {
                         console.log('Dialog:', txt.substring(0, 120).replace(/\s+/g, ' '));
+                        await updateProgress(9, `Post-save dialog: ${txt.substring(0, 120).replace(/\s+/g, ' ')}`, 98);
                         const ok = dlg.locator('button').filter({ hasText: /^OK$/i }).first();
                         if (await ok.isVisible()) {
                             const newPagePromise = context.waitForEvent('page', { timeout: 30000 });
@@ -744,6 +767,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                     }
                                 }
                                 console.log('No valid PDF intercepted, falling back to screenshot');
+                                await updateProgress(9, 'No valid PDF intercepted, trying screenshot fallback', 98, 'warn');
                             } catch (e: any) {
                                 console.log('No new window opened:', e.message);
                                 await context.unroute('**/secureAdmin/paymentOrder.xhtml');
@@ -756,6 +780,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
             }
             if (!okClicked) {
                 console.log('No post-save dialog detected within 30s');
+                await updateProgress(9, 'No post-save Payment Order dialog detected within 30s', 98, 'warn');
             }
 
             // Fallback: screenshot of the new window if interception failed
@@ -787,6 +812,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
 
         // If payment order link not visible, return null
         console.log('Payment Order link not visible — skipping');
+        await updateProgress(7, 'Payment Order link not visible — skipping receipt capture', 90, 'warn');
         return { paymentOrderPath: null };
     } catch (error: any) {
         if (job) {

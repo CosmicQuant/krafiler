@@ -251,10 +251,11 @@ export function Step7ComplianceOutput({ clientId, runId, period }: Step7Complian
         setSuccess(null);
         try {
             if (type === 'nssf') {
+                const nssfPeriod = period ? `${period.split('-')[1]}/${period.split('-')[0]}` : '';
                 const res = await apiFetch(`/tax/file-nssf-return`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ clientId, period: '' }),
+                    body: JSON.stringify({ clientId, period: nssfPeriod }),
                 });
                 const data = await res.json();
                 if (res.ok) {

@@ -119,6 +119,45 @@ export async function apiFetchJson<T = unknown>(path: string, init?: RequestInit
     return data as T;
 }
 
+export interface CaptureArtifact {
+    seq: number;
+    step: string;
+    type: string;
+    fileName: string;
+    gcsPath: string;
+    url?: string;
+    statusCode?: number;
+    label?: string;
+    description?: string;
+    timestamp: string;
+    contentType: string;
+    sizeBytes: number;
+}
+
+export interface CaptureManifest {
+    jobId: string;
+    taxObligationType: string;
+    isNil?: boolean;
+    startedAt: string;
+    finishedAt?: string;
+    outcome?: 'success' | 'failure' | 'cancelled' | 'unknown';
+    artifacts: CaptureArtifact[];
+}
+
+export async function fetchCaptureManifest(jobId: string): Promise<CaptureManifest | null> {
+    try {
+        return await apiFetchJson<CaptureManifest>(`/tax/jobs/${jobId}/captures`);
+    } catch (err) {
+        const apiErr = err as ApiError;
+        if (apiErr.status === 404) return null;
+        throw err;
+    }
+}
+
+export function captureArtifactUrl(jobId: string, fileName: string): string {
+    return `${API_BASE}/tax/jobs/${jobId}/captures/${encodeURIComponent(fileName)}`;
+}
+
 /**
  * Upload a file with automatic retry on network failures.
  * Retries up to 3 times with exponential backoff (1s, 2s, 4s).

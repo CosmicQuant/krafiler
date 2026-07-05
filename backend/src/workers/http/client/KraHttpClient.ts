@@ -1,12 +1,21 @@
 import got from 'got';
 import { CookieJar } from 'tough-cookie';
 import { KraError, KraErrorCode } from '../errors/index';
+import { CaptureContext, CaptureStep } from '../capture';
 
 export interface KraHttpClientOptions {
     baseUrl?: string;
     cookieJar?: CookieJar;
     timeout?: number;
     debug?: boolean;
+    captureContext?: CaptureContext;
+}
+
+export interface KraHttpRequestOptions {
+    timeout?: number;
+    headers?: Record<string, string>;
+    /** Capture step label; used only when a capture context is attached. */
+    step?: CaptureStep;
 }
 
 export class KraHttpClient {
@@ -14,12 +23,14 @@ export class KraHttpClient {
     private cookieJar: CookieJar;
     private timeout: number;
     private debug: boolean;
+    private captureContext?: CaptureContext;
 
     constructor(options: KraHttpClientOptions = {}) {
         this.baseUrl = options.baseUrl ?? 'https://itax.kra.go.ke/KRA-Portal/';
         this.cookieJar = options.cookieJar ?? new CookieJar();
         this.timeout = options.timeout ?? 30_000;
         this.debug = options.debug ?? false;
+        this.captureContext = options.captureContext;
     }
 
     getCookieJar(): CookieJar {
@@ -48,8 +59,9 @@ export class KraHttpClient {
         };
     }
 
-    async get(path: string, options: { timeout?: number; headers?: Record<string, string> } = {}): Promise<string> {
+    async get(path: string, options: KraHttpRequestOptions = {}): Promise<string> {
         const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
         try {
             const response = await got.get(url, {
                 cookieJar: this.cookieJar,
@@ -62,8 +74,10 @@ export class KraHttpClient {
                 followRedirect: true,
                 decompress: true,
             });
+            await this.recordCapture(step, 'GET', url, options.headers, undefined, response.statusCode, response.statusMessage, response.headers, response.body);
             return response.body;
         } catch (error: any) {
+            await this.recordErrorCapture(step, 'GET', url, options.headers, undefined, error);
             throw this.normalizeError(error, url);
         }
     }
@@ -71,9 +85,10 @@ export class KraHttpClient {
     async post(
         path: string,
         body: Record<string, string | string[] | number | boolean | undefined> | URLSearchParams,
-        options: { timeout?: number; headers?: Record<string, string> } = {}
+        options: KraHttpRequestOptions = {}
     ): Promise<string> {
         const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
         const form: Record<string, string> | URLSearchParams = body instanceof URLSearchParams
             ? body
             : (() => {
@@ -103,14 +118,17 @@ export class KraHttpClient {
                 followRedirect: true,
                 decompress: true,
             });
+            await this.recordCapture(step, 'POST', url, options.headers, form, response.statusCode, response.statusMessage, response.headers, response.body);
             return response.body;
         } catch (error: any) {
+            await this.recordErrorCapture(step, 'POST', url, options.headers, form, error);
             throw this.normalizeError(error, url);
         }
     }
 
-    async getBuffer(path: string, options: { timeout?: number; headers?: Record<string, string> } = {}): Promise<Buffer> {
+    async getBuffer(path: string, options: KraHttpRequestOptions = {}): Promise<Buffer> {
         const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
         try {
             const response = await got.get(url, {
                 cookieJar: this.cookieJar,
@@ -125,8 +143,10 @@ export class KraHttpClient {
                 followRedirect: true,
                 decompress: true,
             });
+            await this.recordCapture(step, 'GET', url, options.headers, undefined, response.statusCode, response.statusMessage, response.headers, response.body);
             return response.body;
         } catch (error: any) {
+            await this.recordErrorCapture(step, 'GET', url, options.headers, undefined, error);
             throw this.normalizeError(error, url);
         }
     }
@@ -134,9 +154,10 @@ export class KraHttpClient {
     async postMultipart(
         path: string,
         formData: any,
-        options: { timeout?: number; headers?: Record<string, string> } = {}
+        options: KraHttpRequestOptions = {}
     ): Promise<string> {
         const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
         try {
             const response = await got.post(url, {
                 cookieJar: this.cookieJar,
@@ -154,8 +175,10 @@ export class KraHttpClient {
                 followRedirect: true,
                 decompress: true,
             });
+            await this.recordCapture(step, 'POST', url, options.headers, '[multipart/form-data]', response.statusCode, response.statusMessage, response.headers, response.body);
             return response.body;
         } catch (error: any) {
+            await this.recordErrorCapture(step, 'POST', url, options.headers, '[multipart/form-data]', error);
             throw this.normalizeError(error, url);
         }
     }
@@ -163,9 +186,10 @@ export class KraHttpClient {
     async postRaw(
         path: string,
         rawBody: string,
-        options: { timeout?: number; headers?: Record<string, string> } = {}
+        options: KraHttpRequestOptions = {}
     ): Promise<string> {
         const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
         try {
             const response = await got.post(url, {
                 cookieJar: this.cookieJar,
@@ -179,10 +203,94 @@ export class KraHttpClient {
                 followRedirect: true,
                 decompress: true,
             });
+            await this.recordCapture(step, 'POST', url, options.headers, rawBody, response.statusCode, response.statusMessage, response.headers, response.body);
             return response.body;
         } catch (error: any) {
+            await this.recordErrorCapture(step, 'POST', url, options.headers, rawBody, error);
             throw this.normalizeError(error, url);
         }
+    }
+
+    private normalizeCaptureBody(body: unknown): string | Record<string, unknown> | undefined {
+        if (body === undefined || body === null) return undefined;
+        if (typeof body === 'string') return body;
+        if (body instanceof URLSearchParams) return Object.fromEntries(body.entries());
+        if (Buffer.isBuffer(body)) return body.toString('utf-8');
+        if (typeof body === 'object') return body as Record<string, unknown>;
+        return String(body);
+    }
+
+    private async recordCapture(
+        step: CaptureStep,
+        method: string,
+        url: string,
+        requestHeaders?: Record<string, string>,
+        requestBody?: unknown,
+        statusCode?: number,
+        statusMessage?: string,
+        responseHeaders?: unknown,
+        responseBody?: string | Buffer
+    ): Promise<void> {
+        if (!this.captureContext) return;
+        try {
+            await this.captureContext.uploadHttpEntry({
+                seq: this.captureContext.nextSeq(),
+                step,
+                timestamp: new Date().toISOString(),
+                request: {
+                    method,
+                    url,
+                    headers: this.headersToRecord(requestHeaders),
+                    body: this.normalizeCaptureBody(requestBody),
+                },
+                response: {
+                    statusCode: statusCode ?? 0,
+                    statusMessage,
+                    headers: this.headersToRecord(responseHeaders),
+                    body: responseBody ?? '',
+                },
+            });
+        } catch (err: any) {
+            // Capture failures must not break the filing flow.
+            if (this.debug) {
+                console.warn('[KraHttpClient] Capture recording failed:', err.message);
+            }
+        }
+    }
+
+    private async recordErrorCapture(
+        step: CaptureStep,
+        method: string,
+        url: string,
+        requestHeaders?: Record<string, string>,
+        requestBody?: unknown,
+        error?: any
+    ): Promise<void> {
+        if (!this.captureContext) return;
+        const statusCode = error?.response?.statusCode;
+        const statusMessage = error?.response?.statusMessage ?? error?.code ?? error?.message ?? 'Unknown error';
+        const body = error?.response?.body ?? '';
+        await this.recordCapture(
+            step,
+            method,
+            url,
+            requestHeaders,
+            requestBody,
+            statusCode,
+            statusMessage,
+            error?.response?.headers,
+            typeof body === 'string' ? body : Buffer.from(body)
+        );
+    }
+
+    private headersToRecord(headers?: unknown): Record<string, string | string[]> {
+        const result: Record<string, string | string[]> = {};
+        if (!headers || typeof headers !== 'object') return result;
+        for (const [key, value] of Object.entries(headers)) {
+            if (value === undefined || value === null) continue;
+            result[key] = Array.isArray(value) ? value : String(value);
+        }
+        return result;
     }
 
     private normalizeError(error: any, url: string): Error {

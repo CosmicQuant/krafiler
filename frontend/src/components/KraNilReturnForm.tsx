@@ -3,7 +3,8 @@ import { useForm, Controller } from 'react-hook-form';
 import { apiFetchJson } from '../services/api';
 import ToggleSwitch from './ToggleSwitch';
 import FilingStepTimeline from './FilingStepTimeline';
-import { CheckCircle2, AlertCircle, Receipt } from 'lucide-react';
+import CaptureViewer from './CaptureViewer';
+import { CheckCircle2, AlertCircle, Receipt, Eye } from 'lucide-react';
 import {
     FilingFormData,
     FilingResponse,
@@ -186,6 +187,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
     const { toasts, addToast } = useToasts();
     const [activeJobId, setActiveJobId] = useState<string | null>(null);
     const [jobStatus, setJobStatus] = useState<FilingStatusResponse | null>(null);
+    const [showCaptureViewer, setShowCaptureViewer] = useState(false);
 
     const {
         register,
@@ -688,16 +690,29 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                                     {jobStatus?.jobId ?? activeJobId}
                                 </p>
                             </div>
-                            <span className={[
-                                'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
-                                jobStatus?.state === 'completed'
-                                    ? 'bg-green-100 text-green-700'
-                                    : jobStatus?.state === 'failed'
-                                        ? 'bg-red-100 text-red-700'
-                                        : 'bg-blue-100 text-blue-700',
-                            ].join(' ')}>
-                                {formatJobState(jobStatus?.state ?? 'waiting')}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCaptureViewer(true)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                                    title="View job capture"
+                                >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    Capture
+                                </button>
+                                <span
+                                    className={[
+                                        'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
+                                        jobStatus?.state === 'completed'
+                                            ? 'bg-green-100 text-green-700'
+                                            : jobStatus?.state === 'failed'
+                                                ? 'bg-red-100 text-red-700'
+                                                : 'bg-blue-100 text-blue-700',
+                                    ].join(' ')}
+                                >
+                                    {formatJobState(jobStatus?.state ?? 'waiting')}
+                                </span>
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-xs text-gray-600">
@@ -804,6 +819,13 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                             />
                         ) : null}
                     </div>
+                ) : null}
+
+                {showCaptureViewer && (jobStatus?.jobId ?? activeJobId) ? (
+                    <CaptureViewer
+                        jobId={jobStatus?.jobId ?? activeJobId!}
+                        onClose={() => setShowCaptureViewer(false)}
+                    />
                 ) : null}
 
                 {/* Security footnote */}

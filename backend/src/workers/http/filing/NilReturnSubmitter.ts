@@ -1,8 +1,8 @@
-import { JobContext, TaxObligationType } from '../../../types';
+import { TaxObligationType } from '../../../types';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
-import { KraHttpSession } from '../session/KraHttpSession';
 import { parsePortalErrors, parseSubmissionResult, parseFormFields } from '../parsers';
 import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
+import { BaseHttpFilingService, FilingReceiptResult } from './BaseHttpFilingService';
 
 export interface NilReturnInput {
     periodFrom: string; // ISO YYYY-MM-DD
@@ -12,21 +12,20 @@ export interface NilReturnInput {
     kraPin: string;
 }
 
-export class NilReturnSubmitter {
-    private session: KraHttpSession;
-    private job: JobContext;
-
-    constructor(session: KraHttpSession, job: JobContext) {
-        this.session = session;
-        this.job = job;
+export class NilReturnSubmitter extends BaseHttpFilingService {
+    protected obligationLabel(): string {
+        return 'Nil';
     }
 
-    async submit(input: NilReturnInput): Promise<{
-        success: boolean;
-        receiptNumber: string | null;
-        downloadUrl: string | null;
-        noticeId: string | null;
-    }> {
+    async file(input: Record<string, unknown>): Promise<FilingReceiptResult> {
+        const nilInput: NilReturnInput = {
+            periodFrom: String(input.periodFrom),
+            periodTo: String(input.periodTo),
+            ownsRentalProperty: input.ownsRentalProperty === true,
+            taxObligationType: String(input.taxObligationType) as TaxObligationType,
+            kraPin: String(input.kraPin),
+        };
+
         await setJobStep(this.job, 70, 'Filling nil return details (HTTP)');
 
         const response = this.session.lastResponse ?? '';
@@ -40,8 +39,8 @@ export class NilReturnSubmitter {
             );
         }
 
-        const periodFrom = this.formatPortalDate(input.periodFrom);
-        const periodTo = this.formatPortalDate(input.periodTo);
+        const periodFrom = this.formatPortalDate(nilInput.periodFrom);
+        const periodTo = this.formatPortalDate(nilInput.periodTo);
         const monthValue = periodFrom.slice(3, 5);
         const yearValue = periodFrom.slice(6, 10);
 
@@ -54,7 +53,7 @@ export class NilReturnSubmitter {
             agentPin: fields.agentPin ?? '',
             nilReturnFlag: 'Y',
             amendmentFlag: fields.amendmentFlag ?? 'N',
-            taxpayerPin: input.kraPin,
+            taxpayerPin: nilInput.kraPin,
             quarters: fields.quarters ?? '',
             months: monthValue,
             years: yearValue,
@@ -71,7 +70,7 @@ export class NilReturnSubmitter {
             isMig: fields.isMig ?? '',
             autoPopulate: fields.autoPopulate ?? 'Y',
             cmbReturnType: fields.cmbReturnType ?? 'Original',
-            txtPin: input.kraPin,
+            txtPin: nilInput.kraPin,
             branchRegDate: fields.branchRegDate ?? 'Select',
             txtPeriodFrom: periodFrom,
             txtPeriodTo: periodTo,
@@ -83,10 +82,10 @@ export class NilReturnSubmitter {
         // Only include rental-property answer if the form actually contains the field.
         // If the UI does not pass a value, default to false (No).
         if ('ownsRentalProperty' in fields) {
-            payload.ownsRentalProperty = input.ownsRentalProperty === true ? 'Yes' : 'No';
+            payload.ownsRentalProperty = nilInput.ownsRentalProperty === true ? 'Yes' : 'No';
         }
 
-        await appendJobLog(this.job, `Submitting nil return for ${input.periodFrom} to ${input.periodTo}`, { progress: 80 });
+        await appendJobLog(this.job, `Submitting nil return for ${nilInput.periodFrom} to ${nilInput.periodTo}`, { progress: 80 });
 
         const submitResponse = await this.session.post(
             'eReturns.htm?actionCode=fileNilReturn',
@@ -113,7 +112,6 @@ export class NilReturnSubmitter {
         await appendJobLog(this.job, `Nil return submitted successfully. Receipt: ${result.receiptNumber ?? 'N/A'}`, { progress: 90 });
 
         return {
-            success: true,
             receiptNumber: result.receiptNumber,
             downloadUrl: result.downloadUrl,
             noticeId: result.noticeId,

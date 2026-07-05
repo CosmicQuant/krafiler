@@ -25,7 +25,9 @@ import {
     ChevronUp,
     Ban,
     RotateCcw,
+    Eye,
 } from 'lucide-react';
+import CaptureViewer from '../CaptureViewer';
 
 export type JobStatus = 'idle' | 'queued' | 'preparing' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
@@ -142,6 +144,7 @@ export default function JobTracker({
     onRetry,
 }: JobTrackerProps) {
     const [showLogs, setShowLogs] = useState(false);
+    const [showCapture, setShowCapture] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
     const colors = obligationColors[obligationType] || obligationColors.paye;
 
@@ -183,7 +186,17 @@ export default function JobTracker({
                             </div>
                         </div>
                     </div>
-                    <StatusBadge status={status} />
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowCapture(true)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-800/50 px-2.5 py-1 text-xs font-semibold text-slate-300 hover:bg-slate-700 transition-colors"
+                            title="View job capture"
+                        >
+                            <Eye className="h-3.5 w-3.5" />
+                            Capture
+                        </button>
+                        <StatusBadge status={status} />
+                    </div>
                 </div>
             </div>
 
@@ -372,6 +385,10 @@ export default function JobTracker({
                         Cancel Filing
                     </button>
                 </div>
+            )}
+
+            {showCapture && (
+                <CaptureViewer jobId={jobId} onClose={() => setShowCapture(false)} />
             )}
         </div>
     );

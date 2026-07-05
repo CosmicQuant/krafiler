@@ -12,7 +12,6 @@ import { KraHttpSession } from '../workers/http/session/KraHttpSession';
 import { HttpLoginService } from '../workers/http/navigation/HttpLoginService';
 import { ReturnsNavigator } from '../workers/http/navigation/ReturnsNavigator';
 import { NilReturnSubmitter } from '../workers/http/filing/NilReturnSubmitter';
-import { BinaryDownloader } from '../workers/http/download/BinaryDownloader';
 
 const TMP_DIR = path.join(
     process.env.TEMP_DIR ?? (process.platform === 'win32' ? 'C:\\Temp' : '/tmp'),
@@ -62,7 +61,7 @@ async function main(): Promise<void> {
         console.log('[HTTPNil] Navigated to nil return details page');
 
         const submitter = new NilReturnSubmitter(session, job);
-        const result = await submitter.submit({
+        const result = await submitter.execute({
             periodFrom,
             periodTo,
             ownsRentalProperty: false,
@@ -78,13 +77,11 @@ async function main(): Promise<void> {
             console.log(`[HTTPNil] Submit response saved to: ${respPath}`);
         }
 
-        if (!result.success || !result.downloadUrl) {
-            throw new Error('Submission did not return a download URL');
+        if (!result.receiptPath) {
+            throw new Error('Submission did not return a receipt path');
         }
 
-        const receiptPath = path.join(TMP_DIR, `${runId}_receipt.pdf`);
-        const downloader = new BinaryDownloader(session);
-        await downloader.downloadPdf(result.downloadUrl, receiptPath);
+        const receiptPath = result.receiptPath;
         console.log(`[HTTPNil] Receipt downloaded to: ${receiptPath}`);
 
         const stats = await fs.stat(receiptPath);

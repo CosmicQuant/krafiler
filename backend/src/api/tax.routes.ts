@@ -33,6 +33,10 @@ import { fileNssfReturn } from '../scripts/file-nssf-return';
 import { packageToTZip } from '../scripts/kra-tot-generator';
 import { adminDb } from '../lib/firebaseAdmin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { Storage } from '@google-cloud/storage';
+
+const storage = new Storage();
+const BUCKET_NAME = process.env.CLOUD_STORAGE_BUCKET || 'taxpulse';
 
 const TMP_DIR = path.join(__dirname, '../../../tmp');
 
@@ -556,6 +560,85 @@ router.get(
         } catch (err) {
             console.error('[API] Failed to fetch job status:', err);
             res.status(500).json({ message: 'Failed to fetch job status.' });
+        }
+    }
+);
+
+router.get(
+    '/jobs/:jobId/captures',
+    [param('jobId').isUUID(4).withMessage('jobId must be a valid UUID v4')],
+    async (req: Request, res: Response): Promise<void> => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            res.status(400).json({ errors: errors.array() });
+            return;
+        }
+
+        const { jobId } = req.params;
+        const manifestPath = `captures/${jobId}/manifest.json`;
+
+        try {
+            const file = storage.bucket(BUCKET_NAME).file(manifestPath);
+            const [exists] = await file.exists();
+            if (!exists) {
+                res.status(404).json({ message: 'No captures found for this job.' });
+                return;
+            }
+            const [buffer] = await file.download();
+            const manifest = JSON.parse(buffer.toString('utf-8'));
+            res.status(200).json({
+                jobId: manifest.jobId,
+                taxObligationType: manifest.taxObligationType,
+                isNil: manifest.isNil,
+                startedAt: manifest.startedAt,
+                finishedAt: manifest.finishedAt,
+                outcome: manifest.outcome,
+                artifacts: manifest.artifacts || [],
+            });
+        } catch (err) {
+            console.error('[API] Failed to fetch capture manifest:', err);
+            res.status(500).json({ message: 'Failed to fetch capture manifest.' });
+        }
+    }
+);
+
+router.get(
+    '/jobs/:jobId/captures/:artifactName',
+    [
+        param('jobId').isUUID(4).withMessage('jobId must be a valid UUID v4'),
+        param('artifactName').notEmpty().withMessage('artifactName is required'),
+    ],
+    async (req: Request, res: Response): Promise<void> => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            res.status(400).json({ errors: errors.array() });
+            return;
+        }
+
+        const { jobId, artifactName } = req.params;
+        const sanitizedArtifact = path.basename(artifactName).replace(/\\/g, '/').replace(/\.{2,}/g, '');
+        if (!sanitizedArtifact) {
+            res.status(400).json({ message: 'Invalid artifact name.' });
+            return;
+        }
+
+        const gcsPath = `captures/${jobId}/${sanitizedArtifact}`;
+
+        try {
+            const file = storage.bucket(BUCKET_NAME).file(gcsPath);
+            const [exists] = await file.exists();
+            if (!exists) {
+                res.status(404).json({ message: 'Artifact not found.' });
+                return;
+            }
+            const [metadata] = await file.getMetadata();
+            const contentType = (metadata.contentType as string) || 'application/octet-stream';
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Disposition', `inline; filename="${sanitizedArtifact}"`);
+            file.createReadStream().pipe(res);
+        } catch (err) {
+            console.error('[API] Failed to stream capture artifact:', err);
+            res.status(500).json({ message: 'Failed to stream capture artifact.' });
         }
     }
 );

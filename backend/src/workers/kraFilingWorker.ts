@@ -41,11 +41,6 @@ import { PrnService } from './services/PrnService';
 import { NssfService } from './services/NssfService';
 import { setPortalDateField } from './utils/form-helpers';
 import {
-    KraHttpSession,
-    HttpLoginService,
-    ReturnsNavigator,
-    NilReturnSubmitter,
-    BinaryDownloader,
     KraError,
     KraErrorCode,
 } from './http';
@@ -1909,88 +1904,16 @@ async function extractReceiptNumber(page: any): Promise<string | null> {
     return candidate;
 }
 
-// ─── HTTP Nil Return Orchestrator ─────────────────────────────────────────────
+// ─── HTTP Filing Orchestrator ─────────────────────────────────────────────────
 
-async function processNilReturnViaHttp(
-    job: JobContext,
-    kraPin: string,
-    kraPassword: string,
-    periodFrom: string,
-    periodTo: string,
-    ownsRentalProperty: boolean,
-    taxObligationType: TaxObligationType,
-    otpCode?: string
-): Promise<{
+async function processFilingViaHttp(job: JobContext): Promise<{
     receiptPath?: string;
     receiptNumber: string | null;
     credentialUpdate: CredentialUpdate | null;
 }> {
-    const { jobId, userId, payload } = job.data;
-    const session = new KraHttpSession({ timeout: 60_000 });
-
-    await appendJobLog(job, 'Using HTTP state machine for nil return filing', { progress: 5 });
-
-    const loginService = new HttpLoginService(session, job);
-    const loginResult = await loginService.execute(kraPin, kraPassword, otpCode);
-
-    if (loginResult.passwordExpired) {
-        await appendJobLog(job, 'Password expired; falling back to Playwright for credential reset', { progress: 42, level: 'warn' });
-        throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
-    }
-
-    if (loginResult.mobileVerificationRequired) {
-        await appendJobLog(job, 'Mobile verification required; falling back to Playwright', { progress: 42, level: 'warn' });
-        throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
-    }
-
-    const navigator = new ReturnsNavigator(session, job);
-    await navigator.navigateToReturns();
-    await navigator.selectNilReturnObligation(taxObligationType, kraPin);
-
-    const submitter = new NilReturnSubmitter(session, job);
-    const submitResult = await submitter.submit({
-        periodFrom,
-        periodTo,
-        ownsRentalProperty,
-        taxObligationType,
-        kraPin,
-    });
-
-    let receiptPath: string | undefined;
-    const receiptDownloadUrl = submitResult.downloadUrl ??
-        (submitResult.noticeId ? `/KRA-Portal/eCerificate.htm?actionCode=loadReceipt&noticeId=${submitResult.noticeId}` : null);
-    if (receiptDownloadUrl) {
-        const receiptDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-        const receiptFileName = `${receiptDateStr}_${kraPin}_${taxObligationType}_Receipt.pdf`;
-        const tempReceiptPath = path.join(TMP_DIR, receiptFileName);
-
-        const downloader = new BinaryDownloader(session);
-        await downloader.downloadPdf(receiptDownloadUrl, tempReceiptPath);
-
-        const stored = await storeReceiptLocally(tempReceiptPath, jobId);
-        receiptPath = stored.relativePath.replace(/\\/g, '/');
-        await appendJobLog(job, `Receipt stored at ${receiptPath}`, { progress: 94 });
-
-        try {
-            const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(stored.receiptPath));
-            await uploadFile(stored.receiptPath, receiptGcsPath, { contentType: 'application/pdf' });
-            await jobStore.updateJob(jobId, {
-                'artifacts.receiptGcsPath': receiptGcsPath,
-            } as any);
-            await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
-        } catch (uploadErr: any) {
-            console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
-            await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
-        }
-    }
-
-    await setJobStep(job, 100, 'Nil return filed successfully via HTTP');
-
-    return {
-        receiptPath,
-        receiptNumber: submitResult.receiptNumber,
-        credentialUpdate: null,
-    };
+    const { HttpFilingOrchestrator } = await import('./http/filing/HttpFilingOrchestrator');
+    const orchestrator = new HttpFilingOrchestrator(job);
+    return orchestrator.run();
 }
 
 // ─── Core Job Processor ───────────────────────────────────────────────────────
@@ -2163,16 +2086,7 @@ export async function processFilingJob(job: JobContext): Promise<{
 
     if (useHttpEngine && isNilReturnExplicit && !printPrnOnly) {
         try {
-            const httpResult = await processNilReturnViaHttp(
-                job,
-                kraPin,
-                activePassword,
-                periodFrom,
-                periodTo,
-                ownsRentalProperty,
-                taxObligationType,
-                otpCode
-            );
+            const httpResult = await processFilingViaHttp(job);
 
             // Update client tracking for successful HTTP nil return
             if (payload.clientId) {
@@ -2226,6 +2140,29 @@ export async function processFilingJob(job: JobContext): Promise<{
             console.warn(`[Worker][${jobId}] HTTP engine failed, falling back to Playwright:`, message);
             // Fall through to existing Playwright implementation below
         }
+    }
+
+    // ── Playwright capture context (opt-in) ────────────────────────────────────
+    const shouldCapturePlaywright = process.env.KRA_CAPTURE_ENABLED === 'true' || (payload as any).capture === true;
+    let pwCaptureContext: import('./http/capture').CaptureContext | undefined;
+    let pwCaptureHelper: import('./http/capture').PlaywrightCaptureHelper | undefined;
+
+    if (shouldCapturePlaywright) {
+        const { CaptureContext, CaptureUploader } = await import('./http/capture');
+        pwCaptureContext = new CaptureContext({
+            jobId,
+            userId,
+            clientId: payload.clientId,
+            taxObligationType,
+            isNil: (payload as any).isNil,
+            kraPin,
+            options: {
+                enabled: true,
+                screenshots: process.env.KRA_CAPTURE_SCREENSHOTS === 'true',
+            },
+            uploader: new CaptureUploader(),
+        });
+        await appendJobLog(job, 'Capture enabled for Playwright filing run', { progress: 4 });
     }
 
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -2333,6 +2270,12 @@ export async function processFilingJob(job: JobContext): Promise<{
 
             throw lastLaunchError ?? new Error('No browser launch strategy succeeded');
         }, () => `profileReuse=${KRA_REUSE_BROWSER_PROFILE}${KRA_REUSE_BROWSER_PROFILE ? ` profileDir=${KRA_BROWSER_PROFILE_DIR}` : ''} preferredBrowser=${KRA_BROWSER_EXECUTABLE_PATH || KRA_BROWSER_CHANNEL || 'chromium'}`);
+
+        if (pwCaptureContext) {
+            const { PlaywrightCaptureHelper } = await import('./http/capture');
+            pwCaptureHelper = new PlaywrightCaptureHelper(page, pwCaptureContext, harPath ?? undefined);
+            await pwCaptureHelper.snapshot('login-start', 'post-browser-launch');
+        }
 
         // ── Step 3: Navigate to KRA iTax portal ─────────────────────────────────
         await setJobStep(job, 10, 'Navigating to the KRA portal');
@@ -2891,6 +2834,11 @@ export async function processFilingJob(job: JobContext): Promise<{
         }
 
         await navigationDelay();
+
+        // Capture the TOT upload form HTML explicitly so the HTTP port has a clean snapshot.
+        if (!isNilReturnExplicit && isTotReturn && pwCaptureHelper) {
+            await pwCaptureHelper.snapshot('form-load', 'tot-upload-form');
+        }
 
         // ── Step 10: Fill return details ─────────────────────────────────────────
         await setJobStep(job, 70, (!isNilReturnExplicit && isTotReturn) ? 'Uploading the ToT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isPayeUpload) ? 'Uploading the PAYE ZIP file and accepting the declaration' : (!isNilReturnExplicit && isVatPrepareOnly) ? 'Downloading the VAT auto-populated return and preparing the upload package' : (!isNilReturnExplicit && isVatUpload) ? 'Uploading the VAT ZIP file and accepting the declaration' : (!isNilReturnExplicit && isMriReturn) ? 'Confirming the MRI period and entering monthly rental income' : isNilReturnExplicit ? 'Confirming the nil return period and rental-property answer' : 'Confirming the return period and rental-property answer');
@@ -3956,6 +3904,22 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
         }
         throw err; // Re-throw so caller handles the failure
+    } finally {
+        // Finalize Playwright capture (upload HAR, console/dialog buffers, manifest).
+        if (pwCaptureHelper) {
+            try {
+                await pwCaptureHelper.dispose();
+            } catch (captureErr: any) {
+                console.warn(`[Worker][${jobId}] Playwright capture finalization failed:`, captureErr.message);
+            }
+        }
+        if (pwCaptureContext) {
+            try {
+                await pwCaptureContext.finalize('unknown');
+            } catch (manifestErr: any) {
+                console.warn(`[Worker][${jobId}] Playwright capture manifest finalization failed:`, manifestErr.message);
+            }
+        }
     }
 }
 

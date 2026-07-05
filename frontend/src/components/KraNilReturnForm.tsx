@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { apiFetchJson } from '../services/api';
 import ToggleSwitch from './ToggleSwitch';
+import FilingStepTimeline from './FilingStepTimeline';
+import { CheckCircle2, AlertCircle, Receipt } from 'lucide-react';
 import {
     FilingFormData,
     FilingResponse,
@@ -256,7 +258,7 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
         void pollStatus();
         intervalId = window.setInterval(() => {
             void pollStatus();
-        }, 4_000);
+        }, 2_000);
 
         return () => {
             cancelled = true;
@@ -736,14 +738,47 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                             </div>
                         ) : null}
 
+                        {jobStatus?.state === 'completed' && (
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                                <div className="flex items-start gap-3">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                                        <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className="text-sm font-bold text-emerald-800">
+                                            Filing completed successfully
+                                        </p>
+                                        {jobStatus.result?.receiptNumber ? (
+                                            <p className="mt-1 text-xs text-emerald-700">
+                                                Receipt Number: <span className="font-mono font-semibold">{jobStatus.result.receiptNumber}</span>
+                                            </p>
+                                        ) : null}
+                                        {jobStatus.result?.receiptPath ? (
+                                            <div className="mt-2 flex items-center gap-2 text-xs text-emerald-700">
+                                                <Receipt className="h-3.5 w-3.5" />
+                                                <span className="break-all">{jobStatus.result.receiptPath}</span>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {jobStatus?.failedReason ? (
-                            <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
-                                    KRA Warning
-                                </p>
-                                <p className="mt-1 text-sm text-red-800 leading-relaxed">
-                                    {jobStatus.failedReason}
-                                </p>
+                            <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                                <div className="flex items-start gap-3">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100">
+                                        <AlertCircle className="h-5 w-5 text-red-600" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className="text-sm font-bold text-red-800">
+                                            Filing failed
+                                        </p>
+                                        <p className="mt-1 text-sm text-red-700 leading-relaxed">
+                                            {jobStatus.failedReason}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         ) : null}
 
@@ -762,55 +797,11 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
                             </div>
                         ) : null}
 
-                        {jobStatus?.result?.receiptPath ? (
-                            <div className="rounded-lg border border-green-200 bg-green-50 p-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-green-700">
-                                    Local Receipt Copy
-                                </p>
-                                <p className="mt-1 text-sm text-green-900 break-all leading-relaxed">
-                                    {jobStatus.result.receiptPath}
-                                </p>
-                                {jobStatus.result.receiptNumber ? (
-                                    <p className="mt-2 text-xs font-medium text-green-800">
-                                        Receipt Number: {jobStatus.result.receiptNumber}
-                                    </p>
-                                ) : null}
-                            </div>
-                        ) : null}
-
                         {jobStatus?.stepLogs.length ? (
-                            <div className="rounded-lg border border-slate-200 bg-white p-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                    Execution Log
-                                </p>
-                                <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
-                                    {jobStatus.stepLogs.slice(-8).map((log, index) => (
-                                        <div
-                                            key={`${log.timestamp}-${index}`}
-                                            className={[
-                                                'rounded-md border px-3 py-2 text-xs',
-                                                log.level === 'error'
-                                                    ? 'border-red-200 bg-red-50 text-red-800'
-                                                    : 'border-slate-200 bg-slate-50 text-slate-700',
-                                            ].join(' ')}
-                                        >
-                                            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide">
-                                                <span>{formatLogTimestamp(log.timestamp)}</span>
-                                                {formatLogProgress(log) ? <span>{formatLogProgress(log)}</span> : null}
-                                            </div>
-                                            <p className="mt-1 text-sm normal-case leading-relaxed">
-                                                {log.message}
-                                            </p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ) : null}
-
-                        {jobStatus?.state !== 'failed' ? (
-                            <p className="text-xs text-gray-500 leading-relaxed">
-                                The execution log updates as each worker step runs, so you can see exactly where the attempt is currently paused or stopped.
-                            </p>
+                            <FilingStepTimeline
+                                logs={jobStatus.stepLogs}
+                                isActive={jobStatus.state === 'active' || jobStatus.state === 'waiting'}
+                            />
                         ) : null}
                     </div>
                 ) : null}

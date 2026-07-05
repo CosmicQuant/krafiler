@@ -40,6 +40,15 @@ import { MriFilingService } from './services/MriFilingService';
 import { PrnService } from './services/PrnService';
 import { NssfService } from './services/NssfService';
 import { setPortalDateField } from './utils/form-helpers';
+import {
+    KraHttpSession,
+    HttpLoginService,
+    ReturnsNavigator,
+    NilReturnSubmitter,
+    BinaryDownloader,
+    KraError,
+    KraErrorCode,
+} from './http';
 
 // Apply stealth plugin once at module load
 chromium.use(StealthPlugin());
@@ -1900,6 +1909,90 @@ async function extractReceiptNumber(page: any): Promise<string | null> {
     return candidate;
 }
 
+// ─── HTTP Nil Return Orchestrator ─────────────────────────────────────────────
+
+async function processNilReturnViaHttp(
+    job: JobContext,
+    kraPin: string,
+    kraPassword: string,
+    periodFrom: string,
+    periodTo: string,
+    ownsRentalProperty: boolean,
+    taxObligationType: TaxObligationType,
+    otpCode?: string
+): Promise<{
+    receiptPath?: string;
+    receiptNumber: string | null;
+    credentialUpdate: CredentialUpdate | null;
+}> {
+    const { jobId, userId, payload } = job.data;
+    const session = new KraHttpSession({ timeout: 60_000 });
+
+    await appendJobLog(job, 'Using HTTP state machine for nil return filing', { progress: 5 });
+
+    const loginService = new HttpLoginService(session, job);
+    const loginResult = await loginService.execute(kraPin, kraPassword, otpCode);
+
+    if (loginResult.passwordExpired) {
+        await appendJobLog(job, 'Password expired; falling back to Playwright for credential reset', { progress: 42, level: 'warn' });
+        throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
+    }
+
+    if (loginResult.mobileVerificationRequired) {
+        await appendJobLog(job, 'Mobile verification required; falling back to Playwright', { progress: 42, level: 'warn' });
+        throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
+    }
+
+    const navigator = new ReturnsNavigator(session, job);
+    await navigator.navigateToReturns();
+    await navigator.selectNilReturnObligation(taxObligationType, kraPin);
+
+    const submitter = new NilReturnSubmitter(session, job);
+    const submitResult = await submitter.submit({
+        periodFrom,
+        periodTo,
+        ownsRentalProperty,
+        taxObligationType,
+        kraPin,
+    });
+
+    let receiptPath: string | undefined;
+    const receiptDownloadUrl = submitResult.downloadUrl ??
+        (submitResult.noticeId ? `/KRA-Portal/eCerificate.htm?actionCode=loadReceipt&noticeId=${submitResult.noticeId}` : null);
+    if (receiptDownloadUrl) {
+        const receiptDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const receiptFileName = `${receiptDateStr}_${kraPin}_${taxObligationType}_Receipt.pdf`;
+        const tempReceiptPath = path.join(TMP_DIR, receiptFileName);
+
+        const downloader = new BinaryDownloader(session);
+        await downloader.downloadPdf(receiptDownloadUrl, tempReceiptPath);
+
+        const stored = await storeReceiptLocally(tempReceiptPath, jobId);
+        receiptPath = stored.relativePath.replace(/\\/g, '/');
+        await appendJobLog(job, `Receipt stored at ${receiptPath}`, { progress: 94 });
+
+        try {
+            const receiptGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, path.basename(stored.receiptPath));
+            await uploadFile(stored.receiptPath, receiptGcsPath, { contentType: 'application/pdf' });
+            await jobStore.updateJob(jobId, {
+                'artifacts.receiptGcsPath': receiptGcsPath,
+            } as any);
+            await appendJobLog(job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
+        } catch (uploadErr: any) {
+            console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);
+            await appendJobLog(job, `Receipt upload to Cloud Storage failed: ${uploadErr.message}`, { progress: 94, level: 'info' });
+        }
+    }
+
+    await setJobStep(job, 100, 'Nil return filed successfully via HTTP');
+
+    return {
+        receiptPath,
+        receiptNumber: submitResult.receiptNumber,
+        credentialUpdate: null,
+    };
+}
+
 // ─── Core Job Processor ───────────────────────────────────────────────────────
 
 export async function processFilingJob(job: JobContext): Promise<{
@@ -2064,6 +2157,77 @@ export async function processFilingJob(job: JobContext): Promise<{
 
     await fs.mkdir(TMP_DIR, { recursive: true });
 
+    // ── HTTP engine fast path for nil returns (feature-flagged) ─────────────────
+    const useHttpEngine = process.env.USE_HTTP_ENGINE === 'true' || (payload as any).useHttpEngine === true;
+    const isNilReturnExplicit = (payload as any).isNil === true;
+
+    if (useHttpEngine && isNilReturnExplicit && !printPrnOnly) {
+        try {
+            const httpResult = await processNilReturnViaHttp(
+                job,
+                kraPin,
+                activePassword,
+                periodFrom,
+                periodTo,
+                ownsRentalProperty,
+                taxObligationType,
+                otpCode
+            );
+
+            // Update client tracking for successful HTTP nil return
+            if (payload.clientId) {
+                const obligationCol =
+                    taxObligationType === 'turnover_tax' ? 'tot'
+                    : taxObligationType === 'monthly_rental_income' ? 'mri'
+                    : taxObligationType === 'vat' ? 'vat'
+                    : taxObligationType === 'paye' ? 'paye'
+                    : taxObligationType === 'excise_duty' ? 'exciseDuty'
+                    : null;
+
+                if (obligationCol) {
+                    const clientUpdate: Record<string, any> = {
+                        [`lastFiled.${obligationCol}`]: new Date().toISOString(),
+                        [`status.${obligationCol}`]: 'filed',
+                        [obligationCol]: 'filed',
+                        [`${obligationCol}LastFiledDate`]: new Date().toISOString(),
+                    };
+
+                    if (httpResult.receiptPath) {
+                        clientUpdate[`${obligationCol}ReceiptUrl`] = httpResult.receiptPath;
+                    }
+
+                    const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
+                    if (periodMatch) {
+                        const periodKey = `${periodMatch[1]}-${periodMatch[2]}`;
+                        clientUpdate[`${obligationCol}Period`] = periodKey;
+                        clientUpdate[`filedPeriods.${obligationCol}`] = FieldValue.arrayUnion(periodKey);
+                    }
+
+                    await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                    await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
+                }
+            }
+
+            await setJobStep(job, 98, 'Dispatching completion notification');
+            if (httpResult.receiptPath) {
+                await sendReceiptNotification({
+                    userId,
+                    jobId,
+                    kraPin,
+                    receiptPath: httpResult.receiptPath,
+                    completedAt: new Date().toISOString(),
+                });
+            }
+
+            return httpResult;
+        } catch (httpErr) {
+            const message = httpErr instanceof Error ? httpErr.message : String(httpErr);
+            await appendJobLog(job, `HTTP engine failed, falling back to Playwright: ${message}`, { progress: 10, level: 'warn' });
+            console.warn(`[Worker][${jobId}] HTTP engine failed, falling back to Playwright:`, message);
+            // Fall through to existing Playwright implementation below
+        }
+    }
+
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
     let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
 
@@ -2084,7 +2248,12 @@ export async function processFilingJob(job: JobContext): Promise<{
             ],
         };
 
-        const contextOptions = {
+        const harCaptureDir = process.env.KRA_HAR_CAPTURE_DIR?.trim();
+        const harPath = harCaptureDir
+            ? path.join(harCaptureDir, `${jobId}-${Date.now()}.har`)
+            : null;
+
+        const contextOptions: any = {
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
                 '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -2093,6 +2262,12 @@ export async function processFilingJob(job: JobContext): Promise<{
             locale: 'en-KE',
             timezoneId: 'Africa/Nairobi',
         };
+
+        if (harPath) {
+            await fs.mkdir(harCaptureDir!, { recursive: true });
+            contextOptions.recordHar = { path: harPath };
+            await appendJobLog(job, `HAR capture enabled: ${harPath}`, { progress: 5 });
+        }
 
         const page = await measureJobPhase(job, 'browser launch', 5, async () => {
             const launchPreferences = await resolvePreferredBrowserLaunches();

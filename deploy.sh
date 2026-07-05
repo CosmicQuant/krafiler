@@ -64,7 +64,7 @@ gcloud run deploy "${WORKER_SERVICE}" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
-  --update-env-vars "NODE_ENV=production,TEMP_DIR=/tmp,KRA_REUSE_BROWSER_PROFILE=false" \
+  --update-env-vars "NODE_ENV=production,TEMP_DIR=/tmp,KRA_REUSE_BROWSER_PROFILE=false,USE_HTTP_ENGINE=true" \
   --memory 4Gi \
   --cpu 2 \
   --concurrency 1 \

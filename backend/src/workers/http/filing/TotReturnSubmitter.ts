@@ -1,4 +1,12 @@
+import fs from 'fs';
+import { promises as fsp } from 'fs';
+import path from 'path';
+import FormData from 'form-data';
+import { loadHtml } from '../parsers';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
+import { packageToTZip, ToTReturnInput as ZipToTInput } from '../../../scripts/kra-tot-generator';
+import { parseFormFields, parsePortalErrors, parseSubmissionResult } from '../parsers';
+import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
 import { BaseHttpFilingService, FilingReceiptResult } from './BaseHttpFilingService';
 
 export interface TotReturnInput {
@@ -11,12 +19,14 @@ export interface TotReturnInput {
 }
 
 /**
- * Placeholder TOT HTTP filing service.
+ * Capture-driven TOT HTTP filing service.
  *
- * The capture-driven implementation will be filled in after a real TOT filing
- * run is recorded by the deployed worker. For now it loads the TOT form page,
- * captures the response, and reports that the HTTP flow is not yet implemented
- * so the job fails fast and the capture is available for analysis.
+ * Flow:
+ *   1. Parse the TOT upload form loaded by ReturnsNavigator.
+ *   2. Build the TOT XML ZIP locally.
+ *   3. Build a multipart/form-data body matching the real KRA TOT form.
+ *   4. POST to eReturns.htm?actionCode=excelUpload.
+ *   5. Parse receipt or error from the KRA response.
  */
 export class TotReturnSubmitter extends BaseHttpFilingService {
     protected obligationLabel(): string {
@@ -37,14 +47,163 @@ export class TotReturnSubmitter extends BaseHttpFilingService {
             throw new Error('Turnover Tax filing requires totYear, totMonth, and totTurnover in the queued job payload');
         }
 
-        await setJobStep(this.job, 70, 'Loading TOT return form (HTTP)');
-        await appendJobLog(this.job, `TOT HTTP filing not yet implemented; capture recorded for ${totInput.totMonth}/${totInput.totYear}`, { progress: 72, level: 'warn' });
+        await setJobStep(this.job, 70, 'Preparing Turnover Tax return (HTTP)');
 
-        // Capture the current form page so developers can inspect the TOT flow.
+        const periodFrom = this.formatPortalDate(totInput.periodFrom);
+        const periodTo = this.formatPortalDate(totInput.periodTo);
+
+        await appendJobLog(this.job, `TOT period ${periodFrom} - ${periodTo}, turnover KES ${totInput.totTurnover}`, { progress: 72 });
+
+        // Parse hidden/visible fields from the form page already loaded by the navigator.
+        const formHtml = this.session.lastResponse ?? '';
+        const fields = parseFormFields(formHtml, 'form[action*="eReturns.htm"], form#command, form[name="excelUploadReturns"]');
+
         await this.session.snapshotHtml('form-load');
+        await this.session.snapshotFormFields('form-load', 'excelUploadReturns', {
+            periodFrom,
+            periodTo,
+            obligationId: fields.obligationId,
+            obligationName: fields.obligationName,
+        });
 
-        throw new Error(
-            `TOT HTTP filing is under construction. A capture of the current form has been saved to Cloud Storage for job ${this.job.data.jobId}.`
+        if (!fields.txtPeriodFrom || !fields.txtPeriodTo) {
+            throw new KraError(
+                KraErrorCode.VALIDATION_ERROR,
+                'Could not locate TOT period fields on the upload form',
+                { rawResponse: formHtml.slice(0, 2000) }
+            );
+        }
+
+        const returnTypeValue = this.resolveReturnTypeValue(formHtml, fields.cmbReturnType);
+
+        // Build the TOT XML ZIP locally.
+        const tempDir = process.env.TEMP_DIR ?? (process.platform === 'win32' ? 'C:\\Temp' : '/tmp');
+        const zipOutputDir = path.join(tempDir, 'kra-tot-returns', this.job.data.jobId);
+        await fsp.mkdir(zipOutputDir, { recursive: true });
+
+        const zipInput: ZipToTInput = {
+            taxPayerPin: totInput.kraPin,
+            returnPeriod: { year: totInput.totYear, month: totInput.totMonth },
+            turnover: totInput.totTurnover,
+            returnType: 'Original',
+        };
+
+        const zipPath = await packageToTZip(zipInput, zipOutputDir);
+        await appendJobLog(this.job, `Generated TOT ZIP: ${path.basename(zipPath)}`, { progress: 76 });
+
+        // Build multipart body matching the captured KRA TOT form.
+        const form = new FormData();
+
+        const monthValue = periodFrom.slice(3, 5);
+        const yearValue = periodFrom.slice(6, 10);
+        const quarterValue = String(Math.ceil(parseInt(monthValue, 10) / 3));
+
+        // Start from parsed form fields, override with computed/constant values.
+        const baseFields: Record<string, string> = {
+            ...fields,
+            token_key: this.session.requireToken(),
+            amendmentFlag: fields.amendmentFlag ?? 'N',
+            obligationId: fields.obligationId ?? '8',
+            obligationName: fields.obligationName ?? 'Turnover Tax',
+            taxpayerPin: totInput.kraPin,
+            autoPopulate: fields.autoPopulate ?? 'Y',
+            nilReturnFlag: 'N',
+            cmbReturnType: returnTypeValue,
+            txtPeriodFrom: periodFrom,
+            txtPeriodTo: periodTo,
+            months: monthValue,
+            years: yearValue,
+            quarters: quarterValue,
+            procFrmDt: periodFrom,
+            procToDt: periodTo,
+        };
+
+        // Remove control names that must be submitted specially.
+        delete baseFields['file[0]'];
+        delete baseFields['sfile[1]'];
+        delete baseFields['sbmt_btn'];
+        delete baseFields['btnSubmit'];
+        delete baseFields['chkTermsAndCond'];
+
+        for (const [key, value] of Object.entries(baseFields)) {
+            if (value !== undefined && value !== null) {
+                form.append(key, String(value));
+            }
+        }
+
+        // File upload and visible controls.
+        form.append('file[0]', fs.createReadStream(zipPath), { filename: path.basename(zipPath), contentType: 'application/zip' });
+        form.append('chkTermsAndCond', 'on');
+        form.append('sbmt_btn', 'Submit');
+
+        await setJobStep(this.job, 80, 'Uploading Turnover Tax return (HTTP)');
+        await appendJobLog(this.job, `Submitting TOT ZIP to KRA`, { progress: 82 });
+
+        const submitResponse = await this.session.postMultipart(
+            'eReturns.htm?actionCode=excelUpload',
+            form,
+            {
+                timeout: 120_000,
+                headers: {
+                    ...form.getHeaders(),
+                    Referer: 'https://itax.kra.go.ke/KRA-Portal/eReturns.htm',
+                },
+            }
         );
+
+        await this.session.snapshotHtml('post-submit');
+
+        const errors = parsePortalErrors(submitResponse);
+        const mapped = errors.map((e) => mapPortalMessage(e)).find(Boolean);
+        if (mapped) {
+            throw mapped;
+        }
+
+        const result = parseSubmissionResult(submitResponse);
+
+        if (!result.success) {
+            throw new KraError(
+                KraErrorCode.VALIDATION_ERROR,
+                `TOT submission failed: ${result.message ?? 'Unknown KRA response'}`,
+                { rawResponse: submitResponse.slice(0, 4000) }
+            );
+        }
+
+        await appendJobLog(this.job, `TOT submitted successfully. Receipt: ${result.receiptNumber ?? 'N/A'}`, { progress: 90 });
+
+        return {
+            receiptNumber: result.receiptNumber,
+            downloadUrl: result.downloadUrl,
+            noticeId: result.noticeId,
+        };
+    }
+
+    private formatPortalDate(isoDate: string): string {
+        const [year, month, day] = isoDate.split('-');
+        if (!year || !month || !day) {
+            throw new Error(`Invalid ISO date provided: "${isoDate}"`);
+        }
+        return `${day}/${month}/${year}`;
+    }
+
+    private resolveReturnTypeValue(formHtml: string, currentValue?: string): string {
+        // Prefer the currently selected value if it looks like an original return.
+        if (currentValue && currentValue.trim()) {
+            return currentValue.trim();
+        }
+
+        // Otherwise look for an option whose text contains "Original".
+        const $ = loadHtml(formHtml);
+        const originalOption = $('select[name="cmbReturnType"] option, select#cmbReturnType option')
+            .filter((_, el) => /original/i.test($(el).text()))
+            .first();
+
+        const value = originalOption.attr('value')?.trim();
+        if (value) {
+            return value;
+        }
+
+        // Final fallback observed in captures.
+        return '1';
     }
 }

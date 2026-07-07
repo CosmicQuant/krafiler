@@ -7,6 +7,7 @@ import { CaptureContext, CaptureOptions, CaptureUploader } from '../capture';
 import { BaseHttpFilingService, FilingExecuteResult } from './BaseHttpFilingService';
 import { NilReturnSubmitter } from './NilReturnSubmitter';
 import { TotReturnSubmitter } from './TotReturnSubmitter';
+import { HttpPrnService } from '../prn/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
 
 export interface HttpFilingOrchestratorResult extends FilingExecuteResult {
@@ -82,9 +83,48 @@ export class HttpFilingOrchestrator {
                 throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
             }
 
+            const isNil = this.payload.isNil === true;
+
+            // PRN-only jobs bypass Returns navigation and go straight to Payment Registration.
+            if (this.payload.printPrnOnly === true) {
+                if (this.payload.taxObligationType !== 'turnover_tax' && this.payload.taxObligationType !== 'monthly_rental_income') {
+                    throw new KraError(
+                        KraErrorCode.UNKNOWN,
+                        `HTTP PRN generation is not yet supported for ${this.payload.taxObligationType}`
+                    );
+                }
+
+                const prnService = new HttpPrnService({ session, job: this.job });
+                const prnResult = await prnService.execute({
+                    kraPin: this.payload.kraPin,
+                    kraPassword: this.payload.kraPassword || '',
+                    taxObligationType: this.payload.taxObligationType,
+                    periodFrom: this.payload.periodFrom,
+                    periodTo: this.payload.periodTo,
+                    clientId: this.payload.clientId,
+                    clientName: this.payload.clientName,
+                    otpCode: this.payload.otpCode,
+                    userId: this.job.data.userId,
+                    jobId: this.job.data.jobId,
+                });
+
+                await setJobStep(this.job, 100, `PRN ${prnResult.prnNumber} generated successfully via HTTP`);
+                await this.finalizeCapture('success');
+
+                return {
+                    receiptPath: prnResult.receiptPath,
+                    receiptNumber: prnResult.prnNumber,
+                    credentialUpdate: null,
+                };
+            }
+
             const navigator = new ReturnsNavigator(session, this.job);
-            await navigator.navigateToReturns();
-            await navigator.selectNilReturnObligation(this.payload.taxObligationType, this.payload.kraPin);
+            await navigator.navigateToReturns(isNil);
+            if (isNil) {
+                await navigator.selectNilReturnObligation(this.payload.taxObligationType, this.payload.kraPin);
+            } else {
+                await navigator.selectReturnObligation(this.payload.taxObligationType, this.payload.kraPin);
+            }
 
             const service = this.resolveService(this.payload.taxObligationType, session, this.job);
             const input = this.buildServiceInput();

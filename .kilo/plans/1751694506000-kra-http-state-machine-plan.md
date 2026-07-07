@@ -193,7 +193,8 @@ backend/src/workers/http/
    - Unit tests for `parseTokenKey`, `parseCaptchaImage`, `parsePortalErrors`, `KraErrorMapper` using captured HTML snippets.
    - Integration test script that performs a real KRA login (manual credential injection) to verify session/CAPTCHA flow.
    - `npm run build` and `npx tsc --noEmit` must pass before merging each phase.
-5. **Cleanup:** Once HTTP engine reaches parity for nil + ToT, remove Playwright login/navigation code from `kraFilingWorker.ts` and delete deprecated services.
+5. **PRN generation:** Deferred to Phase 2+. HTTP TOT filing returns the receipt only; PRN generation remains Playwright-based and is not invoked after an HTTP filing.
+6. **Cleanup:** Once HTTP engine reaches parity for nil + ToT, remove Playwright login/navigation code from `kraFilingWorker.ts` and delete deprecated services.
 
 ## 9. Risks & Mitigations
 
@@ -274,6 +275,9 @@ Remove one non-obvious field at a time from each POST body until KRA rejects the
 | Live KRA login validation | ✅ Done | Credentials accepted; dashboard HTML returned via pure HTTP |
 | Live nil-return endpoint validation | ✅ Done | Filed PAYE nil returns for April/May/June 2026 via pure HTTP; receipts downloaded and validated as PDF |
 | HAR/network/token capture | ✅ Done | `file-paye-nil-existing-flow.ts` captures HAR, requests+responses, console logs, token history, and state snapshots |
+| `ReturnsNavigator` non-nil support | ✅ Implemented | `selectReturnObligation` for upload flows (ToT) |
+| `TotReturnSubmitter` | ✅ Implemented | Generates TOT ZIP, builds multipart form, POSTs `actionCode=excelUpload`, parses receipt |
+| TOT HTTP routing | ✅ Implemented | `turnover_tax` jobs routed through HTTP engine when `USE_HTTP_ENGINE=true` |
 
 ## 14. Activation
 

@@ -2,6 +2,7 @@ import { TaxObligationType } from '../../../types';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
 import { parsePortalErrors, parseSubmissionResult, parseFormFields } from '../parsers';
 import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
+import { DwrService } from '../dwr';
 import { BaseHttpFilingService, FilingReceiptResult } from './BaseHttpFilingService';
 
 export interface NilReturnInput {
@@ -31,7 +32,11 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
         const response = this.session.lastResponse ?? '';
         const fields = parseFormFields(response, 'form#command, form[name="frmNilReturn"], form[action*="eReturns.htm"]');
 
-        if (!fields.txtPeriodFrom || !fields.txtPeriodTo) {
+        // The period fields may be empty text boxes on annual returns (e.g. Non-Resident Individual).
+        // Verify they exist in the form HTML rather than requiring a pre-filled value.
+        const hasPeriodFrom = /name=["']txtPeriodFrom["']/i.test(response);
+        const hasPeriodTo = /name=["']txtPeriodTo["']/i.test(response);
+        if (!hasPeriodFrom || !hasPeriodTo) {
             throw new KraError(
                 KraErrorCode.VALIDATION_ERROR,
                 'Could not locate period fields on the nil return form',
@@ -43,6 +48,12 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
         const periodTo = this.formatPortalDate(nilInput.periodTo);
         const monthValue = periodFrom.slice(3, 5);
         const yearValue = periodFrom.slice(6, 10);
+
+        // For first returns after rollout (notably Income Tax Non-Resident Individual),
+        // KRA requires a DWR handshake before accepting the nil-return submission.
+        // The form contains hidden errorCd/errorMsg/isFirstRet fields, but the server
+        // only accepts the submission after FetchTrpDtls.callProcAjax has been invoked.
+        const dwrResult = await this.maybeTriggerRolloutHandshake(fields, nilInput, periodFrom);
 
         const payload: Record<string, string> = {
             ...fields,
@@ -63,9 +74,9 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
             brnchLogin: fields.brnchLogin ?? 'N',
             procFrmDt: periodFrom,
             procToDt: periodTo,
-            errorCd: fields.errorCd ?? '',
-            errorMsg: fields.errorMsg ?? '',
-            isFirstRet: fields.isFirstRet ?? 'N',
+            errorCd: dwrResult?.errorCd ?? fields.errorCd ?? '',
+            errorMsg: dwrResult?.errorMsg ?? fields.errorMsg ?? '',
+            isFirstRet: dwrResult?.isFirstRet ?? fields.isFirstRet ?? 'N',
             isDormant: fields.isDormant ?? '',
             isMig: fields.isMig ?? '',
             autoPopulate: fields.autoPopulate ?? 'Y',
@@ -79,8 +90,11 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
         // Remove fields that should not be submitted based on captured Playwright flow.
         delete payload.btnSubmit;
 
-        // Only include rental-property answer if the form actually contains the field.
-        // If the UI does not pass a value, default to false (No).
+        // KRA uses `isProperty` (Y/N) for the rental-property question on nil returns.
+        if (/name=["']isProperty["']/i.test(response)) {
+            payload.isProperty = nilInput.ownsRentalProperty === true ? 'Y' : 'N';
+        }
+        // Legacy form field name kept for backwards compatibility.
         if ('ownsRentalProperty' in fields) {
             payload.ownsRentalProperty = nilInput.ownsRentalProperty === true ? 'Yes' : 'No';
         }
@@ -116,6 +130,52 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
             downloadUrl: result.downloadUrl,
             noticeId: result.noticeId,
         };
+    }
+
+    private async maybeTriggerRolloutHandshake(
+        fields: Record<string, string>,
+        nilInput: NilReturnInput,
+        periodFrom: string
+    ): Promise<{ errorCd?: string; errorMsg?: string; isFirstRet?: string } | undefined> {
+        const errorCd = fields.errorCd;
+        const isFirstRet = fields.isFirstRet;
+
+        // Only trigger the DWR handshake when the form indicates a first-return
+        // rollout confirmation is required (errorCd=4002 / isFirstRet=Y).
+        if (errorCd !== '4002' && isFirstRet !== 'Y') {
+            return undefined;
+        }
+
+        await appendJobLog(this.job, 'Triggering KRA first-return rollout DWR handshake (HTTP)', { progress: 72 });
+
+        try {
+            const dwr = new DwrService(this.session.client);
+            const page = '/KRA-Portal/eReturns.htm?actionCode=initPage';
+            const session = await dwr.pageLoaded(page);
+            const result = await dwr.callProcAjax({
+                kraPin: nilInput.kraPin,
+                obligationId: fields.obligationId,
+                periodFrom,
+                returnType: fields.cmbReturnType || 'Original',
+                branchType: fields.cmbBrnchType || null,
+                windowName: session.windowName,
+                scriptSessionId: session.scriptSessionId,
+                page,
+            });
+
+            await appendJobLog(this.job, `DWR handshake complete: errorCd=${result.errorCd ?? 'none'}, isFirstRet=${result.isFirstRtnAfterRollOut ?? result.isFirstRet ?? 'N'}`, { progress: 74 });
+
+            return {
+                errorCd: result.errorCd,
+                errorMsg: result.errorMsg,
+                isFirstRet: result.isFirstRet ?? (result.isFirstRtnAfterRollOut === 'Y' ? 'Y' : 'N'),
+            };
+        } catch (err: any) {
+            // Do not fail the whole filing because of a DWR handshake error;
+            // the hidden form fields may already be sufficient for some flows.
+            await appendJobLog(this.job, `DWR handshake attempt failed, continuing with form fields: ${err.message}`, { progress: 74, level: 'warn' });
+            return undefined;
+        }
     }
 
     private formatPortalDate(isoDate: string): string {

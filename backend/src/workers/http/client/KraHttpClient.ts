@@ -185,7 +185,7 @@ export class KraHttpClient {
 
     async postRaw(
         path: string,
-        rawBody: string,
+        rawBody: string | Buffer,
         options: KraHttpRequestOptions = {}
     ): Promise<string> {
         const url = this.resolveUrl(path);

@@ -7,6 +7,8 @@ export { TotReturnSubmitter } from './filing/TotReturnSubmitter';
 export { BaseHttpFilingService } from './filing/BaseHttpFilingService';
 export { HttpFilingOrchestrator } from './filing/HttpFilingOrchestrator';
 export { BinaryDownloader } from './download/BinaryDownloader';
+export { HttpPrnService } from './prn/HttpPrnService';
+export type { HttpPrnInput, HttpPrnResult } from './prn/HttpPrnService';
 export { CaptureContext, CaptureUploader } from './capture';
 export type { CaptureOptions, CaptureManifest, CaptureArtifactMeta } from './capture';
 export { KraError } from './errors/KraError';

@@ -125,6 +125,7 @@ export class HttpLoginService {
                 Referer: 'https://itax.kra.go.ke/KRA-Portal/',
             },
         });
+        require('fs').writeFileSync('C:\\Temp\\kra\\loginResponse.html', loginResponse);
 
         const outcome = parseLoginOutcome(loginResponse);
         await appendJobLog(this.job, `Parsed login outcome: ${outcome.type}`, { progress: 36 });

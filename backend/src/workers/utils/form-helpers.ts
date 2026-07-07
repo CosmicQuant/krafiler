@@ -54,8 +54,9 @@ export async function setPortalDateField(
     let isoDate: string;
     let label: string;
 
-    // Detect overload: if pageOrLocator has .locator() method, it's a page
-    if (typeof pageOrLocator.locator === 'function') {
+    // Detect overload: Playwright Page has .goto(); Locator has .fill() but no .goto().
+    // A Locator also exposes .locator(), so we must not use that as the discriminator.
+    if (typeof pageOrLocator.goto === 'function') {
         locator = pageOrLocator.locator(selectorOrIsoDate).first();
         isoDate = isoDateOrLabel;
         label = selectorOrIsoDate;

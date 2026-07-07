@@ -3,6 +3,7 @@ import { JobContext } from '../../../types';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
 import { storeReceiptLocally } from '../../../utils/storage';
 import { uploadFile, receiptPath as gcsReceiptPath } from '../../../lib/cloudStorage';
+import * as jobStore from '../../../services/jobStore';
 import { KraHttpSession } from '../session/KraHttpSession';
 import { BinaryDownloader } from '../download/BinaryDownloader';
 
@@ -102,11 +103,13 @@ export abstract class BaseHttpFilingService {
         const receiptPath = stored.relativePath.replace(/\\/g, '/');
         await appendJobLog(this.job, `Receipt stored at ${receiptPath}`, { progress: 94 });
 
+        let receiptGcsPath: string | undefined;
         try {
             const userId = this.job.data.userId || 'dev-user';
             const clientId = this.job.data.payload.clientId || 'unknown';
-            const receiptGcsPath = gcsReceiptPath(userId, clientId, jobId, path.basename(stored.receiptPath));
+            receiptGcsPath = gcsReceiptPath(userId, clientId, jobId, path.basename(stored.receiptPath));
             await uploadFile(stored.receiptPath, receiptGcsPath, { contentType: 'application/pdf' });
+            await jobStore.updateJob(jobId, { 'artifacts.receiptGcsPath': receiptGcsPath } as any);
             await appendJobLog(this.job, `Receipt uploaded to Cloud Storage: ${receiptGcsPath}`, { progress: 94 });
         } catch (uploadErr: any) {
             console.error(`[Worker][${jobId}] Failed to upload receipt to GCS:`, uploadErr.message);

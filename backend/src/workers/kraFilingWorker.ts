@@ -350,6 +350,7 @@ export async function generatePrnAfterFiling(
             periodYear: prnDate.getFullYear().toString(),
             periodMonth: prnDate.toLocaleString('default', { month: 'long' }),
             periodFrom,
+            kraPin,
         };
 
         try {
@@ -1195,7 +1196,8 @@ async function selectRentalPropertyAnswer(page: any, ownsRentalProperty: boolean
         const radioCount = await rowRadios.count();
         if (radioCount >= 2) {
             const targetIndex = ownsRentalProperty ? 0 : 1;
-            await rowRadios.nth(targetIndex).check();
+            const targetRadio = rowRadios.nth(targetIndex);
+            await checkRadioRobust(targetRadio);
             return true;
         }
     }
@@ -1205,11 +1207,19 @@ async function selectRentalPropertyAnswer(page: any, ownsRentalProperty: boolean
         : ['no', 'n', 'false', '0'];
 
     for (const value of valueCandidates) {
-        const candidate = page.locator(`input[type="radio"][value="${value}"]`).first();
+        const candidate = page.locator(`input[type="radio"][name="isProperty"][value="${value.toUpperCase()}"]`).first();
         if (await candidate.count() > 0) {
-            await candidate.check();
+            await checkRadioRobust(candidate);
             return true;
         }
+    }
+
+    // Fallback: any radio whose value matches the desired answer.
+    const fallbackValue = ownsRentalProperty ? 'Y' : 'N';
+    const fallback = page.locator(`input[type="radio"][value="${fallbackValue}"]`).first();
+    if (await fallback.count() > 0) {
+        await checkRadioRobust(fallback);
+        return true;
     }
 
     const labelText = ownsRentalProperty ? /^yes$/i : /^no$/i;
@@ -1220,6 +1230,23 @@ async function selectRentalPropertyAnswer(page: any, ownsRentalProperty: boolean
     }
 
     return false;
+}
+
+/**
+ * Checks a radio button using JS evaluation when possible, avoiding Playwright's
+ * strict "click did not change state" error for already-selected radios.
+ */
+async function checkRadioRobust(locator: any): Promise<void> {
+    try {
+        await locator.evaluate((input: HTMLInputElement) => {
+            input.checked = true;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    } catch {
+        // If evaluate fails, fall back to Playwright's check (e.g. for detached elements).
+        await locator.check();
+    }
 }
 
 function shuffleCharacters(characters: string[]): string {
@@ -2080,16 +2107,20 @@ export async function processFilingJob(job: JobContext): Promise<{
 
     await fs.mkdir(TMP_DIR, { recursive: true });
 
-    // ── HTTP engine fast path for nil returns (feature-flagged) ─────────────────
+    // ── HTTP engine fast path for nil returns, Turnover Tax, and PRN generation (feature-flagged) ─
     const useHttpEngine = process.env.USE_HTTP_ENGINE === 'true' || (payload as any).useHttpEngine === true;
     const isNilReturnExplicit = (payload as any).isNil === true;
+    const isHttpSupportedObligation =
+        isNilReturnExplicit ||
+        taxObligationType === 'turnover_tax' ||
+        (printPrnOnly && taxObligationType === 'monthly_rental_income');
 
-    if (useHttpEngine && isNilReturnExplicit && !printPrnOnly) {
+    if (useHttpEngine && isHttpSupportedObligation) {
         try {
             const httpResult = await processFilingViaHttp(job);
 
-            // Update client tracking for successful HTTP nil return
-            if (payload.clientId) {
+            // Update client tracking for successful HTTP filings (not PRN-only jobs).
+            if (payload.clientId && !printPrnOnly) {
                 const obligationCol =
                     taxObligationType === 'turnover_tax' ? 'tot'
                     : taxObligationType === 'monthly_rental_income' ? 'mri'
@@ -2955,6 +2986,49 @@ export async function processFilingJob(job: JobContext): Promise<{
             if (!isNilReturnExplicit && isMriReturn) {
                 await mriFilingService.execute(periodFrom, periodTo, rentalIncomeAmount ?? Number.NaN);
             } else {
+                // For first returns after rollout (e.g. Non-Resident Individual), KRA requires the
+                // onchange handler on txtPeriodFrom to fire so it can call callProcAjax() via DWR.
+                // The DWR response may show a confirmation dialog for errorCd=4002; accepting it
+                // triggers updateRolloutDateOnAjax(), which is required before fileNilReturn.
+                if (isNilReturnExplicit) {
+                    const fromField = page.locator('#txtPeriodFrom, input[name="txtPeriodFrom"]').first();
+                    if (await fromField.count() > 0) {
+                        let rolloutDialogHandled = false;
+                        const rolloutDialogHandler = async (dialog: any) => {
+                            if (dialog.type() === 'confirm' || dialog.type() === 'alert') {
+                                await dialog.accept();
+                                rolloutDialogHandled = true;
+                            } else {
+                                await dialog.dismiss();
+                            }
+                        };
+                        page.on('dialog', rolloutDialogHandler);
+                        try {
+                            await appendJobLog(job, 'Triggering nil-return period-change DWR flow', { progress: 72 });
+                            await fromField.evaluate((input: HTMLInputElement) => {
+                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                            });
+                            // Wait up to 10s for a rollout confirmation dialog.
+                            await Promise.race([
+                                new Promise<void>((resolve) => {
+                                    const check = setInterval(() => {
+                                        if (rolloutDialogHandled) {
+                                            clearInterval(check);
+                                            resolve();
+                                        }
+                                    }, 100);
+                                }),
+                                new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+                            ]);
+                            // Give KRA time to complete updateRolloutDateOnAjax after dialog acceptance.
+                            await page.waitForTimeout(rolloutDialogHandled ? 2_000 : 1_000);
+                            await appendJobLog(job, `First-return rollout flow completed (dialog handled: ${rolloutDialogHandled})`, { progress: 75 });
+                        } finally {
+                            page.off('dialog', rolloutDialogHandler);
+                        }
+                    }
+                }
+
                 // Some nil forms (e.g. ToT) use month/year dropdowns instead of date text fields.
                 if (isNilReturnExplicit && (payload as any).totYear && (payload as any).totMonth) {
                     const monthSelect = page.locator('select[name*="month" i], select[id*="month" i]').first();
@@ -3405,7 +3479,20 @@ export async function processFilingJob(job: JobContext): Promise<{
 
         if (!downloadMeta) {
             await captureDebugScreenshot(page, jobId, 'receipt-link-not-found');
+            // Capture the receipt page HTML to Cloud Storage so we can inspect the exact link layout.
+            if (pwCaptureHelper) {
+                try {
+                    await pwCaptureHelper.snapshot('post-submit', 'receipt-page-link-not-found');
+                    await appendJobLog(job, 'Captured receipt page HTML to Cloud Storage for analysis', { progress: 80 });
+                } catch (captureErr: any) {
+                    console.warn(`[Worker][${jobId}] Failed to capture receipt page HTML:`, captureErr.message);
+                }
+            }
+            const receiptHtml = await page.content().catch(() => '');
             await appendJobLog(job, `No valid receipt download link found on the post-submit page. Available links: ${JSON.stringify(receiptPageLinks)}`, { progress: 80, level: 'error' });
+            if (receiptHtml) {
+                await appendJobLog(job, `Receipt page HTML (truncated): ${receiptHtml.slice(0, 4000)}`, { progress: 80, level: 'info' });
+            }
             throw new Error('Could not locate the receipt download link on the KRA receipt page');
         }
 

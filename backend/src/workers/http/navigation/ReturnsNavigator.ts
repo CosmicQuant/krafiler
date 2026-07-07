@@ -15,12 +15,12 @@ export class ReturnsNavigator {
         this.job = job;
     }
 
-    async navigateToReturns(): Promise<void> {
-        await setJobStep(this.job, 50, 'Opening KRA Nil Return page (HTTP)');
+    async navigateToReturns(nilReturnFlag = true): Promise<void> {
+        const label = nilReturnFlag ? 'nil return' : 'file return';
+        await setJobStep(this.job, 50, `Opening KRA ${label} page (HTTP)`);
 
-        // The browser nil-return menu triggers loadPage with nilReturnFlag=Y.
         const response = await this.session.post(
-            'eReturns.htm?actionCode=loadPage&nilReturnFlag=Y&amendmentFlag=N',
+            `eReturns.htm?actionCode=loadPage&nilReturnFlag=${nilReturnFlag ? 'Y' : 'N'}&amendmentFlag=N`,
             {
                 operation: '',
                 actionCode: '',
@@ -39,15 +39,27 @@ export class ReturnsNavigator {
         if (!parseObligationOptions(response).length) {
             throw new KraError(
                 KraErrorCode.NAVIGATION_ERROR,
-                'Nil return page did not contain a tax obligation dropdown',
+                `${label} page did not contain a tax obligation dropdown`,
                 { rawResponse: response.slice(0, 2000) }
             );
         }
 
-        await appendJobLog(this.job, 'Navigated to nil return obligation page via HTTP', { progress: 52 });
+        await appendJobLog(this.job, `Navigated to ${label} obligation page via HTTP`, { progress: 52 });
     }
 
     async selectNilReturnObligation(taxObligationType: TaxObligationType, kraPin: string): Promise<void> {
+        await this.selectObligation(taxObligationType, kraPin, { nilReturnFlag: true });
+    }
+
+    async selectReturnObligation(taxObligationType: TaxObligationType, kraPin: string): Promise<void> {
+        await this.selectObligation(taxObligationType, kraPin, { nilReturnFlag: false });
+    }
+
+    private async selectObligation(
+        taxObligationType: TaxObligationType,
+        kraPin: string,
+        options: { nilReturnFlag: boolean }
+    ): Promise<void> {
         await setJobStep(this.job, 60, `Selecting ${taxObligationType} tax obligation (HTTP)`);
 
         const obligation = findObligationValue(
@@ -82,7 +94,7 @@ export class ReturnsNavigator {
                 formType: hiddenFields.formType ?? '',
                 obligationName: obligation.text,
                 amendmentFlag: 'N',
-                nilReturnFlag: 'Y',
+                nilReturnFlag: options.nilReturnFlag ? 'Y' : 'N',
                 autoPopulate: hiddenFields.autoPopulate ?? 'Y',
                 taxpayerPin: kraPin,
                 obligationId: obligation.value,
@@ -97,6 +109,6 @@ export class ReturnsNavigator {
             throw mapped;
         }
 
-        await appendJobLog(this.job, 'Proceeded to nil return details page via HTTP', { progress: 64 });
+        await appendJobLog(this.job, `Proceeded to ${options.nilReturnFlag ? 'nil' : 'return'} details page via HTTP`, { progress: 64 });
     }
 }

@@ -100,7 +100,8 @@ export async function solveCaptchaWithTesseract(
 }
 
 /**
- * Solves a KRA arithmetic captcha image using Gemma 4 Vision.
+ * Solves a KRA arithmetic captcha image using OpenCode Go Kimi K2.7 Code Vision,
+ * with Gemma/Gemini fallback and Tesseract OCR as the final fallback.
  * Accepts a raw image Buffer (e.g. downloaded from the CAPTCHA endpoint)
  * instead of reading a screenshot from disk.
  */
@@ -113,15 +114,44 @@ export async function solveCaptchaWithGemma4Buffer(
         progress?: number;
     } = {}
 ): Promise<string> {
-    const apiKey = options.apiKey ?? process.env.GEMMA4_API_KEY ?? '';
-    const model = options.model ?? process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
+    const openCodeApiKey = process.env.OPENCODE_API_KEY ?? '';
+    const openCodeModel = process.env.OPENCODE_MODEL ?? 'opencode-go/kimi-k2.7-code';
+    const gemmaApiKey = options.apiKey ?? process.env.GEMMA4_API_KEY ?? '';
+    const gemmaPrimaryModel = options.model ?? process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
+    const gemmaFallbackModel = 'gemini-3.5-flash';
 
-    if (!apiKey) {
-        throw new Error('GEMMA4_API_KEY is required for captcha extraction');
+    // Try OpenCode first.
+    if (openCodeApiKey) {
+        const answer = await solveCaptchaWithOpenCode(imageBuffer, openCodeApiKey, openCodeModel, options);
+        if (answer) return answer;
     }
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    // Fall back to Gemma/Gemini.
+    if (gemmaApiKey) {
+        const answer = await solveCaptchaWithGemini(imageBuffer, gemmaApiKey, gemmaPrimaryModel, gemmaFallbackModel, options);
+        if (answer) return answer;
+    }
 
+    // Final fallback to local OCR.
+    if (options.job) {
+        await appendJobLog(options.job, 'Vision LLM captcha solvers exhausted; falling back to Tesseract OCR', {
+            progress: options.progress,
+            level: 'warn',
+        });
+    }
+    return solveCaptchaWithTesseract(imageBuffer, options.job, options.progress);
+}
+
+async function solveCaptchaWithOpenCode(
+    imageBuffer: Buffer,
+    apiKey: string,
+    model: string,
+    options: {
+        job?: JobContext;
+        progress?: number;
+    }
+): Promise<string | undefined> {
+    const endpoint = 'https://api.opencode.co/v1/chat/completions';
     const maxRetries = 3;
     let lastError: Error | undefined;
 
@@ -129,7 +159,7 @@ export async function solveCaptchaWithGemma4Buffer(
         if (attempt > 0) {
             const delayMs = 1000 * Math.pow(2, attempt - 1);
             if (options.job) {
-                await appendJobLog(options.job, `Gemma 4 captcha request failed, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`, {
+                await appendJobLog(options.job, `OpenCode captcha request failed, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`, {
                     progress: options.progress,
                     level: 'info',
                 });
@@ -140,48 +170,170 @@ export async function solveCaptchaWithGemma4Buffer(
         try {
             const response = await fetch(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${apiKey}`,
+                },
                 body: JSON.stringify({
-                    contents: [{
-                        parts: [
-                            { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
-                            {
-                                inline_data: {
-                                    mime_type: 'image/png',
-                                    data: imageBuffer.toString('base64'),
+                    model,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.',
                                 },
-                            },
-                        ],
-                    }],
-                    generationConfig: {
-                        maxOutputTokens: 128,
-                        temperature: 0,
-                    },
+                                {
+                                    type: 'image_url',
+                                    image_url: {
+                                        url: `data:image/png;base64,${imageBuffer.toString('base64')}`,
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                    max_tokens: 128,
+                    temperature: 0,
                 }),
             });
 
             if (response.ok) {
                 const payload = await response.json();
-                const answer = extractGemma4CaptchaAnswer(payload);
+                const answer = extractOpenCodeCaptchaAnswer(payload);
                 if (answer) return answer;
-                throw new Error(`Gemma 4 returned an unexpected captcha format: ${JSON.stringify(payload.candidates?.[0]?.content?.parts ?? [])}`);
+                throw new Error(`OpenCode returned an unexpected captcha format: ${JSON.stringify(payload.choices?.[0]?.message ?? {})}`);
             }
 
             const errorText = await response.text();
-            lastError = new Error(`Gemma 4 request failed (${response.status}): ${errorText}`);
+            lastError = new Error(`OpenCode request failed (${response.status}): ${errorText}`);
             if (response.status < 500 && response.status !== 429) {
-                throw lastError;
+                break;
             }
         } catch (err: any) {
             lastError = err;
             if (err.message && err.message.includes('fetch failed')) {
                 continue;
             }
-            if (attempt === maxRetries - 1) throw err;
+            if (attempt === maxRetries - 1) break;
         }
     }
 
-    throw lastError ?? new Error('Gemma 4 captcha solving failed after retries');
+    if (lastError && options.job) {
+        await appendJobLog(options.job, `OpenCode captcha solver failed: ${lastError.message}`, {
+            progress: options.progress,
+            level: 'warn',
+        });
+    }
+    return undefined;
+}
+
+async function solveCaptchaWithGemini(
+    imageBuffer: Buffer,
+    apiKey: string,
+    primaryModel: string,
+    fallbackModel: string,
+    options: {
+        job?: JobContext;
+        progress?: number;
+    }
+): Promise<string | undefined> {
+    const models = [primaryModel];
+    if (primaryModel !== fallbackModel) {
+        models.push(fallbackModel);
+    }
+
+    let lastError: Error | undefined;
+
+    for (const model of models) {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const maxRetries = 3;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            if (attempt > 0 || model !== primaryModel) {
+                const delayMs = 1000 * Math.pow(2, attempt - 1);
+                const message =
+                    model === primaryModel
+                        ? `Gemma 4 captcha request failed, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`
+                        : `Falling back to ${model} captcha solver`;
+                if (options.job) {
+                    await appendJobLog(options.job, message, {
+                        progress: options.progress,
+                        level: 'info',
+                    });
+                }
+                if (attempt > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                }
+            }
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: 'You solve math captchas. Look at the image and return ONLY the final numeric answer to the arithmetic problem shown in the Security Stamp or captcha area. Do not explain.' },
+                                {
+                                    inline_data: {
+                                        mime_type: 'image/png',
+                                        data: imageBuffer.toString('base64'),
+                                    },
+                                },
+                            ],
+                        }],
+                        generationConfig: {
+                            maxOutputTokens: 128,
+                            temperature: 0,
+                        },
+                    }),
+                });
+
+                if (response.ok) {
+                    const payload = await response.json();
+                    const answer = extractGemma4CaptchaAnswer(payload);
+                    if (answer) return answer;
+                    throw new Error(`Gemma 4 returned an unexpected captcha format: ${JSON.stringify(payload.candidates?.[0]?.content?.parts ?? [])}`);
+                }
+
+                const errorText = await response.text();
+                lastError = new Error(`Gemma 4 request failed (${response.status}): ${errorText}`);
+                if (response.status < 500 && response.status !== 429) {
+                    break;
+                }
+            } catch (err: any) {
+                lastError = err;
+                if (err.message && err.message.includes('fetch failed')) {
+                    continue;
+                }
+                if (attempt === maxRetries - 1) break;
+            }
+        }
+    }
+
+    if (lastError && options.job) {
+        await appendJobLog(options.job, `Gemma/Gemini captcha solver failed: ${lastError.message}`, {
+            progress: options.progress,
+            level: 'warn',
+        });
+    }
+    return undefined;
+}
+
+function extractOpenCodeCaptchaAnswer(payload: any): string | null {
+    const rawText = payload.choices?.[0]?.message?.content ?? '';
+    const cleaned = String(rawText).replace(/\D/g, '');
+    if (cleaned) {
+        return cleaned;
+    }
+
+    const fallbackNumbers = String(rawText).match(/\b\d+\b/g);
+    if (fallbackNumbers && fallbackNumbers.length > 0) {
+        return fallbackNumbers[fallbackNumbers.length - 1];
+    }
+
+    return null;
 }
 
 function extractGemma4CaptchaAnswer(payload: any): string | null {

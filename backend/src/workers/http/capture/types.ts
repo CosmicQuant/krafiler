@@ -19,6 +19,11 @@ export type CaptureStep =
     | 'post-submit'
     | 'receipt-download-start'
     | 'receipt-download-end'
+    | 'prn-mainPage'
+    | 'prn-beforeLoadPRForm'
+    | 'prn-loadPRForm'
+    | 'prn-saveObligationDetail'
+    | 'prn-downloadPdf'
     | 'error'
     | 'custom';
 

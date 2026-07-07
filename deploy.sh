@@ -6,6 +6,7 @@ set -euo pipefail
 
 PROJECT_ID="${1:-taxpulse-498006}"
 REGION="${2:-us-central1}"
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format 'value(projectNumber)')
 
 API_SERVICE="krafiler-api"
 WORKER_SERVICE="krafiler-worker"
@@ -76,6 +77,23 @@ gcloud run deploy "${WORKER_SERVICE}" \
 WORKER_URL=$(gcloud run services describe "${WORKER_SERVICE}" --region "${REGION}" --format 'value(status.url)')
 echo "Worker URL: ${WORKER_URL}"
 
+# ── 4b. Pub/Sub push service account & invoker permission ───────────
+# Pub/Sub push subscriptions must send an authenticated OIDC token to a
+# --no-allow-unauthenticated Cloud Run service. We use a dedicated SA.
+echo ""
+echo "[4b/7] Setting up Pub/Sub push service account..."
+PUBSUB_SA="krafiler-pubsub-push@${PROJECT_ID}.iam.gserviceaccount.com"
+gcloud iam service-accounts create krafiler-pubsub-push \
+  --display-name="KRAFILER Pub/Sub Push" \
+  --project="${PROJECT_ID}" 2>/dev/null || echo "Service account ${PUBSUB_SA} already exists."
+
+echo ""
+echo "[4c/7] Granting Pub/Sub push service account permission to invoke the worker..."
+gcloud run services add-iam-policy-binding "${WORKER_SERVICE}" \
+  --region="${REGION}" \
+  --member="serviceAccount:${PUBSUB_SA}" \
+  --role=roles/run.invoker
+
 # ── 5. Create Pub/Sub topic & push subscription ─────────────────────
 echo ""
 echo "[5/7] Creating Pub/Sub topic and push subscription..."
@@ -83,8 +101,13 @@ gcloud pubsub topics create filing-jobs 2>/dev/null || echo "Topic filing-jobs a
 gcloud pubsub subscriptions create filing-jobs-push \
   --topic=filing-jobs \
   --push-endpoint="${WORKER_URL}/process-job" \
+  --push-auth-service-account="${PUBSUB_SA}" \
   --ack-deadline=600 \
-  --max-delivery-attempts=1 2>/dev/null || echo "Subscription filing-jobs-push already exists."
+  --max-delivery-attempts=1 2>/dev/null || echo "Subscription filing-jobs-push already exists; updating push config..."
+# If the subscription already existed without OIDC auth, update it.
+gcloud pubsub subscriptions update filing-jobs-push \
+  --push-endpoint="${WORKER_URL}/process-job" \
+  --push-auth-service-account="${PUBSUB_SA}"
 
 # ── 6. Deploy Frontend to Firebase Hosting ──────────────────────────
 echo ""
@@ -111,13 +134,9 @@ echo "Frontend (Firebase): https://${PROJECT_ID}.web.app"
 echo ""
 echo "IMPORTANT NEXT STEPS:"
 echo "  1. Add GEMMA4_API_KEY to the Worker (if not already set via --update-env-vars):"
-echo "     gcloud run services update ${WORKER_SERVICE} --region ${REGION} \"
+echo "     gcloud run services update ${WORKER_SERVICE} --region ${REGION} \\"
 echo "       --update-env-vars GEMMA4_API_KEY=<your-key>"
-echo "  2. Grant Pub/Sub service account permission to invoke the worker:"
-echo "     gcloud run services add-iam-policy-binding ${WORKER_SERVICE} \"
-echo "       --region=${REGION} \"
-echo "       --member=serviceAccount:service-${PROJECT_ID}@gcp-sa-pubsub.iam.gserviceaccount.com \"
-echo "       --role=roles/run.invoker"
+echo "  2. Pub/Sub OIDC push auth (${PUBSUB_SA}) is now applied automatically by this script."
 echo "  3. Ensure Firestore Security Rules are deployed:"
 echo "     firebase deploy --only firestore:rules --project ${PROJECT_ID}"
 echo ""

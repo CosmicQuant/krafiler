@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { HttpPrnService } from '../workers/http/prn/HttpPrnService';
+import { HttpPrnService } from '../workers/http/payment-registration/HttpPrnService';
 import { CaptureContext, CaptureUploader } from '../workers/http/capture';
 import type { JobContext } from '../types';
 

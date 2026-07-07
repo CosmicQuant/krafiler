@@ -7,7 +7,7 @@ import { CaptureContext, CaptureOptions, CaptureUploader } from '../capture';
 import { BaseHttpFilingService, FilingExecuteResult } from './BaseHttpFilingService';
 import { NilReturnSubmitter } from './NilReturnSubmitter';
 import { TotReturnSubmitter } from './TotReturnSubmitter';
-import { HttpPrnService } from '../prn/HttpPrnService';
+import { HttpPrnService } from '../payment-registration/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
 
 export interface HttpFilingOrchestratorResult extends FilingExecuteResult {

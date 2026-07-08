@@ -21,6 +21,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/VAT3_Return_XLSM.xlsm ./VAT3_Return_XLSM.xlsm
+COPY --from=builder /app/src/workers/http/payment-registration/har-submit-template.json ./dist/workers/http/payment-registration/har-submit-template.json
 
 # Install production dependencies directly in the target image
 RUN npm install --production

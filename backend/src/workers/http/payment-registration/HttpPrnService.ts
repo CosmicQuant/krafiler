@@ -61,10 +61,6 @@ export class HttpPrnService {
 
         await this.log('Logged in via HTTP', 74);
 
-        // Debug: log cookies after login
-        const loginCookies = await this.session.client.getCookieJar().getSetCookieStrings('https://itax.kra.go.ke/KRA-Portal/');
-        console.log('[HttpPrnService] Cookies after login:', loginCookies);
-
         const navigator = new PaymentRegistrationNavigator(this.session);
         const { html: taxFormHtml, dwrIds } = await navigator.navigateToTaxForm(input.kraPin);
         await this.log('Reached Payment Registration Tax Form', 76);
@@ -82,11 +78,11 @@ export class HttpPrnService {
 
         const submitFields = this.buildSubmitPayload(selection, input.kraPin, input.periodFrom, input.periodTo);
         const submitBody = this.buildMultipartBodyFromHarTemplate(submitFields);
-        require('fs').writeFileSync('C:\\Temp\\kra\\mySubmitBody.txt', Buffer.from(submitBody, 'utf-8'));
 
-        let successHtml: string;
-        try {
-            successHtml = await this.session.client.postRaw('paymentRegistration.htm?actionCode=saveObligationDetail', Buffer.from(submitBody, 'utf-8'), {
+        const successHtml = await this.session.client.postRaw(
+            'paymentRegistration.htm?actionCode=saveObligationDetail',
+            Buffer.from(submitBody, 'utf-8'),
+            {
                 step: 'prn-saveObligationDetail',
                 headers: {
                     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -95,18 +91,9 @@ export class HttpPrnService {
                     Origin: 'https://itax.kra.go.ke',
                     'Upgrade-Insecure-Requests': '1',
                 },
-            });
-        } catch (err: any) {
-            console.error('[HttpPrnService] saveObligationDetail error:', err);
-            if (err.cause) console.error('[HttpPrnService] error cause:', err.cause);
-            throw err;
-        }
+            }
+        );
         await this.log('Submitted Payment Registration', 80);
-        require('fs').writeFileSync('C:\\Temp\\kra\\saveObligationResponse.html', successHtml);
-
-        // Debug: log cookies after submit
-        const cookies = await this.session.client.getCookieJar().getSetCookieStrings('https://itax.kra.go.ke/KRA-Portal/');
-        console.log('[HttpPrnService] Cookies after submit:', cookies);
 
         const success = parsePrnSuccessPage(successHtml);
         await this.log(`PRN generated: ${success.prnNumber}`, 90);
@@ -216,26 +203,11 @@ export class HttpPrnService {
         return stored.receiptPath;
     }
 
-    private buildMultipartBody(fields: Record<string, string>): string & { boundary: string } {
-        const boundary = `----KraFormBoundary${Math.random().toString(36).slice(2, 10)}`;
-        const lines: string[] = [];
-        for (const [key, value] of Object.entries(fields)) {
-            lines.push(`--${boundary}`);
-            lines.push(`Content-Disposition: form-data; name="${key}"`);
-            lines.push('');
-            lines.push(value);
-        }
-        lines.push(`--${boundary}--`);
-        lines.push('');
-        const body = lines.join('\r\n');
-        return Object.assign(body, { boundary });
-    }
-
     private buildMultipartBodyFromHarTemplate(overrides: Record<string, string>): string & { boundary: string } {
         const candidates = [
             path.join(__dirname, 'har-submit-template.json'),
-            path.join(process.cwd(), 'src', 'workers', 'http', 'prn', 'har-submit-template.json'),
-            path.join(process.cwd(), 'dist', 'workers', 'http', 'prn', 'har-submit-template.json'),
+            path.join(process.cwd(), 'src', 'workers', 'http', 'payment-registration', 'har-submit-template.json'),
+            path.join(process.cwd(), 'dist', 'workers', 'http', 'payment-registration', 'har-submit-template.json'),
         ];
         const templatePath = candidates.find((p) => require('fs').existsSync(p));
         if (!templatePath) {

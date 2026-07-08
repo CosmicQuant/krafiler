@@ -76,8 +76,6 @@ export class TaxFormInteractor {
         const taxPayerAddressFromHtml = $('input[name="paymentdetailDTO.taxPayerFullAddr"]').val()?.toString() ?? '';
         const taxPayerEmailFromHtml = $('input[name="paymentdetailDTO.emailId"]').val()?.toString() ?? '';
 
-        require('fs').writeFileSync('C:\\Temp\\kra\\taxFormHtml.html', html);
-
         const config = TAX_TYPE_CONFIG[taxObligationType];
         if (!config) {
             throw new KraError(KraErrorCode.UNKNOWN, `No PRN tax-form config for obligation type: ${taxObligationType}`);
@@ -93,7 +91,6 @@ export class TaxFormInteractor {
             windowName: dwrIds.windowName,
             scriptSessionId: dwrIds.scriptSessionId,
         });
-        require('fs').writeFileSync('C:\\Temp\\kra\\fetchWithoutValidationResponse.txt', fetchWithoutValidationResponse);
 
         let taxPayerId = parseTaxPayerIdFromDwrResponse(fetchWithoutValidationResponse);
 
@@ -105,7 +102,6 @@ export class TaxFormInteractor {
             windowName: dwrIds.windowName,
             scriptSessionId: dwrIds.scriptSessionId,
         });
-        require('fs').writeFileSync('C:\\Temp\\kra\\fetchTaxpayerDetailResponse.txt', fetchTaxpayerResponse);
         const taxPayerDetails = parseTaxPayerDetailsFromDwrResponse(fetchTaxpayerResponse);
 
         if (!taxPayerId) {
@@ -118,10 +114,13 @@ export class TaxFormInteractor {
             taxPayerId = extractPinFromHtml($) ?? kraPin;
         }
 
-        console.log('[TaxFormInteractor] Resolved taxPayerId:', taxPayerId);
-        console.log('[TaxFormInteractor] Taxpayer details:', taxPayerDetails);
-
-        const taxSubHeadValue = await this.resolveSubHeadValue(html, dwrIds, taxPayerId, config.subHeadLabelRegex);
+        // The sub-head obligation ID is returned in the FetchTaxPayerDetail
+        // DWR response inside itObligationsMapList (for Income Tax sub-heads).
+        // Each entry is {key: obligationId, value: "(0107) Income Tax - Turnover Tax"}.
+        // The browser uses these to populate the cmbTaxSubHead dropdown when
+        // Tax Head = Income Tax is selected.
+        const taxSubHeadValue = resolveSubHeadFromDwrResponse(fetchTaxpayerResponse, config.subHeadLabelRegex)
+            ?? await this.resolveSubHeadValue(html, dwrIds, taxPayerId, config.subHeadLabelRegex);
 
         if (!taxSubHeadValue) {
             throw new KraError(
@@ -157,8 +156,6 @@ export class TaxFormInteractor {
             windowName: dwrIds.windowName,
             scriptSessionId: dwrIds.scriptSessionId,
         });
-        console.log('[TaxFormInteractor] FetchTotalLiabilityDetailsWeb response length:', liabilityResponse.length);
-        require('fs').writeFileSync('C:\\Temp\\kra\\liabilityResponse.txt', liabilityResponse);
 
         await this.dwr.fetchObligationDetail({
             taxPayerId,
@@ -193,7 +190,6 @@ export class TaxFormInteractor {
         }
 
         const targetPeriodLabel = `${month} ${year}`;
-        console.log('[TaxFormInteractor] Parsed liability rows:', rows.map((r) => ({ period: r.taxPeriod, amount: r.amountPayable, hdrId: r.hdrId, fromDate: r.fromDate })));
         const selectedRow = selectLiabilityRow(rows, targetPeriodLabel);
         const liabilityPayload = buildLiabilityPayload(selectedRow, config.defaultTaxTypeLabel, config.obligationType);
 
@@ -239,9 +235,12 @@ export class TaxFormInteractor {
     }
 
     /**
-     * Tax Sub Head options are populated by an AJAX/DWR call after Tax Head selection.
-     * If the initial HTML does not contain options, we use a hard-coded fallback
-     * (observed from HAR captures) and rely on server-side validation.
+     * Tax Sub Head options are populated by the browser when Tax Head is
+     * selected. The obligation IDs are returned by the FetchTaxPayerDetail
+     * DWR call inside itObligationsMapList. resolveSubHeadFromDwrResponse
+     * above extracts the correct sub-head ID directly from the DWR response.
+     * This fallback reads the HTML select (for cases where KRA pre-rendered
+     * options) or uses hardcoded values as a last resort.
      */
     private async resolveSubHeadValue(
         html: string,
@@ -255,12 +254,12 @@ export class TaxFormInteractor {
             return value;
         }
 
-        // Fallback values captured from KRA portal.
+        // Fallback values captured from KRA portal (see KRA_TAX_HEAD_REFERENCE.md).
         if (labelRegex.test('Turnover Tax')) {
             return '8';
         }
         if (labelRegex.test('Rent Income')) {
-            return '9';
+            return '33';
         }
 
         return undefined;
@@ -350,6 +349,46 @@ function parseTaxPayerIdFromDwrResponse(response: string): string | undefined {
         const match = payload.match(pattern);
         if (match?.[1]) {
             return match[1];
+        }
+    }
+
+    return undefined;
+}
+
+/**
+ * Parse the itObligationsMapList from the FetchTaxPayerDetail DWR response.
+ * KRA returns Income Tax sub-head obligations as an array of {key, value} pairs
+ * inside itObligationsMapList, where key is the obligationId (sub-head value)
+ * and value is the label like "(0107) Income Tax - Turnover Tax".
+ *
+ * The browser uses these to populate the cmbTaxSubHead dropdown when Tax Head
+ * = Income Tax. We replicate this by finding the entry whose value matches the
+ * target sub-head label regex.
+ */
+function resolveSubHeadFromDwrResponse(response: string, labelRegex: RegExp): string | undefined {
+    const callbackMatch = response.match(/dwr\.engine\.remote\.handleCallback\("\d+","\d+",([\s\S]+?)\);\s*$/m);
+    if (!callbackMatch) {
+        return undefined;
+    }
+    const payload = callbackMatch[1].trim();
+
+    // Find itObligationsMapList array and extract key/value pairs.
+    // Pattern: itObligationsMapList:[{key:7,value:"(0107) Income Tax - ..."},{...}]
+    const listMatch = payload.match(/itObligationsMapList:\[([\s\S]*?)\]\s*[,}]/);
+    if (!listMatch) {
+        return undefined;
+    }
+
+const listText = listMatch[1];
+    // KRA format: {value:"(0107) Income Tax - Turnover Tax",key:"8"} —
+    // value appears before key, and key may be quoted or unquoted.
+    const entryRegex = /\{value:"([^"]*)",key:"?(\d+)"?\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = entryRegex.exec(listText)) !== null) {
+        const label = match[1];
+        const key = match[2];
+        if (labelRegex.test(label)) {
+            return key;
         }
     }
 

@@ -22,6 +22,7 @@ export type CaptureStep =
     | 'prn-mainPage'
     | 'prn-beforeLoadPRForm'
     | 'prn-loadPRForm'
+    | 'prn-loadPRForm-reload'
     | 'prn-saveObligationDetail'
     | 'prn-downloadPdf'
     | 'error'

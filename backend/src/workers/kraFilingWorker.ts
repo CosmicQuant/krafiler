@@ -2119,8 +2119,59 @@ export async function processFilingJob(job: JobContext): Promise<{
         try {
             const httpResult = await processFilingViaHttp(job);
 
-            // Update client tracking for successful HTTP filings (not PRN-only jobs).
-            if (payload.clientId && !printPrnOnly) {
+            // Store PRN results and GCS path in Firestore for download route lookup.
+            if (printPrnOnly && (httpResult as any).prnResults) {
+                const prnResults = (httpResult as any).prnResults;
+                const primaryPrn = prnResults[0];
+
+                await jobStore.updateJob(jobId, {
+                    'result.prnResults': prnResults,
+                    'artifacts.receiptGcsPath': primaryPrn?.prnGcsPath,
+                } as any);
+
+                // Update client tracking with PRN download URL.
+                if (payload.clientId) {
+                    const obligationCol =
+                        taxObligationType === 'turnover_tax' ? 'tot'
+                        : taxObligationType === 'monthly_rental_income' ? 'mri'
+                        : taxObligationType === 'vat' ? 'vat'
+                        : taxObligationType === 'paye' ? 'paye'
+                        : null;
+
+                    if (obligationCol && primaryPrn) {
+                        let prnUrl: string | undefined;
+                        try {
+                            if (primaryPrn.prnGcsPath) {
+                                prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                            }
+                        } catch (e: any) {
+                            console.error(`[Worker][${jobId}] Failed to generate client PRN signed URL:`, e.message);
+                        }
+
+                        const clientUpdate: Record<string, any> = {};
+                        clientUpdate[`${obligationCol}PrnUrl`] = prnUrl || primaryPrn.prnPath?.replace(/\\/g, '/');
+
+                        if (taxObligationType === 'paye') {
+                            const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
+                            const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
+                            const generatedMap = new Map(prnResults.map((r: any) => [r.taxType, r]));
+                            const merged = [
+                                ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
+                                ...prnResults.map((r: any) => ({
+                                    taxType: r.taxType,
+                                    prnPath: r.prnPath,
+                                    prnGcsPath: r.prnGcsPath,
+                                })),
+                            ];
+                            clientUpdate[`${obligationCol}PrnResults`] = merged;
+                        }
+
+                        await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                        await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} PRN tracking`, { progress: 95 });
+                    }
+                }
+            } else if (payload.clientId && !printPrnOnly) {
+                // Update client tracking for successful HTTP filings (not PRN-only jobs).
                 const obligationCol =
                     taxObligationType === 'turnover_tax' ? 'tot'
                     : taxObligationType === 'monthly_rental_income' ? 'mri'
@@ -2151,6 +2202,26 @@ export async function processFilingJob(job: JobContext): Promise<{
                     await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
                     await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} last filed tracking`, { progress: 95 });
                 }
+            }
+
+            // For PRN-only jobs, return the PRN URL as prnPath for the frontend.
+            if (printPrnOnly && (httpResult as any).prnResults) {
+                const primaryPrn = (httpResult as any).prnResults[0];
+                let prnUrl = primaryPrn?.prnPath?.replace(/\\/g, '/');
+                try {
+                    if (primaryPrn?.prnGcsPath) {
+                        prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                    }
+                } catch (e: any) {
+                    console.error(`[Worker][${jobId}] Failed to generate result PRN signed URL:`, e.message);
+                }
+                return {
+                    ...httpResult,
+                    receiptPath: '',
+                    receiptNumber: null,
+                    prnPath: prnUrl,
+                    prnResults: (httpResult as any).prnResults,
+                };
             }
 
             await setJobStep(job, 98, 'Dispatching completion notification');

@@ -2,8 +2,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { loadKraLoginCrypto } from './kraLoginCrypto';
 
+const SKIP_NETWORK_TESTS = process.env.SKIP_NETWORK_TESTS === 'true' || process.env.CI === 'true';
+
 describe('KRA login crypto', () => {
     it('loads and runs the KRA encryption functions', async () => {
+        if (SKIP_NETWORK_TESTS) {
+            console.log('Skipping network-dependent KRA login crypto test (SKIP_NETWORK_TESTS/CI set)');
+            return;
+        }
+
         const crypto = await loadKraLoginCrypto();
 
         const sha1 = crypto.hexSha1('test');

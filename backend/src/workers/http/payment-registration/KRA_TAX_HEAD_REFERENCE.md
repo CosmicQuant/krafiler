@@ -74,10 +74,27 @@ From KRA's inline JavaScript in the Payment Registration Tax Form:
 
 ## Tax Type Config (our code)
 
-| taxObligationType        | headValue | subHeadLabelRegex | obligationType | defaultTaxTypeLabel                      |
-|--------------------------|-----------|--------------------|----|------------------------------------------|
-| turnover_tax             | IT        | /Turnover Tax/     | IT| (0107) Income Tax - Turnover Tax          |
-| monthly_rental_income    | IT        | /Rent Income/      | IT| (0111) Income Tax - Rent Income           |
+| taxObligationType             | headValue | subHeadLabelRegex   | obligationType | fallbackSubHeadId | defaultTaxTypeLabel                       |
+|-------------------------------|-----------|---------------------|----|----|------------------------------------------|
+| turnover_tax                  | IT        | /Turnover Tax/      | IT | 8  | (0107) Income Tax - Turnover Tax          |
+| monthly_rental_income         | IT        | /Rent Income/       | IT | 33 | (0111) Income Tax - Rent Income           |
+| income_tax_resident_individual| IT        | /Resident Individual/| IT| 2  | (0101) Income Tax - Resident Individual  |
+| income_tax_non_resident_individual | IT   | /Non-Resident Individual/| IT| 3 | (0102) Income Tax - Non-Resident Individual|
+| income_tax_company            | IT        | /Company/          | IT | 5  | Income Tax - Company                      |
+| paye                          | IT        | /PAYE/              | IT | 7  | Income Tax - PAYE                         |
+| vat                           | VAT       | /Value Added Tax/   | VAT| 9  | (0201) Value Added Tax (VAT)              |
+| capital_gains_tax             | IT        | /Capital Gain/      | IT | 32 | (0110) Capital Gain Tax (CGT)             |
+| digital_asset_tax             | IT        | /Digital Asset/     | IT | 37 | (0145) Digital Asset Tax (DAT)            |
+| advance_tax                   | IT        | /Advance Tax/       | IT | 36 | (0501) Advance Tax                        |
+| withholding                  | IT        | /Withholding/        | IT | 6  | (0105) Income Tax - Withholding            |
+| excise_duty                  | EXCISE    | /Excise/            | EXCISE| 18 | Excise Duty                           |
+
+### Notes on VAT
+VAT sub-head obligations (9, 10) are **not** in `itObligationsMapList` (which is
+Income Tax only). The dynamic `resolveSubHeadFromDwrResponse()` will return
+undefined for VAT, so the `fallbackSubHeadId: '9'` is used. To enable dynamic
+resolution for VAT, we'd need to capture the VAT DWR response and look for a
+`vatObligationsMapList` or similar field.
 
 ## Additional Tax Types (Playwright labels, not yet HTTP-configured)
 

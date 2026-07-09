@@ -12,6 +12,8 @@ import { KraError, KraErrorCode } from '../errors';
 
 export interface HttpFilingOrchestratorResult extends FilingExecuteResult {
     credentialUpdate: null;
+    prnPath?: string;
+    prnResults?: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string }>;
 }
 
 function shouldCapture(payload: NilReturnPayload): boolean {
@@ -66,28 +68,48 @@ export class HttpFilingOrchestrator {
         try {
             await appendJobLog(this.job, 'Using HTTP state machine for filing', { progress: 5 });
 
-            const loginService = new HttpLoginService(session, this.job);
-            const loginResult = await loginService.execute(
-                this.payload.kraPin,
-                this.payload.kraPassword || '',
-                this.payload.otpCode
-            );
-
-            if (loginResult.passwordExpired) {
-                await appendJobLog(this.job, 'Password expired; falling back to Playwright for credential reset', { progress: 42, level: 'warn' });
-                throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
-            }
-
-            if (loginResult.mobileVerificationRequired) {
-                await appendJobLog(this.job, 'Mobile verification required; falling back to Playwright', { progress: 42, level: 'warn' });
-                throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
-            }
-
             const isNil = this.payload.isNil === true;
+            const isPrnOnly = this.payload.printPrnOnly === true;
+
+            // PRN-only jobs: HttpPrnService handles login itself, so skip the
+            // orchestrator login to avoid double-login (the second GET to the
+            // base page returns the dashboard, not the login form).
+            if (!isPrnOnly) {
+                const loginService = new HttpLoginService(session, this.job);
+                const loginResult = await loginService.execute(
+                    this.payload.kraPin,
+                    this.payload.kraPassword || '',
+                    this.payload.otpCode
+                );
+
+                if (loginResult.passwordExpired) {
+                    await appendJobLog(this.job, 'Password expired; falling back to Playwright for credential reset', { progress: 42, level: 'warn' });
+                    throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
+                }
+
+                if (loginResult.mobileVerificationRequired) {
+                    await appendJobLog(this.job, 'Mobile verification required; falling back to Playwright', { progress: 42, level: 'warn' });
+                    throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
+                }
+            }
 
             // PRN-only jobs bypass Returns navigation and go straight to Payment Registration.
-            if (this.payload.printPrnOnly === true) {
-                if (this.payload.taxObligationType !== 'turnover_tax' && this.payload.taxObligationType !== 'monthly_rental_income') {
+            if (isPrnOnly) {
+                const supportedPrnTypes = [
+                    'turnover_tax',
+                    'monthly_rental_income',
+                    'income_tax_resident_individual',
+                    'income_tax_non_resident_individual',
+                    'income_tax_company',
+                    'paye',
+                    'vat',
+                    'capital_gains_tax',
+                    'digital_asset_tax',
+                    'advance_tax',
+                    'withholding',
+                    'excise_duty',
+                ];
+                if (!supportedPrnTypes.includes(this.payload.taxObligationType)) {
                     throw new KraError(
                         KraErrorCode.UNKNOWN,
                         `HTTP PRN generation is not yet supported for ${this.payload.taxObligationType}`
@@ -115,6 +137,12 @@ export class HttpFilingOrchestrator {
                     receiptPath: prnResult.receiptPath,
                     receiptNumber: prnResult.prnNumber,
                     credentialUpdate: null,
+                    prnPath: prnResult.receiptGcsPath ?? prnResult.receiptPath,
+                    prnResults: [{
+                        taxType: this.payload.taxObligationType as any,
+                        prnPath: prnResult.receiptPath,
+                        prnGcsPath: prnResult.receiptGcsPath,
+                    }],
                 };
             }
 

@@ -29,6 +29,7 @@ export interface HttpPrnResult {
     prnNumber: string;
     searchCode: string;
     receiptPath: string;
+    receiptGcsPath?: string;
     receiptUrl?: string;
     noticeId: string;
 }
@@ -74,7 +75,7 @@ export class HttpPrnService {
             dwrIds,
             input.kraPin
         );
-        await this.log(`Selected liability: ${selection.liabilityPayload.totalAmountToBePaid} KES`, 78);
+        await this.log(`Selected liability: ${selection.liabilityPayload.amountPaid} KES`, 78);
 
         const submitFields = this.buildSubmitPayload(selection, input.kraPin, input.periodFrom, input.periodTo);
         const submitBody = this.buildMultipartBodyFromHarTemplate(submitFields);
@@ -98,13 +99,14 @@ export class HttpPrnService {
         const success = parsePrnSuccessPage(successHtml);
         await this.log(`PRN generated: ${success.prnNumber}`, 90);
 
-        const receiptPath = await this.downloadReceipt(success.pdfUrl, input);
+        const { receiptPath, receiptGcsPath } = await this.downloadReceipt(success.pdfUrl, input);
         await this.log(`PRN PDF saved to ${receiptPath}`, 95);
 
         return {
             prnNumber: success.prnNumber,
             searchCode: success.searchCode,
             receiptPath,
+            receiptGcsPath,
             noticeId: success.noticeId,
         };
     }
@@ -147,13 +149,14 @@ export class HttpPrnService {
             cmbTaxPeriodYear: '-1',
             cmbIncomeType: '-1',
             actualLiabilityAmount_0: selection.liabilityPayload.actualLiabilityAmount,
+            hidActualLiabilityAmount: selection.liabilityPayload.actualLiabilityAmount,
             hidAmountPaid: selection.liabilityPayload.amountPaid,
             start_taxObligationTable: '3',
             counter_taxObligationTable: '1',
             start_row_taxObligationTable: '1',
             taxObligationTable_1: selection.liabilityPayload.taxObligationTableEncoded,
             taxObligationTable_1_1: 'Delete',
-            'paymentdetailDTO.totalAmountTobePaid': selection.liabilityPayload.totalAmountToBePaid,
+            'paymentdetailDTO.totalAmountTobePaid': selection.liabilityPayload.amountPaid,
             'paymentdetailDTO.obligationId': selection.liabilityPayload.obligationId ?? '',
             'paymentdetailDTO.paymentMode': 'OPM',
             'paymentdetailDTO.bankCd': '-1',
@@ -169,7 +172,7 @@ export class HttpPrnService {
         };
     }
 
-    private async downloadReceipt(pdfUrl: string, input: HttpPrnInput): Promise<string> {
+    private async downloadReceipt(pdfUrl: string, input: HttpPrnInput): Promise<{ receiptPath: string; receiptGcsPath?: string }> {
         const pdfBuffer = await this.session.client.getBuffer(pdfUrl, {
             step: 'prn-downloadPdf',
             headers: {
@@ -191,16 +194,19 @@ export class HttpPrnService {
         const jobId = input.jobId ?? 'prn-fallback';
         const stored = await storeReceiptLocally(localPath, jobId);
 
+        let receiptGcsPath: string | undefined;
+
         if (input.userId && input.clientId) {
             try {
                 const destination = gcsReceiptPath(input.userId, input.clientId, jobId, fileName);
                 await uploadFile(stored.receiptPath, destination, { contentType: 'application/pdf' });
+                receiptGcsPath = destination;
             } catch {
                 // GCS upload is best-effort; local copy is sufficient.
             }
         }
 
-        return stored.receiptPath;
+        return { receiptPath: stored.receiptPath, receiptGcsPath };
     }
 
     private buildMultipartBodyFromHarTemplate(overrides: Record<string, string>): string & { boundary: string } {

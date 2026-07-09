@@ -31,13 +31,14 @@ export interface TaxFormSelection {
     taxPayerDetails: TaxPayerDetails;
 }
 
-const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegExp; subHeadLabelRegex: RegExp; obligationType: string; defaultTaxTypeLabel: string }> = {
+const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegExp; subHeadLabelRegex: RegExp; obligationType: string; defaultTaxTypeLabel: string; fallbackSubHeadId?: string }> = {
     turnover_tax: {
         headValue: 'IT',
         headLabelRegex: /^Income Tax$/i,
         subHeadLabelRegex: /Turnover Tax/i,
         obligationType: 'IT',
         defaultTaxTypeLabel: '(0107) Income Tax - Turnover Tax',
+        fallbackSubHeadId: '8',
     },
     monthly_rental_income: {
         headValue: 'IT',
@@ -45,6 +46,87 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         subHeadLabelRegex: /Rent Income/i,
         obligationType: 'IT',
         defaultTaxTypeLabel: '(0111) Income Tax - Rent Income',
+        fallbackSubHeadId: '33',
+    },
+    income_tax_resident_individual: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Resident Individual/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0101) Income Tax - Resident Individual',
+        fallbackSubHeadId: '2',
+    },
+    income_tax_non_resident_individual: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Non-Resident Individual/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0102) Income Tax - Non-Resident Individual',
+        fallbackSubHeadId: '3',
+    },
+    income_tax_company: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Company/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: 'Income Tax - Company',
+        fallbackSubHeadId: '5',
+    },
+    paye: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /PAYE/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: 'Income Tax - PAYE',
+        fallbackSubHeadId: '7',
+    },
+    vat: {
+        headValue: 'VAT',
+        headLabelRegex: /^VAT$/i,
+        subHeadLabelRegex: /Value Added Tax/i,
+        obligationType: 'VAT',
+        defaultTaxTypeLabel: '(0201) Value Added Tax (VAT)',
+        fallbackSubHeadId: '9',
+    },
+    capital_gains_tax: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Capital Gain/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0110) Capital Gain Tax (CGT)',
+        fallbackSubHeadId: '32',
+    },
+    digital_asset_tax: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Digital Asset/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0145) Digital Asset Tax (DAT)',
+        fallbackSubHeadId: '37',
+    },
+    advance_tax: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Advance Tax/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0501) Advance Tax',
+        fallbackSubHeadId: '36',
+    },
+    withholding: {
+        headValue: 'IT',
+        headLabelRegex: /^Income Tax$/i,
+        subHeadLabelRegex: /Withholding/i,
+        obligationType: 'IT',
+        defaultTaxTypeLabel: '(0105) Income Tax - Withholding',
+        fallbackSubHeadId: '6',
+    },
+    excise_duty: {
+        headValue: 'EXCISE',
+        headLabelRegex: /^Excise$/i,
+        subHeadLabelRegex: /Excise/i,
+        obligationType: 'EXCISE',
+        defaultTaxTypeLabel: 'Excise Duty',
+        fallbackSubHeadId: '18',
     },
 };
 
@@ -120,7 +202,8 @@ export class TaxFormInteractor {
         // The browser uses these to populate the cmbTaxSubHead dropdown when
         // Tax Head = Income Tax is selected.
         const taxSubHeadValue = resolveSubHeadFromDwrResponse(fetchTaxpayerResponse, config.subHeadLabelRegex)
-            ?? await this.resolveSubHeadValue(html, dwrIds, taxPayerId, config.subHeadLabelRegex);
+            ?? await this.resolveSubHeadValue(html, dwrIds, taxPayerId, config.subHeadLabelRegex)
+            ?? config.fallbackSubHeadId;
 
         if (!taxSubHeadValue) {
             throw new KraError(
@@ -252,14 +335,6 @@ export class TaxFormInteractor {
         const value = this.resolveSelectValue($, '#cmbTaxSubHead', labelRegex);
         if (value) {
             return value;
-        }
-
-        // Fallback values captured from KRA portal (see KRA_TAX_HEAD_REFERENCE.md).
-        if (labelRegex.test('Turnover Tax')) {
-            return '8';
-        }
-        if (labelRegex.test('Rent Income')) {
-            return '33';
         }
 
         return undefined;

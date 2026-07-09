@@ -115,13 +115,16 @@ export async function solveCaptchaWithGemma4Buffer(
     } = {}
 ): Promise<string> {
     const openCodeApiKey = process.env.OPENCODE_API_KEY ?? '';
+    const openCodeEnabled = process.env.OPENCODE_ENABLED === 'true';
     const openCodeModel = process.env.OPENCODE_MODEL ?? 'opencode-go/kimi-k2.7-code';
     const gemmaApiKey = options.apiKey ?? process.env.GEMMA4_API_KEY ?? '';
     const gemmaPrimaryModel = options.model ?? process.env.GEMMA4_MODEL ?? 'gemma-4-31b-it';
     const gemmaFallbackModel = 'gemini-3.5-flash';
 
-    // Try OpenCode first.
-    if (openCodeApiKey) {
+    // Try OpenCode first, but only when explicitly enabled — the default endpoint
+    // (api.opencode.co) has been unreliable (TLS handshake failures), so we don't
+    // want to waste retry budget on it unless the operator opts in.
+    if (openCodeApiKey && openCodeEnabled) {
         const answer = await solveCaptchaWithOpenCode(imageBuffer, openCodeApiKey, openCodeModel, options);
         if (answer) return answer;
     }

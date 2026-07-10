@@ -885,6 +885,24 @@ router.post('/generate-tot-zip', async (req: Request, res: Response): Promise<vo
         await uploadFile(zipFile, gcsPath, { contentType: 'application/zip' });
         const signedUrl = await getSignedDownloadUrl(gcsPath, 60);
 
+        // Persist TOT zip info to the client doc so the Firestore onSnapshot listener
+        // picks it up and the UI doesn't lose it when clients are re-fetched.
+        const clientId = req.body.clientId;
+        if (clientId) {
+            try {
+                const { adminDb } = await import('../lib/firebaseAdmin');
+                await adminDb.collection('clients').doc(clientId).update({
+                    tot: 'generated',
+                    totZipUrl: signedUrl,
+                    totZipLabel: friendlyName,
+                    totZipGcsPath: gcsPath,
+                    lastGeneratedAt: new Date().toISOString(),
+                });
+            } catch (persistErr: any) {
+                console.error('Failed to persist TOT zip info to client doc:', persistErr.message);
+            }
+        }
+
         res.json({
             success: true,
             totInfo: {

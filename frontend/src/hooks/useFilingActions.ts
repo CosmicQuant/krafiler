@@ -636,7 +636,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             const response = await apiFetch('/tax/generate-tot-zip', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ kraPin: client.pin, year: yearP, month, turnover: parseFloat(turnoverVal), clientName: client.name }),
+                body: JSON.stringify({ kraPin: client.pin, year: yearP, month, turnover: parseFloat(turnoverVal), clientName: client.name, clientId: client.id }),
             });
             if (!response.ok) { const errResult = await response.json().catch(() => ({})); throw new Error(errResult.error || 'Failed to generate TOT ZIP'); }
             const data = await response.json();

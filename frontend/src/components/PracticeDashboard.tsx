@@ -67,6 +67,11 @@ export default function PracticeDashboard() {
   const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(null);
   const hasObligation = (val?: string | null) => !!val && val !== 'na';
 
+  // Clear selected client when the sidebar view changes so desk views render.
+  useEffect(() => {
+    setSelectedClient(null);
+  }, [view]);
+
   const handleGoToPayrollView = (client: ClientObligation) => {
     navigate(`/dashboard/client/${client.id}/payroll`);
   };

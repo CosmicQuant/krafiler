@@ -2119,12 +2119,43 @@ export async function processFilingJob(job: JobContext): Promise<{
         isVatUpload;
 
     if (useHttpEngine && isHttpSupportedObligation) {
+        const maxHttpAttempts = 2; // 1 initial attempt + 1 retry
+        let httpResult: any;
+
+        for (let httpAttempt = 1; httpAttempt <= maxHttpAttempts; httpAttempt++) {
+            try {
+                if (httpAttempt > 1) {
+                    await appendJobLog(job, `Retrying HTTP engine (attempt ${httpAttempt}/${maxHttpAttempts})...`, { progress: 10, level: 'info' });
+                }
+                httpResult = await processFilingViaHttp(job);
+                break; // success — exit the retry loop
+            } catch (httpErr) {
+                const message = httpErr instanceof Error ? httpErr.message : String(httpErr);
+
+                // Do not retry on non-retryable errors (bad credentials, validation errors from KRA).
+                const isRetryable = !(httpErr as any)?.retryable === false
+                    && !/credential|invalid.*password|account.*locked|validation.*error|file.*structural/i.test(message);
+
+                if (httpAttempt < maxHttpAttempts && isRetryable) {
+                    await appendJobLog(job, `HTTP engine attempt ${httpAttempt} failed: ${message}. Will retry once more.`, { progress: 10, level: 'warn' });
+                    console.warn(`[Worker][${jobId}] HTTP engine attempt ${httpAttempt} failed, retrying:`, message);
+                    // Brief delay before retry to allow transient network/captcha issues to clear.
+                    await new Promise((r) => setTimeout(r, 2000));
+                    continue;
+                }
+
+                await appendJobLog(job, `HTTP engine failed after ${httpAttempt} attempt(s): ${message}`, { progress: 10, level: 'error' });
+                console.error(`[Worker][${jobId}] HTTP engine failed after ${httpAttempt} attempt(s):`, message);
+                throw httpErr;
+            }
+        }
+
         try {
-            const httpResult = await processFilingViaHttp(job);
+            const httpResultFinal = httpResult;
 
             // Store PRN results and GCS path in Firestore for download route lookup.
-            if (printPrnOnly && (httpResult as any).prnResults) {
-                const prnResults = (httpResult as any).prnResults;
+            if (printPrnOnly && (httpResultFinal as any).prnResults) {
+                const prnResults = (httpResultFinal as any).prnResults;
                 const primaryPrn = prnResults[0];
 
                 await jobStore.updateJob(jobId, {
@@ -2173,9 +2204,9 @@ export async function processFilingJob(job: JobContext): Promise<{
                         await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} PRN tracking`, { progress: 95 });
                     }
                 }
-            } else if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResult as any).vatPrepareResult) {
+            } else if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResultFinal as any).vatPrepareResult) {
                 // VAT prepare-only: save generated ZIP info to client doc for the "File VAT" button.
-                const vatResult = (httpResult as any).vatPrepareResult;
+                const vatResult = (httpResultFinal as any).vatPrepareResult;
 
                 if (payload.clientId) {
                     // Generate signed URLs from GCS paths if available.
@@ -2227,8 +2258,8 @@ export async function processFilingJob(job: JobContext): Promise<{
                         [`${obligationCol}LastFiledDate`]: new Date().toISOString(),
                     };
 
-                    if (httpResult.receiptPath) {
-                        clientUpdate[`${obligationCol}ReceiptUrl`] = httpResult.receiptPath;
+                    if (httpResultFinal.receiptPath) {
+                        clientUpdate[`${obligationCol}ReceiptUrl`] = httpResultFinal.receiptPath;
                     }
 
                     const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
@@ -2244,8 +2275,8 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
 
             // For PRN-only jobs, return the PRN URL as prnPath for the frontend.
-            if (printPrnOnly && (httpResult as any).prnResults) {
-                const primaryPrn = (httpResult as any).prnResults[0];
+            if (printPrnOnly && (httpResultFinal as any).prnResults) {
+                const primaryPrn = (httpResultFinal as any).prnResults[0];
                 let prnUrl = primaryPrn?.prnPath?.replace(/\\/g, '/');
                 try {
                     if (primaryPrn?.prnGcsPath) {
@@ -2255,17 +2286,17 @@ export async function processFilingJob(job: JobContext): Promise<{
                     console.error(`[Worker][${jobId}] Failed to generate result PRN signed URL:`, e.message);
                 }
                 return {
-                    ...httpResult,
+                    ...httpResultFinal,
                     receiptPath: '',
                     receiptNumber: null,
                     prnPath: prnUrl,
-                    prnResults: (httpResult as any).prnResults,
+                    prnResults: (httpResultFinal as any).prnResults,
                 };
             }
 
             // For VAT prepare-only and current-month download jobs, return the VAT summary and ZIP URLs for the frontend.
-            if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResult as any).vatPrepareResult) {
-                const vatResult = (httpResult as any).vatPrepareResult;
+            if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResultFinal as any).vatPrepareResult) {
+                const vatResult = (httpResultFinal as any).vatPrepareResult;
                 let generatedZipUrl = vatResult.generatedZipUrl;
                 let sourcePackageUrl = vatResult.sourcePackageUrl;
                 try {
@@ -2279,7 +2310,7 @@ export async function processFilingJob(job: JobContext): Promise<{
                     console.error(`[Worker][${jobId}] Failed to generate VAT result signed URLs:`, e.message);
                 }
                 return {
-                    ...httpResult,
+                    ...httpResultFinal,
                     receiptPath: '',
                     receiptNumber: null,
                     vatSummary: vatResult.vatSummary,
@@ -2291,22 +2322,22 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
 
             await setJobStep(job, 98, 'Dispatching completion notification');
-            if (httpResult.receiptPath) {
+            if (httpResultFinal.receiptPath) {
                 await sendReceiptNotification({
                     userId,
                     jobId,
                     kraPin,
-                    receiptPath: httpResult.receiptPath,
+                    receiptPath: httpResultFinal.receiptPath,
                     completedAt: new Date().toISOString(),
                 });
             }
 
-            return httpResult;
-        } catch (httpErr) {
-            const message = httpErr instanceof Error ? httpErr.message : String(httpErr);
-            await appendJobLog(job, `HTTP engine failed, falling back to Playwright: ${message}`, { progress: 10, level: 'warn' });
-            console.warn(`[Worker][${jobId}] HTTP engine failed, falling back to Playwright:`, message);
-            // Fall through to existing Playwright implementation below
+            return httpResultFinal;
+        } catch (postProcessErr) {
+            const message = postProcessErr instanceof Error ? postProcessErr.message : String(postProcessErr);
+            await appendJobLog(job, `HTTP engine post-processing failed: ${message}`, { progress: 10, level: 'error' });
+            console.error(`[Worker][${jobId}] HTTP engine post-processing failed:`, message);
+            throw postProcessErr;
         }
     }
 

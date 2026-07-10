@@ -2115,7 +2115,8 @@ export async function processFilingJob(job: JobContext): Promise<{
         taxObligationType === 'turnover_tax' ||
         (printPrnOnly && taxObligationType === 'monthly_rental_income') ||
         isVatPrepareOnly ||
-        isVatCurrentMonthDownload;
+        isVatCurrentMonthDownload ||
+        isVatUpload;
 
     if (useHttpEngine && isHttpSupportedObligation) {
         try {

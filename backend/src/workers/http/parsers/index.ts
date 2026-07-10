@@ -128,6 +128,9 @@ export function parseLoginOutcome(
         /captcha.*incorrect/i,
         /account\s+(?:is\s+)?locked/i,
         /remaining\s+number\s+of\s+attempts/i,
+        /enter\s+answer\s+of\s+the\s+arithmetic/i,
+        /please\s+enter\s+the\s+captcha/i,
+        /invalid\s+security\s+stamp/i,
     ];
 
     for (const pattern of failurePatterns) {
@@ -137,12 +140,23 @@ export function parseLoginOutcome(
         }
     }
 
+    // If the login form is still present (password field, captcha image), the login failed.
+    // This catches wrong-captcha responses where KRA returns the login page without
+    // an explicit error message.
+    const hasLoginForm = /id=["']xx[Zz]TT9p2wQ["']/i.test(html) ||
+        /name=["']xx[Zz]TT9p2wQ["']/i.test(html) ||
+        /generateCaptchaServlet/i.test(html);
+    if (hasLoginForm) {
+        return { type: 'failure', message: 'Login form still present after submission (likely wrong captcha or credentials)' };
+    }
+
     const successPatterns = [
-        /logout/i,
         /homePageLink/i,
-        /returns/i,
-        /dashboard/i,
-        /welcome/i,
+        /logout/i,
+        /showOnlineServicesHome/i,
+        /afterLoginHomeLayout/i,
+        /welcome\s+/i,
+        /pinNo\s*=/i,
     ];
 
     const hasSuccessIndicator = successPatterns.some((pattern) => pattern.test(text));

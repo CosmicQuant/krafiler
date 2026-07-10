@@ -7,6 +7,7 @@ import { CaptureContext, CaptureOptions, CaptureUploader } from '../capture';
 import { BaseHttpFilingService, FilingExecuteResult } from './BaseHttpFilingService';
 import { NilReturnSubmitter } from './NilReturnSubmitter';
 import { TotReturnSubmitter } from './TotReturnSubmitter';
+import { VatReturnSubmitter } from './VatReturnSubmitter';
 import { VatPrepareService, VatPrepareResult } from './VatPrepareService';
 import { HttpPrnService } from '../payment-registration/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
@@ -174,6 +175,26 @@ export class HttpFilingOrchestrator {
                     receiptNumber: null,
                     credentialUpdate: null,
                     vatPrepareResult: vatResult,
+                };
+            }
+
+            // VAT upload jobs: login → navigate → select VAT obligation → upload generated ZIP → parse receipt.
+            const isVatUpload = this.payload.taxObligationType === 'vat' && !!(this.payload as any).vatZipUrl && !(this.payload as any).prepareVatOnly && !(this.payload as any).vatCurrentMonthDownload;
+            if (isVatUpload) {
+                const navigator = new ReturnsNavigator(session, this.job);
+                await navigator.navigateToReturns(false);
+                await navigator.selectReturnObligation('vat', this.payload.kraPin);
+
+                const vatSubmitter = new VatReturnSubmitter(session, this.job);
+                const input = this.buildServiceInput();
+                const result = await vatSubmitter.execute(input);
+
+                await setJobStep(this.job, 100, 'VAT return filed successfully via HTTP');
+                await this.finalizeCapture('success');
+
+                return {
+                    ...result,
+                    credentialUpdate: null,
                 };
             }
 

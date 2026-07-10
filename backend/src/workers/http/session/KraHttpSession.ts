@@ -77,6 +77,14 @@ export class KraHttpSession {
         return response;
     }
 
+    async postMultipartBuffer(path: string, formData: any, options?: KraHttpRequestOptions): Promise<Buffer> {
+        // If formData is a Buffer (raw multipart body), use postRawBuffer directly.
+        if (Buffer.isBuffer(formData)) {
+            return this.client.postRawBuffer(path, formData, options);
+        }
+        return this.client.postMultipartBuffer(path, formData, options);
+    }
+
     async snapshotHtml(step: CaptureStep, html?: string): Promise<void> {
         if (!this.captureContext) return;
         const content = html ?? this.lastResponse ?? '';

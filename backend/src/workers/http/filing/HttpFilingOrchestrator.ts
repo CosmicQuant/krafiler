@@ -7,6 +7,7 @@ import { CaptureContext, CaptureOptions, CaptureUploader } from '../capture';
 import { BaseHttpFilingService, FilingExecuteResult } from './BaseHttpFilingService';
 import { NilReturnSubmitter } from './NilReturnSubmitter';
 import { TotReturnSubmitter } from './TotReturnSubmitter';
+import { VatPrepareService, VatPrepareResult } from './VatPrepareService';
 import { HttpPrnService } from '../payment-registration/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
 
@@ -14,6 +15,7 @@ export interface HttpFilingOrchestratorResult extends FilingExecuteResult {
     credentialUpdate: null;
     prnPath?: string;
     prnResults?: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string }>;
+    vatPrepareResult?: VatPrepareResult;
 }
 
 function shouldCapture(payload: NilReturnPayload): boolean {
@@ -143,6 +145,35 @@ export class HttpFilingOrchestrator {
                         prnPath: prnResult.receiptPath,
                         prnGcsPath: prnResult.receiptGcsPath,
                     }],
+                };
+            }
+
+            // VAT prepare-only jobs (both prepareVatOnly and vatCurrentMonthDownload):
+            // login → extract credit/withholding → download ZIP → generate return ZIP.
+            // VatPrepareService handles its own navigation (credit extraction navigates away from eReturns).
+            const isVatPrepareOnly = this.payload.taxObligationType === 'vat' && (this.payload as any).prepareVatOnly === true && (this.payload as any).vatCurrentMonthDownload !== true;
+            const isVatCurrentMonth = this.payload.taxObligationType === 'vat' && (this.payload as any).vatCurrentMonthDownload === true;
+            if (isVatPrepareOnly || isVatCurrentMonth) {
+                const vatPrepareService = new VatPrepareService(session, this.job);
+                const vatResult = await vatPrepareService.execute({
+                    kraPin: this.payload.kraPin,
+                    clientName: this.payload.clientName ?? this.payload.kraPin,
+                    periodFrom: this.payload.periodFrom,
+                    periodTo: this.payload.periodTo,
+                    vatPreviousCredit: Number((this.payload as any).vatPreviousCredit ?? 0) || 0,
+                    withholdingAmount: Number((this.payload as any).withholdingAmount ?? 0) || undefined,
+                    sectionBWithoutPinSales: Number((this.payload as any).sectionBWithoutPinSales ?? 0) || undefined,
+                    currentMonthDownload: isVatCurrentMonth,
+                });
+
+                await setJobStep(this.job, 100, isVatCurrentMonth ? 'Current-month VAT preparation completed via HTTP' : 'VAT preparation completed via HTTP');
+                await this.finalizeCapture('success');
+
+                return {
+                    receiptPath: '',
+                    receiptNumber: null,
+                    credentialUpdate: null,
+                    vatPrepareResult: vatResult,
                 };
             }
 

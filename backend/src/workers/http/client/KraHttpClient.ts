@@ -183,6 +183,39 @@ export class KraHttpClient {
         }
     }
 
+    async postMultipartBuffer(
+        path: string,
+        formData: any,
+        options: KraHttpRequestOptions = {}
+    ): Promise<Buffer> {
+        const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
+        try {
+            const response = await got.post(url, {
+                cookieJar: this.cookieJar,
+                timeout: { request: options.timeout ?? this.timeout },
+                body: formData,
+                responseType: 'buffer',
+                headers: {
+                    ...this.defaultHeaders(),
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    Referer: `${this.baseUrl}eReturns.htm`,
+                    Origin: 'https://itax.kra.go.ke',
+                    'Sec-Fetch-Site': 'same-origin',
+                    ...options.headers,
+                },
+                http2: false,
+                followRedirect: true,
+                decompress: true,
+            });
+            await this.recordCapture(step, 'POST', url, options.headers, '[multipart/form-data]', response.statusCode, response.statusMessage, response.headers, response.body);
+            return response.body;
+        } catch (error: any) {
+            await this.recordErrorCapture(step, 'POST', url, options.headers, '[multipart/form-data]', error);
+            throw this.normalizeError(error, url);
+        }
+    }
+
     async postRaw(
         path: string,
         rawBody: string | Buffer,
@@ -195,6 +228,35 @@ export class KraHttpClient {
                 cookieJar: this.cookieJar,
                 timeout: { request: options.timeout ?? this.timeout },
                 body: rawBody,
+                headers: {
+                    ...this.defaultHeaders(),
+                    ...options.headers,
+                },
+                http2: false,
+                followRedirect: true,
+                decompress: true,
+            });
+            await this.recordCapture(step, 'POST', url, options.headers, rawBody, response.statusCode, response.statusMessage, response.headers, response.body);
+            return response.body;
+        } catch (error: any) {
+            await this.recordErrorCapture(step, 'POST', url, options.headers, rawBody, error);
+            throw this.normalizeError(error, url);
+        }
+    }
+
+    async postRawBuffer(
+        path: string,
+        rawBody: string | Buffer,
+        options: KraHttpRequestOptions = {}
+    ): Promise<Buffer> {
+        const url = this.resolveUrl(path);
+        const step = options.step ?? 'custom';
+        try {
+            const response = await got.post(url, {
+                cookieJar: this.cookieJar,
+                timeout: { request: options.timeout ?? this.timeout },
+                body: rawBody,
+                responseType: 'buffer',
                 headers: {
                     ...this.defaultHeaders(),
                     ...options.headers,

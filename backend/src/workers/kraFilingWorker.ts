@@ -2113,7 +2113,9 @@ export async function processFilingJob(job: JobContext): Promise<{
     const isHttpSupportedObligation =
         isNilReturnExplicit ||
         taxObligationType === 'turnover_tax' ||
-        (printPrnOnly && taxObligationType === 'monthly_rental_income');
+        (printPrnOnly && taxObligationType === 'monthly_rental_income') ||
+        isVatPrepareOnly ||
+        isVatCurrentMonthDownload;
 
     if (useHttpEngine && isHttpSupportedObligation) {
         try {
@@ -2170,6 +2172,42 @@ export async function processFilingJob(job: JobContext): Promise<{
                         await appendJobLog(job, `Updated client ${obligationCol.toUpperCase()} PRN tracking`, { progress: 95 });
                     }
                 }
+            } else if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResult as any).vatPrepareResult) {
+                // VAT prepare-only: save generated ZIP info to client doc for the "File VAT" button.
+                const vatResult = (httpResult as any).vatPrepareResult;
+
+                if (payload.clientId) {
+                    // Generate signed URLs from GCS paths if available.
+                    let generatedZipUrl = vatResult.generatedZipUrl;
+                    let sourcePackageUrl = vatResult.sourcePackageUrl;
+                    try {
+                        if (vatResult.generatedZipGcsPath) {
+                            generatedZipUrl = await getSignedDownloadUrl(vatResult.generatedZipGcsPath, 60 * 24 * 7);
+                        }
+                        if (vatResult.sourcePackageGcsPath) {
+                            sourcePackageUrl = await getSignedDownloadUrl(vatResult.sourcePackageGcsPath, 60 * 24 * 7);
+                        }
+                    } catch (e: any) {
+                        console.error(`[Worker][${jobId}] Failed to generate VAT ZIP signed URLs:`, e.message);
+                    }
+
+                    const clientUpdate: Record<string, any> = {
+                        vat: 'generated',
+                        status: { vat: 'generated' },
+                        vatZipUrl: generatedZipUrl,
+                        vatZipLabel: vatResult.generatedZipLabel,
+                        vatSourcePackageUrl: sourcePackageUrl,
+                        vatSourcePackageLabel: vatResult.sourcePackageLabel,
+                        vatSummary: vatResult.vatSummary,
+                        vatPreparedAt: new Date().toISOString(),
+                    };
+                    const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
+                    if (periodMatch) {
+                        clientUpdate.vatPeriod = `${periodMatch[1]}-${periodMatch[2]}`;
+                    }
+                    await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);
+                    await appendJobLog(job, `Saved prepared VAT ZIP to client workspace`, { progress: 95 });
+                }
             } else if (payload.clientId && !printPrnOnly) {
                 // Update client tracking for successful HTTP filings (not PRN-only jobs).
                 const obligationCol =
@@ -2221,6 +2259,33 @@ export async function processFilingJob(job: JobContext): Promise<{
                     receiptNumber: null,
                     prnPath: prnUrl,
                     prnResults: (httpResult as any).prnResults,
+                };
+            }
+
+            // For VAT prepare-only and current-month download jobs, return the VAT summary and ZIP URLs for the frontend.
+            if ((isVatPrepareOnly || isVatCurrentMonthDownload) && (httpResult as any).vatPrepareResult) {
+                const vatResult = (httpResult as any).vatPrepareResult;
+                let generatedZipUrl = vatResult.generatedZipUrl;
+                let sourcePackageUrl = vatResult.sourcePackageUrl;
+                try {
+                    if (vatResult.generatedZipGcsPath) {
+                        generatedZipUrl = await getSignedDownloadUrl(vatResult.generatedZipGcsPath, 60 * 24 * 7);
+                    }
+                    if (vatResult.sourcePackageGcsPath) {
+                        sourcePackageUrl = await getSignedDownloadUrl(vatResult.sourcePackageGcsPath, 60 * 24 * 7);
+                    }
+                } catch (e: any) {
+                    console.error(`[Worker][${jobId}] Failed to generate VAT result signed URLs:`, e.message);
+                }
+                return {
+                    ...httpResult,
+                    receiptPath: '',
+                    receiptNumber: null,
+                    vatSummary: vatResult.vatSummary,
+                    generatedZipUrl,
+                    generatedZipLabel: vatResult.generatedZipLabel,
+                    sourcePackageUrl,
+                    sourcePackageLabel: vatResult.sourcePackageLabel,
                 };
             }
 

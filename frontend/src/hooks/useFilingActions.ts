@@ -473,6 +473,11 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const fileNil = useCallback(async (client: ClientObligation) => {
         const d = getD();
+        const activeJobs = d.getActiveJobs();
+        if (isPendingFilingJob(activeJobs[client.id])) {
+            console.log(`A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
+            return;
+        }
         const nilSelections = d.getNilSelections();
         const sel = nilSelections[client.id];
         if (!sel || !sel.type || !sel.periodFrom || !sel.periodTo) {
@@ -518,6 +523,11 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const fileMri = useCallback(async (client: ClientObligation) => {
         const d = getD();
+        const activeJobs = d.getActiveJobs();
+        if (isPendingFilingJob(activeJobs[client.id])) {
+            console.log(`A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
+            return;
+        }
         const amountStr = d.getMriInputVals()[client.id];
         const amount = amountStr ? parseFloat(amountStr) : 0;
         if (isNaN(amount) || amount <= 0) {
@@ -561,6 +571,11 @@ export function useFilingActions(deps: FilingActionsDeps) {
 
     const fileTot = useCallback(async (client: ClientObligation) => {
         const d = getD();
+        const activeJobs = d.getActiveJobs();
+        if (isPendingFilingJob(activeJobs[client.id])) {
+            console.log(`A filing is already ${activeJobs[client.id].state === 'active' ? 'in progress' : 'queued'} for ${client.name}.`);
+            return;
+        }
         const amountStr = d.getTotInputVals()[client.id];
         const amount = amountStr ? parseFloat(amountStr) : 0;
         if (isNaN(amount) || amount <= 0) {

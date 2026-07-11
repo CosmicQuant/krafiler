@@ -128,6 +128,22 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         defaultTaxTypeLabel: 'Excise Duty',
         fallbackSubHeadId: '18',
     },
+    nita: {
+        headValue: 'AGENCY',
+        headLabelRegex: /^Agency Revenue$/i,
+        subHeadLabelRegex: /NITA Levy/i,
+        obligationType: 'AGENCY',
+        defaultTaxTypeLabel: 'NITA Levy',
+        fallbackSubHeadId: '40',
+    },
+    affordable_housing: {
+        headValue: 'AGENCY',
+        headLabelRegex: /^Agency Revenue$/i,
+        subHeadLabelRegex: /Housing Levy/i,
+        obligationType: 'AGENCY',
+        defaultTaxTypeLabel: 'Affordable Housing Levy',
+        fallbackSubHeadId: '44',
+    },
 };
 
 export class TaxFormInteractor {

@@ -16,13 +16,8 @@ interface PayrollViewShellProps {
 }
 
 export function PayrollViewShell({ clients, initialClient }: PayrollViewShellProps) {
-    const hasObligation = (val?: string | null) => !!val && val !== 'na';
     const payrollClients = useMemo(
-        () => clients.filter((c) =>
-            hasObligation(c.paye) || hasObligation(c.nssf) || hasObligation(c.sha) ||
-            // Include clients whose obligations haven't been explicitly set to 'na'
-            (c.paye === undefined || c.nssf === undefined || c.sha === undefined)
-        ),
+        () => clients.filter((c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na'),
         [clients]
     );
 

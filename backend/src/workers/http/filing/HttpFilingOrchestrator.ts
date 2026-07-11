@@ -8,6 +8,8 @@ import { BaseHttpFilingService, FilingExecuteResult } from './BaseHttpFilingServ
 import { NilReturnSubmitter } from './NilReturnSubmitter';
 import { TotReturnSubmitter } from './TotReturnSubmitter';
 import { VatReturnSubmitter } from './VatReturnSubmitter';
+import { MriReturnSubmitter } from './MriReturnSubmitter';
+import { PayeReturnSubmitter } from './PayeReturnSubmitter';
 import { VatPrepareService, VatPrepareResult } from './VatPrepareService';
 import { HttpPrnService } from '../payment-registration/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
@@ -111,6 +113,8 @@ export class HttpFilingOrchestrator {
                     'advance_tax',
                     'withholding',
                     'excise_duty',
+                    'nita',
+                    'affordable_housing',
                 ];
                 if (!supportedPrnTypes.includes(this.payload.taxObligationType)) {
                     throw new KraError(
@@ -119,33 +123,75 @@ export class HttpFilingOrchestrator {
                     );
                 }
 
-                const prnService = new HttpPrnService({ session, job: this.job });
-                const prnResult = await prnService.execute({
-                    kraPin: this.payload.kraPin,
-                    kraPassword: this.payload.kraPassword || '',
-                    taxObligationType: this.payload.taxObligationType,
-                    periodFrom: this.payload.periodFrom,
-                    periodTo: this.payload.periodTo,
-                    clientId: this.payload.clientId,
-                    clientName: this.payload.clientName,
-                    otpCode: this.payload.otpCode,
-                    userId: this.job.data.userId,
-                    jobId: this.job.data.jobId,
-                });
+                // PAYE PRN requests generate 3 PRNs: PAYE, NITA, AHL.
+                // Other tax types generate a single PRN.
+                const prnTaxTypes: Array<{ taxType: string; label: string }> = [];
+                if (this.payload.taxObligationType === 'paye') {
+                    prnTaxTypes.push(
+                        { taxType: 'paye', label: 'PAYE' },
+                        { taxType: 'nita', label: 'NITA Levy' },
+                        { taxType: 'affordable_housing', label: 'Housing Levy' },
+                    );
+                } else {
+                    prnTaxTypes.push({ taxType: this.payload.taxObligationType, label: this.payload.taxObligationType });
+                }
 
-                await setJobStep(this.job, 100, `PRN ${prnResult.prnNumber} generated successfully via HTTP`);
+                const allPrnResults: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
+                let hasAtLeastOneSuccess = false;
+
+                for (const prnConfig of prnTaxTypes) {
+                    try {
+                        await appendJobLog(this.job, `Generating PRN for ${prnConfig.label}...`, { progress: 80 });
+
+                        const prnService = new HttpPrnService({ session, job: this.job });
+                        const prnResult = await prnService.execute({
+                            kraPin: this.payload.kraPin,
+                            kraPassword: this.payload.kraPassword || '',
+                            taxObligationType: prnConfig.taxType as any,
+                            periodFrom: this.payload.periodFrom,
+                            periodTo: this.payload.periodTo,
+                            clientId: this.payload.clientId,
+                            clientName: this.payload.clientName,
+                            otpCode: this.payload.otpCode,
+                            userId: this.job.data.userId,
+                            jobId: this.job.data.jobId,
+                        });
+
+                        allPrnResults.push({
+                            taxType: prnConfig.taxType,
+                            prnPath: prnResult.receiptPath,
+                            prnGcsPath: prnResult.receiptGcsPath,
+                        });
+                        hasAtLeastOneSuccess = true;
+
+                        await appendJobLog(this.job, `PRN ${prnResult.prnNumber} generated for ${prnConfig.label}`, { progress: 85 });
+                    } catch (prnErr: any) {
+                        // Don't fail the entire job if one PRN type fails (e.g., no PAYE liability but NITA/AHL exist).
+                        const errMsg = prnErr instanceof Error ? prnErr.message : String(prnErr);
+                        await appendJobLog(this.job, `PRN generation failed for ${prnConfig.label}: ${errMsg}`, { progress: 85, level: 'warn' });
+                        console.warn(`[HTTP Filing] PRN failed for ${prnConfig.taxType}:`, errMsg);
+                        allPrnResults.push({
+                            taxType: prnConfig.taxType,
+                            error: errMsg,
+                        });
+                    }
+                }
+
+                if (!hasAtLeastOneSuccess) {
+                    const firstError = allPrnResults.find((r) => r.error)?.error || 'All PRN generations failed';
+                    throw new KraError(KraErrorCode.VALIDATION_ERROR, firstError, { retryable: false });
+                }
+
+                const successfulPrns = allPrnResults.filter((r) => !r.error);
+                await setJobStep(this.job, 100, `${successfulPrns.length}/${prnTaxTypes.length} PRN(s) generated successfully via HTTP`);
                 await this.finalizeCapture('success');
 
                 return {
-                    receiptPath: prnResult.receiptPath,
-                    receiptNumber: prnResult.prnNumber,
+                    receiptPath: successfulPrns[0]?.prnPath ?? '',
+                    receiptNumber: null,
                     credentialUpdate: null,
-                    prnPath: prnResult.receiptGcsPath ?? prnResult.receiptPath,
-                    prnResults: [{
-                        taxType: this.payload.taxObligationType as any,
-                        prnPath: prnResult.receiptPath,
-                        prnGcsPath: prnResult.receiptGcsPath,
-                    }],
+                    prnPath: successfulPrns[0]?.prnGcsPath ?? successfulPrns[0]?.prnPath,
+                    prnResults: allPrnResults,
                 };
             }
 
@@ -190,6 +236,46 @@ export class HttpFilingOrchestrator {
                 const result = await vatSubmitter.execute(input);
 
                 await setJobStep(this.job, 100, 'VAT return filed successfully via HTTP');
+                await this.finalizeCapture('success');
+
+                return {
+                    ...result,
+                    credentialUpdate: null,
+                };
+            }
+
+            // PAYE upload jobs: login → navigate → select PAYE obligation → upload ZIP → parse receipt.
+            const isPayeUpload = this.payload.taxObligationType === 'paye' && !!(this.payload as any).payeZipUrl && !isPrnOnly;
+            if (isPayeUpload) {
+                const navigator = new ReturnsNavigator(session, this.job);
+                await navigator.navigateToReturns(false);
+                await navigator.selectReturnObligation('paye', this.payload.kraPin);
+
+                const payeSubmitter = new PayeReturnSubmitter(session, this.job);
+                const input = this.buildServiceInput();
+                const result = await payeSubmitter.execute(input);
+
+                await setJobStep(this.job, 100, 'PAYE return filed successfully via HTTP');
+                await this.finalizeCapture('success');
+
+                return {
+                    ...result,
+                    credentialUpdate: null,
+                };
+            }
+
+            // MRI filing jobs (non-nil): login → navigate → select MRI obligation → fill rental amount → submit.
+            const isMriFiling = this.payload.taxObligationType === 'monthly_rental_income' && !isNil && !isPrnOnly;
+            if (isMriFiling) {
+                const navigator = new ReturnsNavigator(session, this.job);
+                await navigator.navigateToReturns(false);
+                await navigator.selectReturnObligation('monthly_rental_income', this.payload.kraPin);
+
+                const mriSubmitter = new MriReturnSubmitter(session, this.job);
+                const input = this.buildServiceInput();
+                const result = await mriSubmitter.execute(input);
+
+                await setJobStep(this.job, 100, 'MRI return filed successfully via HTTP');
                 await this.finalizeCapture('success');
 
                 return {

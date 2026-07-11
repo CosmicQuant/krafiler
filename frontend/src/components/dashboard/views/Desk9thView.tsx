@@ -54,10 +54,7 @@ export function Desk9thView({
   onSelectClient,
   onGoToPayrollView,
 }: Desk9thViewProps) {
-  const hasObligation = (val?: string | null) => !!val && val !== 'na';
-  const payrollClients = clients.filter(
-    (c) => hasObligation(c.paye) || hasObligation(c.nssf) || hasObligation(c.sha),
-  );
+  const payrollClients = clients.filter((c) => c.paye !== 'na' || c.nssf !== 'na' || c.sha !== 'na');
 
   return (
     <div className="mt-10">

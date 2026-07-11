@@ -2110,10 +2110,14 @@ export async function processFilingJob(job: JobContext): Promise<{
     // ── HTTP engine fast path for nil returns, Turnover Tax, and PRN generation (feature-flagged) ─
     const useHttpEngine = process.env.USE_HTTP_ENGINE === 'true' || (payload as any).useHttpEngine === true;
     const isNilReturnExplicit = (payload as any).isNil === true;
+    const isMriFiling = taxObligationType === 'monthly_rental_income' && !isNilReturnExplicit && !printPrnOnly;
+    const isPayeUploadJob = taxObligationType === 'paye' && !printPrnOnly && !!(payload as any).payeZipUrl;
     const isHttpSupportedObligation =
         isNilReturnExplicit ||
         taxObligationType === 'turnover_tax' ||
-        (printPrnOnly && taxObligationType === 'monthly_rental_income') ||
+        isMriFiling ||
+        isPayeUploadJob ||
+        (printPrnOnly && (taxObligationType === 'monthly_rental_income' || taxObligationType === 'vat' || taxObligationType === 'paye')) ||
         isVatPrepareOnly ||
         isVatCurrentMonthDownload ||
         isVatUpload;
@@ -2276,21 +2280,26 @@ export async function processFilingJob(job: JobContext): Promise<{
 
             // For PRN-only jobs, return the PRN URL as prnPath for the frontend.
             if (printPrnOnly && (httpResultFinal as any).prnResults) {
-                const primaryPrn = (httpResultFinal as any).prnResults[0];
-                let prnUrl = primaryPrn?.prnPath?.replace(/\\/g, '/');
-                try {
-                    if (primaryPrn?.prnGcsPath) {
-                        prnUrl = await getSignedDownloadUrl(primaryPrn.prnGcsPath, 60 * 24 * 7); // 7 days
+                const prnResults = (httpResultFinal as any).prnResults;
+                // Generate signed URLs for all PRN results.
+                const signedPrnResults = await Promise.all(prnResults.map(async (r: any) => {
+                    let prnUrl = r.prnPath?.replace(/\\/g, '/');
+                    try {
+                        if (r.prnGcsPath) {
+                            prnUrl = await getSignedDownloadUrl(r.prnGcsPath, 60 * 24 * 7); // 7 days
+                        }
+                    } catch (e: any) {
+                        console.error(`[Worker][${jobId}] Failed to generate PRN signed URL for ${r.taxType}:`, e.message);
                     }
-                } catch (e: any) {
-                    console.error(`[Worker][${jobId}] Failed to generate result PRN signed URL:`, e.message);
-                }
+                    return { ...r, prnPath: prnUrl };
+                }));
+
                 return {
                     ...httpResultFinal,
                     receiptPath: '',
                     receiptNumber: null,
-                    prnPath: prnUrl,
-                    prnResults: (httpResultFinal as any).prnResults,
+                    prnPath: signedPrnResults[0]?.prnPath,
+                    prnResults: signedPrnResults,
                 };
             }
 

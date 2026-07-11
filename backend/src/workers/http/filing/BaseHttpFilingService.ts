@@ -62,6 +62,17 @@ export abstract class BaseHttpFilingService {
     protected abstract obligationLabel(): string;
 
     /**
+     * Converts an ISO date (YYYY-MM-DD) to KRA portal format (DD/MM/YYYY).
+     */
+    protected formatPortalDate(isoDate: string): string {
+        const [year, month, day] = isoDate.split('-');
+        if (!year || !month || !day) {
+            throw new Error(`Invalid ISO date provided: "${isoDate}"`);
+        }
+        return `${day}/${month}/${year}`;
+    }
+
+    /**
      * Obligation-specific filing logic. Must return the receipt number and/or
      * a download URL/noticeId so the base class can fetch the receipt.
      */

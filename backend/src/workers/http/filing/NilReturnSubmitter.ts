@@ -177,12 +177,4 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
             return undefined;
         }
     }
-
-    private formatPortalDate(isoDate: string): string {
-        const [year, month, day] = isoDate.split('-');
-        if (!year || !month || !day) {
-            throw new Error(`Invalid ISO date provided: "${isoDate}"`);
-        }
-        return `${day}/${month}/${year}`;
-    }
 }

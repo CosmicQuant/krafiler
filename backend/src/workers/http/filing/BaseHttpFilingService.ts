@@ -76,7 +76,7 @@ export abstract class BaseHttpFilingService {
      * Obligation-specific filing logic. Must return the receipt number and/or
      * a download URL/noticeId so the base class can fetch the receipt.
      */
-    protected abstract file(input: Record<string, unknown>): Promise<FilingReceiptResult>;
+    public abstract file(input: Record<string, unknown>): Promise<FilingReceiptResult>;
 
     /**
      * Optional hook to run before filing. Default no-op.

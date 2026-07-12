@@ -329,7 +329,7 @@ export class TaxFormInteractor {
 
     private listSelectOptions($: cheerio.CheerioAPI, selector: string): string[] {
         return $(`${selector} option`)
-            .map((_, opt) => `${$(opt).attr('value')}:${$(opt).text().trim()}`)
+            .map((_: number, opt: any) => `${$(opt).attr('value')}:${$(opt).text().trim()}`)
             .get();
     }
 

@@ -164,7 +164,7 @@ export class VatReturnSubmitter extends BaseHttpFilingService {
 
         const $ = loadHtml(formHtml);
         const originalOption = $('select[name="cmbReturnType"] option, select#cmbReturnType option')
-            .filter((_, el) => /original/i.test($(el).text()))
+            .filter((_: number, el: any) => /original/i.test($(el).text()))
             .first();
 
         const value = originalOption.attr('value')?.trim();

@@ -174,8 +174,8 @@ export function parseObligationOptions(html: string, selectName?: string): Selec
     if (selectName) {
         select = $(`select[name="${selectName}"], select#${selectName}`).first();
     } else {
-        select = $('select').filter((_, el: any) => {
-            const text = $(el).find('option').map((_, opt: any) => $(opt).text()).get().join(' ');
+        select = $('select').filter((_: number, el: any) => {
+            const text = $(el).find('option').map((_: number, opt: any) => $(opt).text()).get().join(' ');
             return /income|vat|paye|turnover|rent|excise|nssf/i.test(text);
         }).first();
     }
@@ -219,7 +219,7 @@ export function parseFormFields(html: string, formSelector = 'form'): Record<str
 
     const fields: Record<string, string> = {};
 
-    form.find('input, select, textarea').each((_, el) => {
+    form.find('input, select, textarea').each((_: number, el: any) => {
         const $el = $(el);
         const name = $el.attr('name');
         if (!name) return;
@@ -317,7 +317,7 @@ export function parseSubmissionResult(html: string): {
 
     let downloadUrl: string | null = null;
     let noticeId: string | null = null;
-    $('a, input[type="button"], button').each((_, el) => {
+    $('a, input[type="button"], button').each((_: number, el: any) => {
         const onclick = ($(el).attr('onclick') ?? '').toLowerCase();
         const href = ($(el).attr('href') ?? '').toLowerCase();
         if (onclick.includes('downloadreturnsreceipt') || onclick.includes('downloadreceipt') || href.includes('downloadreturnsreceipt')) {
@@ -363,7 +363,7 @@ export function parseSubmissionResult(html: string): {
 function extractReceiptFunctionBody(html: string): string | null {
     const $ = loadHtml(html);
     let body: string | null = null;
-    $('script').each((_, el) => {
+    $('script').each((_: number, el: any) => {
         const text = $(el).text();
         if (text.includes('function downloadReturnsReceipt')) {
             const match = text.match(/function\s+downloadReturnsReceipt\s*\(\s*\)\s*\{([^}]+)\}/i);
@@ -394,7 +394,7 @@ export function parsePortalErrors(html: string): string[] {
     ];
 
     for (const selector of selectors) {
-        $(selector).each((_, el) => {
+        $(selector).each((_: number, el: any) => {
             const text = $(el).text().replace(/\s+/g, ' ').trim();
             if (text && !errors.includes(text)) {
                 errors.push(text);

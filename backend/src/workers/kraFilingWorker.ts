@@ -2263,7 +2263,19 @@ export async function processFilingJob(job: JobContext): Promise<{
                     };
 
                     if (httpResultFinal.receiptPath) {
-                        clientUpdate[`${obligationCol}ReceiptUrl`] = httpResultFinal.receiptPath;
+                        // Convert local receipt path to GCS signed URL for frontend download.
+                        let receiptUrl = httpResultFinal.receiptPath;
+                        try {
+                            // Read the GCS path from the job artifacts (set by BaseHttpFilingService.downloadReceipt).
+                            const jobDoc = await jobStore.getJob(jobId);
+                            const gcsPath = (jobDoc as any)?.artifacts?.receiptGcsPath;
+                            if (gcsPath) {
+                                receiptUrl = await getSignedDownloadUrl(gcsPath, 60 * 24 * 7); // 7 days
+                            }
+                        } catch (e: any) {
+                            console.error(`[Worker][${jobId}] Failed to generate receipt signed URL:`, e.message);
+                        }
+                        clientUpdate[`${obligationCol}ReceiptUrl`] = receiptUrl;
                     }
 
                     const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
@@ -2331,17 +2343,29 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
 
             await setJobStep(job, 98, 'Dispatching completion notification');
-            if (httpResultFinal.receiptPath) {
+            // Convert receipt path to GCS signed URL for the job result.
+            let finalReceiptPath = httpResultFinal.receiptPath;
+            if (finalReceiptPath) {
+                try {
+                    const jobDoc = await jobStore.getJob(jobId);
+                    const gcsPath = (jobDoc as any)?.artifacts?.receiptGcsPath;
+                    if (gcsPath) {
+                        finalReceiptPath = await getSignedDownloadUrl(gcsPath, 60 * 24 * 7);
+                    }
+                } catch (e: any) {
+                    console.error(`[Worker][${jobId}] Failed to generate final receipt signed URL:`, e.message);
+                }
+
                 await sendReceiptNotification({
                     userId,
                     jobId,
                     kraPin,
-                    receiptPath: httpResultFinal.receiptPath,
+                    receiptPath: finalReceiptPath,
                     completedAt: new Date().toISOString(),
                 });
             }
 
-            return httpResultFinal;
+            return { ...httpResultFinal, receiptPath: finalReceiptPath };
         } catch (postProcessErr) {
             const message = postProcessErr instanceof Error ? postProcessErr.message : String(postProcessErr);
             await appendJobLog(job, `HTTP engine post-processing failed: ${message}`, { progress: 10, level: 'error' });

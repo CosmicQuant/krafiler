@@ -78,7 +78,7 @@ export class PaymentRegistrationNavigator {
 
     private extractPreFormFields($: cheerio.CheerioAPI): Record<string, string> {
         const fields: Record<string, string> = {};
-        $('input[type="hidden"]').each((_, el) => {
+        $('input[type="hidden"]').each((_: number, el: any) => {
             const name = $(el).attr('name');
             const value = $(el).val()?.toString() ?? '';
             if (name) {

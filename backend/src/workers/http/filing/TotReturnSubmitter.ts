@@ -178,14 +178,6 @@ export class TotReturnSubmitter extends BaseHttpFilingService {
         };
     }
 
-    private formatPortalDate(isoDate: string): string {
-        const [year, month, day] = isoDate.split('-');
-        if (!year || !month || !day) {
-            throw new Error(`Invalid ISO date provided: "${isoDate}"`);
-        }
-        return `${day}/${month}/${year}`;
-    }
-
     private resolveReturnTypeValue(formHtml: string, currentValue?: string): string {
         // Prefer the currently selected value if it looks like an original return.
         if (currentValue && currentValue.trim()) {
@@ -195,7 +187,7 @@ export class TotReturnSubmitter extends BaseHttpFilingService {
         // Otherwise look for an option whose text contains "Original".
         const $ = loadHtml(formHtml);
         const originalOption = $('select[name="cmbReturnType"] option, select#cmbReturnType option')
-            .filter((_, el) => /original/i.test($(el).text()))
+            .filter((_: number, el: any) => /original/i.test($(el).text()))
             .first();
 
         const value = originalOption.attr('value')?.trim();

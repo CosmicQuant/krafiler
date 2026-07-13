@@ -64,19 +64,20 @@ function defaultFiledPeriods(): Record<TaxObligationType, string[]> {
  */
 function flattenClientStatus(data: any): Record<string, any> {
     const status = data?.status || {};
+    // Prefer top-level fields (where the worker stores them), fall back to status sub-object.
     return {
-        paye: status.paye ?? 'na',
-        nssf: status.nssf ?? 'na',
-        sha: status.sha ?? 'na',
-        vat: status.vat ?? 'na',
-        tot: status.tot ?? 'na',
-        mri: status.mri ?? 'na',
-        dst: status.dst ?? 'na',
-        eLevy: status.eLevy ?? 'na',
-        incomeTaxResidentIndividual: status.income_tax_resident_individual ?? 'na',
-        incomeTaxNonResidentIndividual: status.income_tax_non_resident_individual ?? 'na',
-        incomeTaxCompany: status.income_tax_company ?? 'na',
-        exciseDuty: status.excise_duty ?? 'na',
+        paye: data.paye ?? status.paye ?? 'na',
+        nssf: data.nssf ?? status.nssf ?? 'na',
+        sha: data.sha ?? status.sha ?? 'na',
+        vat: data.vat ?? status.vat ?? 'na',
+        tot: data.tot ?? status.tot ?? 'na',
+        mri: data.mri ?? status.mri ?? 'na',
+        dst: data.dst ?? status.dst ?? 'na',
+        eLevy: data.eLevy ?? status.eLevy ?? 'na',
+        incomeTaxResidentIndividual: data.incomeTaxResidentIndividual ?? status.income_tax_resident_individual ?? 'na',
+        incomeTaxNonResidentIndividual: data.incomeTaxNonResidentIndividual ?? status.income_tax_non_resident_individual ?? 'na',
+        incomeTaxCompany: data.incomeTaxCompany ?? status.income_tax_company ?? 'na',
+        exciseDuty: data.exciseDuty ?? status.excise_duty ?? 'na',
     };
 }
 

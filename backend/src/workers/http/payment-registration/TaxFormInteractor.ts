@@ -131,17 +131,17 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
     nita: {
         headValue: 'AGENCY',
         headLabelRegex: /^Agency Revenue$/i,
-        subHeadLabelRegex: /NITA Levy/i,
+        subHeadLabelRegex: /\(0512\).*NITA Levy|NITA Levy/i,
         obligationType: 'AGENCY',
-        defaultTaxTypeLabel: 'NITA Levy',
+        defaultTaxTypeLabel: '(0512) NITA Levy',
         fallbackSubHeadId: '40',
     },
     affordable_housing: {
         headValue: 'AGENCY',
         headLabelRegex: /^Agency Revenue$/i,
-        subHeadLabelRegex: /Housing Levy/i,
+        subHeadLabelRegex: /\(0511\).*Housing Levy|Housing Levy/i,
         obligationType: 'AGENCY',
-        defaultTaxTypeLabel: 'Affordable Housing Levy',
+        defaultTaxTypeLabel: '(0511) Housing Levy',
         fallbackSubHeadId: '44',
     },
 };

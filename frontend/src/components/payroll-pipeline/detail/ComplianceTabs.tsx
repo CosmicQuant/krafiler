@@ -384,9 +384,9 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     : activeConfig.key === 'mri' ? liveClient.mriReceiptUrl
                     : activeConfig.key === 'vat' ? liveClient.vatReceiptUrl
                     : null;
-                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
-                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
-                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
+                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye ?? liveClient.paye) === 'filed')
+                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf ?? liveClient.nssf) === 'filed')
+                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha ?? liveClient.sha) === 'filed')
                     : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
                     : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
                     : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
@@ -438,9 +438,9 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
 
                   if (prnEntries.length === 0) return null;
 
-                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye || liveClient.paye) === 'filed')
-                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf || liveClient.nssf) === 'filed')
-                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha || liveClient.sha) === 'filed')
+                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye ?? liveClient.paye) === 'filed')
+                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf ?? liveClient.nssf) === 'filed')
+                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha ?? liveClient.sha) === 'filed')
                     : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
                     : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
                     : activeConfig.key === 'vat' ? liveClient.vat === 'filed'

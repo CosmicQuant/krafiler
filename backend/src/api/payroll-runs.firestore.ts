@@ -1982,9 +1982,9 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
             shaFileUrl: client.generatedFiles?.shaFileUrl || null,
             shaFileLabel: client.generatedFiles?.shaFileLabel || null,
             statuses: {
-                paye: client.status?.paye || 'na',
-                nssf: client.status?.nssf || 'na',
-                sha: client.status?.sha || 'na',
+                paye: client.paye ?? client.status?.paye ?? 'na',
+                nssf: client.nssf ?? client.status?.nssf ?? 'na',
+                sha: client.sha ?? client.status?.sha ?? 'na',
             },
             amounts: {
                 payeAmount: client.amounts?.payeAmount || 0,

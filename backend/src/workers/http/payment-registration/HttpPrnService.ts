@@ -50,17 +50,23 @@ export class HttpPrnService {
     async execute(input: HttpPrnInput): Promise<HttpPrnResult> {
         await this.log('Starting HTTP PRN generation', 72);
 
-        const loginService = new HttpLoginService(this.session, this.job);
-        const loginResult = await loginService.execute(input.kraPin, input.kraPassword, input.otpCode);
+        // Skip login if the session is already authenticated (e.g., subsequent PRN types
+        // in a multi-PRN flow like PAYE + NITA + AHL share the same session).
+        if (!this.session.isAuthenticated()) {
+            const loginService = new HttpLoginService(this.session, this.job);
+            const loginResult = await loginService.execute(input.kraPin, input.kraPassword, input.otpCode);
 
-        if (loginResult.passwordExpired) {
-            throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
-        }
-        if (loginResult.mobileVerificationRequired) {
-            throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
-        }
+            if (loginResult.passwordExpired) {
+                throw new KraError(KraErrorCode.PASSWORD_EXPIRED, 'Password expired — falling back to Playwright', { retryable: false });
+            }
+            if (loginResult.mobileVerificationRequired) {
+                throw new KraError(KraErrorCode.MOBILE_VERIFICATION_REQUIRED, 'Mobile verification required — falling back to Playwright', { retryable: false });
+            }
 
-        await this.log('Logged in via HTTP', 74);
+            await this.log('Logged in via HTTP', 74);
+        } else {
+            await this.log('Session already authenticated, skipping login', 74);
+        }
 
         const navigator = new PaymentRegistrationNavigator(this.session);
         const { html: taxFormHtml, dwrIds } = await navigator.navigateToTaxForm(input.kraPin);

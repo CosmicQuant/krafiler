@@ -2117,7 +2117,19 @@ export async function processFilingJob(job: JobContext): Promise<{
         taxObligationType === 'turnover_tax' ||
         isMriFiling ||
         isPayeUploadJob ||
-        (printPrnOnly && (taxObligationType === 'monthly_rental_income' || taxObligationType === 'vat' || taxObligationType === 'paye')) ||
+        (printPrnOnly && (
+            taxObligationType === 'monthly_rental_income' ||
+            taxObligationType === 'vat' ||
+            taxObligationType === 'paye' ||
+            (taxObligationType as string) === 'income_tax_resident_individual' ||
+            (taxObligationType as string) === 'income_tax_non_resident_individual' ||
+            (taxObligationType as string) === 'income_tax_company' ||
+            (taxObligationType as string) === 'capital_gains_tax' ||
+            (taxObligationType as string) === 'digital_asset_tax' ||
+            (taxObligationType as string) === 'advance_tax' ||
+            (taxObligationType as string) === 'withholding' ||
+            (taxObligationType as string) === 'excise_duty'
+        )) ||
         isVatPrepareOnly ||
         isVatCurrentMonthDownload ||
         isVatUpload;

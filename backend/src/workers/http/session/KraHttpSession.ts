@@ -26,6 +26,14 @@ export class KraHttpSession {
         });
     }
 
+    /**
+     * Returns true if the session has been authenticated (token key set from a login response).
+     * Used by HttpPrnService to skip re-login for subsequent PRN types in a multi-PRN flow.
+     */
+    isAuthenticated(): boolean {
+        return this.tokenKey !== null && this.tokenKey !== '';
+    }
+
     updateToken(html: string, source = 'response'): void {
         const match = html.match(/<input[^>]+name=["']token_key["'][^>]+value=["']([^"']+)["'][^>]*>/i);
         if (match && match[1] !== this.tokenKey) {

@@ -159,13 +159,14 @@ function normalizeInvoiceNumber(value: string): string {
     return value.replace(/^\|/, '').trim();
 }
 
-// Credit-note rows in KRA source CSVs have two extra trailing columns:
-//   column J (index 9) = credit-note invoice number
-//   column K (index 10) = credit-note date
+// Credit-note rows in KRA source CSVs have the original invoice reference and date
+// in trailing columns. For a 10-column source row:
+//   column I (index 8) = original invoice number (e.g. |KRACU0200104576/222)
+//   column J (index 9) = original invoice date (e.g. 13/06/2026)
 function getCreditNoteColumns(row: CsvRow): { cnInvoice: string; cnDate: string } {
     return {
-        cnInvoice: normalizeInvoiceNumber(row[9] || ''),
-        cnDate: (row[10] || '').trim(),
+        cnInvoice: normalizeInvoiceNumber(row[8] || ''),
+        cnDate: (row[9] || '').trim(),
     };
 }
 
@@ -409,29 +410,29 @@ function mapSectionRows(params: {
             }
             case 'D1':
             case 'D2': {
-                // Zero-rated sales (10-col source; credit notes add J/K)
-                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, 0, empty, CN invoice, CN date, empty, ZERO]
+                // Zero-rated sales — manual KRA format is 12 columns:
+                // [Type, PIN, Name, OurPIN, Date, Invoice, Desc, empty, empty, ExportAmount, Type, ZEROLCL]
                 const pin = (row[1] || '').trim();
+                const type = (row[0] || 'Local').trim();
                 values = [
+                    type,
                     pin,
                     normalizeName(row[2] || '', lookup, pin),
                     (row[3] || '').trim(),
                     (row[4] || '').trim(),
                     normalizeInvoiceNumber(row[5] || ''),
                     (row[6] || '').trim(),
-                    formatXmlNumber(taxableAmount, 4),
-                    '0',
                     '',
-                    cnInvoice,
-                    cnDate,
                     '',
-                    'ZERO',
+                    '',
+                    type,
+                    'ZEROLCL',
                 ];
                 break;
             }
             case 'E': {
-                // Exempt sales (10-col source; credit notes add J/K)
-                // Output: 13 cols [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, 0, empty, CN invoice, CN date, empty, EXEMPT]
+                // Exempt sales — manual KRA format is 8 columns:
+                // [PIN, Name, OurPIN, Date, Invoice, Desc, Amount, EXEMPT]
                 const pin = (row[0] || '').trim();
                 values = [
                     pin,
@@ -441,38 +442,58 @@ function mapSectionRows(params: {
                     normalizeInvoiceNumber(row[4] || ''),
                     (row[5] || '').trim(),
                     formatXmlNumber(taxableAmount, 4),
-                    '0',
-                    '',
-                    cnInvoice,
-                    cnDate,
-                    '',
                     'EXEMPT',
                 ];
                 break;
             }
             case 'F':
             case 'G': {
-                // Purchases with VAT (11-col source; credit notes add J/K)
-                // Output: 13 cols [Local/Digital Supply, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, CN invoice, CN date, Local/DST, Rate]
-                vatAmount = round(taxableAmount * (section === 'F' ? 0.16 : 0.08), 4);
-                const supplierPin = (row[1] || '').trim();
                 const locality = (row[0] || '').trim();
-                const classification = locality === 'Digital Supply' ? 'DST' : locality;
-                values = [
-                    locality,
-                    supplierPin,
-                    normalizeName(row[2] || '', lookup, supplierPin),
-                    (row[3] || '').trim(),
-                    normalizeInvoiceNumber(row[4] || ''),
-                    (row[5] || '').trim(),
-                    '',
-                    formatXmlNumber(taxableAmount, 4),
-                    formatXmlNumber(vatAmount, 4),
-                    cnInvoice,
-                    cnDate,
-                    classification,
-                    section === 'F' ? 'GNRL' : 'OTHR',
-                ];
+                const isImport = locality === 'Import' || (section === 'F' && row.length <= 9);
+
+                if (section === 'F' && isImport) {
+                    // Import purchases — source SEC_F_IMPORT1.CSV has 8 columns:
+                    // [Import, empty/PIN, Name, Date, Invoice, Desc, CustomEntryNo, Amount]
+                    // Output 13 cols: [Import, PIN, Name, Date, Invoice, Desc, CustomEntryNo, Amount, VAT, empty, empty, Import, GNRL]
+                    vatAmount = round(taxableAmount * 0.16, 4);
+                    const supplierPin = (row[1] || '').trim();
+                    values = [
+                        locality,
+                        supplierPin,
+                        normalizeName(row[2] || '', lookup, supplierPin),
+                        (row[3] || '').trim(),
+                        normalizeInvoiceNumber(row[4] || ''),
+                        (row[5] || '').trim(),
+                        (row[6] || '').trim(),
+                        formatXmlNumber(taxableAmount, 4),
+                        formatXmlNumber(vatAmount, 4),
+                        '',
+                        '',
+                        locality,
+                        'GNRL',
+                    ];
+                } else {
+                    // Purchases with VAT (11-col source; credit notes add J/K)
+                    // Output: 13 cols [Local/Digital Supply, PIN, Name, Date, Invoice, Desc, empty, Amount, VAT, CN invoice, CN date, Local/DST, Rate]
+                    vatAmount = round(taxableAmount * (section === 'F' ? 0.16 : 0.08), 4);
+                    const supplierPin = (row[1] || '').trim();
+                    const classification = locality === 'Digital Supply' ? 'DST' : locality;
+                    values = [
+                        locality,
+                        supplierPin,
+                        normalizeName(row[2] || '', lookup, supplierPin),
+                        (row[3] || '').trim(),
+                        normalizeInvoiceNumber(row[4] || ''),
+                        (row[5] || '').trim(),
+                        '',
+                        formatXmlNumber(taxableAmount, 4),
+                        formatXmlNumber(vatAmount, 4),
+                        cnInvoice,
+                        cnDate,
+                        classification,
+                        section === 'F' ? 'GNRL' : 'OTHR',
+                    ];
+                }
                 break;
             }
             case 'H': {
@@ -638,15 +659,21 @@ function buildNamedValues(params: {
     const monthCode = String(periodEnd.getMonth() + 1).padStart(2, '0');
     const returnYear = String(periodEnd.getFullYear());
 
+    // Proration rate = (Taxable Sales / Total Sales) * 100
+    // Taxable Sales = General Rate + Other Rate + Zero Rated
+    // When there are no exempt sales, proration rate = 100
+    const taxableSales = generalSalesTotal + otherSalesTotal + zeroRatedSalesTotal;
+    const prorationRate = totalSales > 0 ? round((taxableSales / totalSales) * 100, 1) : 100;
+
     return {
         'deductibleCI': '0',
-        'prorationRate': '100',
+        'prorationRate': formatXmlNumber(prorationRate, 1),
         'Purchase.InputTaxPurchDtlsExemptTO': formatXmlNumber(params.iPurchases.totalBase, 4),
         'Purchase.InputTaxPurchDtlsGRTO': formatXmlNumber(params.fPurchases.totalBase, 4),
         'Purchase.InputTaxPurchDtlsORTO': formatXmlNumber(params.gPurchases.totalBase, 4),
         'Purchase.InputTaxPurchDtlsZRTO': formatXmlNumber(params.hPurchases.totalBase, 4),
-        'RetInf.DepositStartDate': '01/04/2025',
-        'RetInf.DepositStartDatePID': '10/01/2025',
+        'RetInf.DepositStartDate': '01/06/2025',
+        'RetInf.DepositStartDatePID': '12/01/2025',
         'RetInf.PIN': '',
         'Sales.ExemptSalesDtlsTO': formatXmlNumber(exemptSalesTotal, 4),
         'Sales.GeneralRateSalesDtlsTO': formatXmlNumber(generalSalesTotal, 4),
@@ -676,7 +703,7 @@ function buildNamedValues(params: {
         'Sch3.ZeroRateSalesDtlsTO': formatXmlNumber(zeroRatedSalesTotal, 4),
         'Sch3.ZeroRateSalesExpTO': formatXmlNumber(zeroRatedSalesTotal, 4),
         'Sch3.ZeroRateSalesSecASecBTO': formatXmlNumber(zeroRatedSalesTotal, 4),
-        'Sch4.ExemptSalesData': '',
+        'Sch4.ExemptSalesData': exemptSalesTotal > 0 ? 'data' : '',
         'Sch4.ExemptSalesDtlsTO': formatXmlNumber(exemptSalesTotal, 4),
         'Sch4.SalesAmtWithoutPINTO': formatXmlNumber(params.eWithoutPin.totalBase, 4),
         'Sch4.SalesAmtWithPINTO': formatXmlNumber(params.eWithPin.totalBase, 4),
@@ -738,7 +765,7 @@ function buildNamedValues(params: {
         'TaxDue.AmountVatClaimableListTO': '0',
         'TaxDue.CrAdjVoucherDtlsTO': '0',
         'TaxDue.DbAdjVoucherDtlsTO': '0',
-        'TaxDue.OutputTaxCharged': formatXmlNumber(totalSalesVat, 4),
+        'TaxDue.OutputTaxCharged': formatXmlNumber(totalSalesVat, 2),
         'TaxDue.TotalVatPurCharged': formatXmlNumber(totalInputVatRounded, 2),
         'TaxDue.VATPaidDtlsTO': '0',
         'TaxDue.VATWhtTO': formatXmlNumber(withholdingAmount, 4),
@@ -748,7 +775,7 @@ function buildNamedValues(params: {
         'templateInfo.ofcVrsn': 'EXCEL 1997-2003',
         'templateInfo.tempType': 'XLS',
         'templateInfo.tempVrsn': '15.0.11',
-        'WithHolding.ListTO': formatXmlNumber(withholdingAmount, 4),
+        'WithHolding.ListTO': '0',
     };
 }
 

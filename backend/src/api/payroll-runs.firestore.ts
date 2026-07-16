@@ -1958,15 +1958,12 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
 // GET /api/clients/:clientId/payroll-runs/:id/compliance-status
 router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: AuthenticatedRequest, res) => {
     try {
-        const id = req.params.id;
         const clientId = req.params.clientId;
         const uid = req.user!.uid;
 
-        const runDoc = await adminDb.collection('payrollRuns').doc(id).get();
-        if (!runDoc.exists || runDoc.data()?.ownerUid !== uid || runDoc.data()?.clientId !== clientId) {
-            return res.status(404).json({ message: 'Payroll run not found' });
-        }
-
+        // All compliance data (file URLs, statuses, amounts, receipt URLs) is stored
+        // on the client document, not the payroll run. Verify client ownership only —
+        // the payroll run ID in the path is not used to fetch any data.
         const clientDoc = await adminDb.collection('clients').doc(clientId).get();
         if (!clientDoc.exists || clientDoc.data()?.ownerUid !== uid) {
             return res.status(404).json({ message: 'Client not found' });

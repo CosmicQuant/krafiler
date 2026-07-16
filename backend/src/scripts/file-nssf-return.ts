@@ -81,14 +81,25 @@ function delay(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function fileNssfReturn(job: any, username: string, password: string, filePath: string, submissionPeriod: string, outputDir?: string): Promise<{ paymentOrderPath: string | null }> {
+export async function fileNssfReturn(job: any, username: string, password: string, filePath: string, submissionPeriod: string, outputDir?: string): Promise<{ paymentOrderPath: string | null; harPath?: string }> {
     const resolvedFilePath = await resolveNssfFile(filePath);
     const isHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
+
+    // HAR capture for NSSF porting — mirrors KRA_HAR_CAPTURE_DIR but also
+    // defaults to a temp path so every NSSF job always produces a HAR file.
+    const harCaptureDir = process.env.KRA_HAR_CAPTURE_DIR?.trim() || tmpdir();
+    const harPath = path.join(harCaptureDir, `nssf-${job?.id || Date.now()}-${Date.now()}.har`);
+    try { await fs.mkdir(path.dirname(harPath), { recursive: true }); } catch {}
+    if (job) {
+        await job.log(JSON.stringify({ timestamp: new Date().toISOString(), message: `[HAR] NSSF capture enabled: ${harPath}`, progress: 5, level: 'info' }));
+    }
+
     const browser = await chromium.launch({ headless: isHeadless });
     const context = await browser.newContext({
         ignoreHTTPSErrors: true,
         viewport: { width: 1200, height: 1600 },
         deviceScaleFactor: 2,
+        recordHar: { path: harPath },
     });
     const page = await context.newPage();
 
@@ -743,6 +754,27 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                 await route.fulfill({ status: response.status(), headers: response.headers(), body });
                             });
 
+                            // Also listen for any PDF response from the context — the NSSF portal may
+                            // serve the payment order from a different URL than paymentOrder.xhtml, or
+                            // render it inline via the browser's PDF viewer (which loads the PDF as a
+                            // separate sub-resource with content-type application/pdf).
+                            let contextPdfBody: Buffer | null = null;
+                            const pdfResponseHandler = async (response: any) => {
+                                if (contextPdfBody) return;
+                                try {
+                                    const contentType = response.headers()['content-type'] || '';
+                                    if (contentType.includes('application/pdf') || contentType.includes('application/octet-stream')) {
+                                        const body = await response.body();
+                                        if (body.length > 1000 && body.slice(0, 8).toString('ascii').startsWith('%PDF')) {
+                                            contextPdfBody = body as Buffer;
+                                        }
+                                    }
+                                } catch (e) {
+                                    // Response body may already be consumed or unavailable
+                                }
+                            };
+                            context.on('response', pdfResponseHandler);
+
                             await ok.click();
                             console.log('Clicked OK');
                             okClicked = true;
@@ -752,25 +784,56 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                 receiptPage = await newPagePromise;
                                 await delay(2000);
                                 await context.unroute('**/secureAdmin/paymentOrder.xhtml');
+                                context.off('response', pdfResponseHandler);
 
+                                // Try multiple approaches to capture the PDF receipt
+                                let pdfBody: Buffer | null = null;
+
+                                // 1. Check the route-intercepted body (paymentOrder.xhtml)
                                 if (interceptedBody) {
                                     const body = interceptedBody as Buffer;
-                                    if (body.length > 1000) {
-                                        const firstBytes = body.slice(0, 8).toString('ascii');
-                                        if (firstBytes.startsWith('%PDF')) {
-                                            await fs.writeFile(paymentOrderPath, body);
-                                            console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${body.length} bytes)`);
-                                            await receiptPage.close().catch(() => {});
-                                            await updateProgress(10, 'Payment order receipt captured', 99);
-                                            return { paymentOrderPath };
-                                        }
+                                    if (body.length > 1000 && body.slice(0, 8).toString('ascii').startsWith('%PDF')) {
+                                        pdfBody = body;
                                     }
                                 }
-                                console.log('No valid PDF intercepted, falling back to screenshot');
-                                await updateProgress(9, 'No valid PDF intercepted, trying screenshot fallback', 98, 'warn');
+
+                                // 2. Check the context response listener (any URL with PDF content-type)
+                                if (!pdfBody && contextPdfBody) {
+                                    pdfBody = contextPdfBody;
+                                    console.log('Captured PDF via context response listener');
+                                }
+
+                                // 3. Try downloading directly from the new page's URL using session cookies
+                                if (!pdfBody && receiptPage) {
+                                    try {
+                                        const pageUrl = receiptPage.url();
+                                        if (pageUrl && !pageUrl.startsWith('chrome://') && !pageUrl.startsWith('about:')) {
+                                            const downloadResponse = await context.request.get(pageUrl);
+                                            const body = (await downloadResponse.body()) as Buffer;
+                                            if (body.length > 1000 && body.slice(0, 8).toString('ascii').startsWith('%PDF')) {
+                                                pdfBody = body;
+                                                console.log('Captured PDF via direct download from page URL:', pageUrl);
+                                            }
+                                        }
+                                    } catch (e: any) {
+                                        console.log('Direct download from page URL failed:', e.message);
+                                    }
+                                }
+
+                                if (pdfBody) {
+                                    await fs.writeFile(paymentOrderPath, pdfBody);
+                                    console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${pdfBody.length} bytes)`);
+                                    await receiptPage.close().catch(() => {});
+                                    await updateProgress(10, 'Payment order receipt captured', 99);
+                                    return { paymentOrderPath, harPath };
+                                }
+
+                                console.log('No valid PDF captured, falling back to screenshot');
+                                await updateProgress(9, 'No valid PDF captured, trying screenshot fallback', 98, 'warn');
                             } catch (e: any) {
                                 console.log('No new window opened:', e.message);
                                 await context.unroute('**/secureAdmin/paymentOrder.xhtml');
+                                context.off('response', pdfResponseHandler);
                             }
                             break;
                         }
@@ -799,7 +862,7 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                     console.log('Captured receipt PDF via screenshot:', paymentOrderPath, `(${pdfBytes.length} bytes)`);
                     await receiptPage.close();
                     await updateProgress(10, 'Payment order receipt captured', 99);
-                    return { paymentOrderPath };
+                    return { paymentOrderPath, harPath };
                 } catch (e: any) {
                     console.log('Screenshot fallback failed:', e.message);
                     await receiptPage.close().catch(() => {});
@@ -807,13 +870,13 @@ export async function fileNssfReturn(job: any, username: string, password: strin
             }
 
             console.log('Payment order receipt not captured');
-            return { paymentOrderPath: null };
+            return { paymentOrderPath: null, harPath };
         }
 
         // If payment order link not visible, return null
         console.log('Payment Order link not visible — skipping');
         await updateProgress(7, 'Payment Order link not visible — skipping receipt capture', 90, 'warn');
-        return { paymentOrderPath: null };
+        return { paymentOrderPath: null, harPath };
     } catch (error: any) {
         if (job) {
             await job.log(

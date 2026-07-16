@@ -8,7 +8,7 @@ export class NssfService {
         this.job = job;
     }
 
-    async execute(kraPin: string, password: string, fileUrl: string, period?: string): Promise<{ receiptPath: string; receiptNumber: string | null }> {
+    async execute(kraPin: string, password: string, fileUrl: string, period?: string): Promise<{ receiptPath: string; receiptNumber: string | null; harPath?: string }> {
         const effectivePeriod = period || (() => {
             const now = new Date();
             const year = now.getFullYear();
@@ -17,6 +17,6 @@ export class NssfService {
             return `${String(month).padStart(2, '0')}/${year}`;
         })();
         const result = await fileNssfReturn(this.job, kraPin, password, fileUrl, effectivePeriod);
-        return { receiptPath: result.paymentOrderPath || '', receiptNumber: null };
+        return { receiptPath: result.paymentOrderPath || '', receiptNumber: null, harPath: result.harPath };
     }
 }

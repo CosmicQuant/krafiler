@@ -2070,6 +2070,20 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
         }
 
+        // Upload NSSF HAR capture to GCS for HTTP porting analysis
+        if (nssfResult.harPath) {
+            try {
+                const harBuf = await fs.readFile(nssfResult.harPath);
+                const harGcsPath = gcsReceiptPath(userId, payload.clientId || 'unknown', jobId, 'nssf-capture.har')
+                    .replace('/receipts/', '/captures/');
+                await uploadBuffer(harBuf, harGcsPath, { contentType: 'application/json' });
+                await appendJobLog(job, `NSSF HAR capture uploaded to Cloud Storage: ${harGcsPath}`, { progress: 95, level: 'info' });
+                await fs.unlink(nssfResult.harPath).catch(() => {});
+            } catch (harErr: any) {
+                console.error(`[Worker][${jobId}] Failed to upload NSSF HAR to GCS:`, harErr.message);
+            }
+        }
+
         // Update client NSSF status and receipt URL
         if (payload.clientId) {
             // Receipt URL points at the GCS-backed streaming endpoint, NOT a local path.

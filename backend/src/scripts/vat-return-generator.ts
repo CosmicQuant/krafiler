@@ -424,7 +424,7 @@ function mapSectionRows(params: {
                     (row[6] || '').trim(),
                     '',
                     '',
-                    '',
+                    formatXmlNumber(taxableAmount, 4),
                     type,
                     'ZEROLCL',
                 ];

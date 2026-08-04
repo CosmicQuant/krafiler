@@ -274,7 +274,7 @@ export class TaxFormInteractor {
         });
 
         await this.dwr.getSelectedMonthOfSelectedYearWeb({
-            date: '01/06/2024',
+            date: formatDateDdMmYyyy(periodFrom),
             subHeadId: taxSubHeadValue,
             windowName: dwrIds.windowName,
             scriptSessionId: dwrIds.scriptSessionId,

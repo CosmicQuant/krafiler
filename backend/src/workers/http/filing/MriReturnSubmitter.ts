@@ -49,6 +49,11 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const response = this.session.lastResponse ?? '';
         const fields = parseFormFields(response, 'form#MriSimplication');
 
+        // Log what we actually got from the initPage response for debugging
+        const responseSnippet = response.slice(0, 500).replace(/\n/g, ' ').trim();
+        await appendJobLog(this.job, `initPage response snippet: ${responseSnippet}`, { progress: 72, level: 'info' });
+        await appendJobLog(this.job, `Parsed ${Object.keys(fields).length} form fields from MriSimplication form. Keys: ${Object.keys(fields).join(', ')}`, { progress: 74, level: 'info' });
+
         if (!fields.obligationId) {
             await appendJobLog(this.job, `Warning: obligationId not found in parsed form fields. Available keys: ${Object.keys(fields).join(', ')}`, { progress: 75, level: 'warn' });
         }

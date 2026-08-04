@@ -92,7 +92,7 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${mriInput.rentalIncomeAmount}`, { progress: 80 });
 
         const submitResponse = await this.session.post(
-            'eReturns.htm?actionCode=fileNilReturn',
+            'eReturns.htm?actionCode=saveMRISimplification&checkedCreditsDtlList=',
             payload,
             { timeout: 60_000 }
         );

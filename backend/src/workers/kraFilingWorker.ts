@@ -2131,9 +2131,9 @@ export async function processFilingJob(job: JobContext): Promise<{
         taxObligationType === 'turnover_tax' ||
         isMriFiling ||
         isPayeUploadJob ||
-        (printPrnOnly && (
-            taxObligationType === 'monthly_rental_income' ||
-            taxObligationType === 'vat' ||
+        (printPrnOnly && (taxObligationType as string) !== 'paye' && (
+            (taxObligationType as string) === 'monthly_rental_income' ||
+            (taxObligationType as string) === 'vat' ||
             taxObligationType === 'paye' ||
             (taxObligationType as string) === 'income_tax_resident_individual' ||
             (taxObligationType as string) === 'income_tax_non_resident_individual' ||

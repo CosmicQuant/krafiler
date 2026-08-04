@@ -80,11 +80,36 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
 
         await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${mriInput.rentalIncomeAmount}`, { progress: 80 });
 
-        const submitResponse = await this.session.post(
+        // The MRI form declares enctype="multipart/form-data", so we must send
+        // a multipart body — KRA rejects URL-encoded submissions with the dashboard page.
+        const boundary = `----WebKitFormBoundary${Date.now().toString(36)}`;
+        const multipartLines: string[] = [];
+        for (const [name, value] of Object.entries(payload)) {
+            multipartLines.push(`--${boundary}`);
+            multipartLines.push(`Content-Disposition: form-data; name="${name}"`);
+            multipartLines.push('');
+            multipartLines.push(String(value));
+        }
+        multipartLines.push(`--${boundary}--`);
+        multipartLines.push('');
+        const multipartBody = multipartLines.join('\r\n');
+
+        const submitResponse = await this.session.client.postRaw(
             'eReturns.htm?actionCode=saveMRISimplification&checkedCreditsDtlList=',
-            payload,
-            { timeout: 60_000 }
+            Buffer.from(multipartBody, 'utf-8'),
+            {
+                step: 'form-submit',
+                headers: {
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    Referer: 'https://itax.kra.go.ke/KRA-Portal/eReturns.htm?actionCode=initPage',
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                    Origin: 'https://itax.kra.go.ke',
+                    'Upgrade-Insecure-Requests': '1',
+                },
+                timeout: 60_000,
+            }
         );
+        this.session.lastResponse = submitResponse;
 
         const errors = parsePortalErrors(submitResponse);
         const mapped = errors.map((e) => mapPortalMessage(e)).find(Boolean);

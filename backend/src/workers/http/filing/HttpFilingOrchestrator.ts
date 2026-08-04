@@ -124,13 +124,18 @@ export class HttpFilingOrchestrator {
                 }
 
                 // PAYE PRN requests generate 3 PRNs: PAYE, NITA, AHL.
-                // Other tax types generate a single PRN.
+                // NITA and AHL use "Agency Revenue" tax head which requires manual
+                // liability row creation (KRA doesn't show pre-existing liabilities
+                // for these until PAYE is filed). The HTTP PRN engine only reads
+                // existing liabilities — it can't create new ones. So for PAYE PRN,
+                // we only generate the PAYE PRN via HTTP and let Playwright handle
+                // the full 3-PRN flow (PAYE + NITA + AHL) as a fallback.
                 const prnTaxTypes: Array<{ taxType: string; label: string }> = [];
                 if (this.payload.taxObligationType === 'paye') {
+                    // Only generate PAYE via HTTP. NITA/AHL require Playwright
+                    // (Agency Revenue tax head with manual liability creation).
                     prnTaxTypes.push(
                         { taxType: 'paye', label: 'PAYE' },
-                        { taxType: 'nita', label: 'NITA Levy' },
-                        { taxType: 'affordable_housing', label: 'Housing Levy' },
                     );
                 } else {
                     prnTaxTypes.push({ taxType: this.payload.taxObligationType, label: this.payload.taxObligationType });

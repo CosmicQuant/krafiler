@@ -537,7 +537,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
         console.log(`Starting MRI Auto-filing for ${client.name}... `);
         try {
             const isNilMri = amount === 0;
-            const { periodFrom, periodTo } = getCurrentFilingPeriod('monthly_rental_income');
+            const { periodFrom, periodTo } = getClientFilingPeriod(client, 'mri');
             const res = await apiFetch('/tax/file-return', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

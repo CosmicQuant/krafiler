@@ -47,7 +47,7 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         await setJobStep(this.job, 70, 'Filling MRI return details (HTTP)');
 
         const response = this.session.lastResponse ?? '';
-        const fields = parseFormFields(response, 'form#command, form[name="frmNilReturn"], form[action*="eReturns.htm"]');
+        const fields = parseFormFields(response, 'form#MriSimplication, form#command, form[name="frmNilReturn"], form[action*="eReturns.htm"]');
 
         const periodFrom = this.formatPortalDate(mriInput.periodFrom);
         const periodTo = this.formatPortalDate(mriInput.periodTo);

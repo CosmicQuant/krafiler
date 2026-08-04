@@ -1,11 +1,13 @@
 /**
  * MriClientView.tsx
  *
- * Single-client Monthly Rental Income (MRI) view with a client selector dropdown.
+ * Single-client Monthly Rental Income (MRI) view with a client selector dropdown
+ * and period chooser.
  */
 
 import { useState, useMemo } from 'react';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { apiFetch } from '../../../services/api';
 import { downloadAuthFile } from '../../../utils/downloadAuthFile';
 import { ClientObligation } from '../../../types';
 import { ClientSelectorDropdown } from '../ClientSelectorDropdown';
@@ -13,6 +15,7 @@ import { StatusBadge } from '../StatusBadges';
 import {
     getReceiptUrlForObligation,
     getPrnUrlForObligation,
+    getClientFilingPeriod,
     isPendingFilingJob,
     isTerminalFilingJob,
 } from '../../../utils/dashboardUtils';
@@ -28,6 +31,7 @@ interface MriClientViewProps {
     onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
     onCancelJob?: (client: ClientObligation) => Promise<void>;
     cancellingClientIds?: Record<string, boolean>;
+    setClients?: React.Dispatch<React.SetStateAction<ClientObligation[]>>;
 }
 
 export function MriClientView({
@@ -39,6 +43,7 @@ export function MriClientView({
     onGeneratePrn,
     onCancelJob,
     cancellingClientIds,
+    setClients,
 }: MriClientViewProps) {
     const mriClients = useMemo(() => clients.filter((c) => c.mri !== 'na'), [clients]);
     const [selectedClient, setSelectedClient] = useState<ClientObligation | null>(mriClients[0] || null);
@@ -59,13 +64,71 @@ export function MriClientView({
     const latestPrnUrl = relevantJob?.prnUrl ?? getPrnUrlForObligation(client, 'MRI');
     const unifiedPrnUrl = latestPrnUrl && latestPrnUrl === latestReceiptUrl ? latestPrnUrl : undefined;
 
+    const mriPeriod = getClientFilingPeriod(client, 'mri');
+    const mriPeriodKey = mriPeriod.period;
+    const mriPeriodAlreadyFiled = client.filedPeriods?.mri?.includes(mriPeriodKey);
+
+    const [periodLoading, setPeriodLoading] = useState(false);
+
+    const changeMriPeriod = async (direction: 'prev' | 'next') => {
+        if (!client || periodLoading) return;
+        setPeriodLoading(true);
+        try {
+            const currentYear = client.mriPeriodYear ?? mriPeriod.year;
+            const currentMonth = client.mriPeriodMonth ?? mriPeriod.month;
+            let newMonth = direction === 'next' ? currentMonth + 1 : currentMonth - 1;
+            let newYear = currentYear;
+            if (newMonth > 12) { newMonth = 1; newYear += 1; }
+            if (newMonth < 1) { newMonth = 12; newYear -= 1; }
+
+            const res = await apiFetch(`/clients/${client.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mriPeriodMonth: newMonth, mriPeriodYear: newYear }),
+            });
+            if (!res.ok) throw new Error('Failed to update MRI period');
+            const updated = await res.json();
+            const updatedClient = { ...client, ...updated } as ClientObligation;
+            setSelectedClient(updatedClient);
+            setClients?.((current) => current.map((c) => (c.id === client.id ? updatedClient : c)));
+        } catch (e: any) {
+            alert(e.message || 'Failed to change MRI period');
+        } finally {
+            setPeriodLoading(false);
+        }
+    };
+
     return (
         <div className="mt-6 space-y-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="w-full sm:w-80">
                     <ClientSelectorDropdown clients={mriClients} selectedClient={client} onSelectClient={setSelectedClient} label="MRI Client" />
                 </div>
-                <StatusBadge status={client.mri} />
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => void changeMriPeriod('prev')}
+                        disabled={periodLoading}
+                        className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition disabled:opacity-50"
+                        title="Previous period"
+                    >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="text-xs font-medium text-slate-500 min-w-[110px] text-center">
+                        Period: <span className="font-bold text-slate-700">{mriPeriodKey}</span>
+                        {mriPeriodAlreadyFiled && (
+                            <span className="ml-2 text-emerald-600">(filed)</span>
+                        )}
+                    </span>
+                    <button
+                        onClick={() => void changeMriPeriod('next')}
+                        disabled={periodLoading}
+                        className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition disabled:opacity-50"
+                        title="Next period"
+                    >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                    <StatusBadge status={client.mri} />
+                </div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-5">
@@ -96,7 +159,7 @@ export function MriClientView({
 
                 {/* Actions */}
                 <div className="flex flex-wrap items-center gap-3 pt-2">
-                    <button onClick={() => void onFileMri(client)} disabled={isPendingFilingJob(relevantJob as any)} className={`inline-flex items-center gap-2 rounded-xl border px-5 py-2.5 text-xs font-bold transition shadow-sm ${isPendingFilingJob(relevantJob as any) ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed' : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100'}`}>
+                    <button onClick={() => void onFileMri(client)} disabled={isPendingFilingJob(relevantJob as any) || mriPeriodAlreadyFiled} title={mriPeriodAlreadyFiled ? `MRI for ${mriPeriodKey} has already been filed` : undefined} className={`inline-flex items-center gap-2 rounded-xl border px-5 py-2.5 text-xs font-bold transition shadow-sm ${isPendingFilingJob(relevantJob as any) || mriPeriodAlreadyFiled ? 'bg-slate-100 border-slate-100 text-slate-500 cursor-not-allowed' : 'bg-emerald-50 border-emerald-500/20 text-emerald-600 hover:bg-emerald-100'}`}>
                         {isPendingFilingJob(relevantJob as any) && <RefreshCw className="h-3 w-3 animate-spin" />}
                         File MRI
                     </button>

@@ -47,47 +47,36 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         await setJobStep(this.job, 70, 'Filling MRI return details (HTTP)');
 
         const response = this.session.lastResponse ?? '';
-        const fields = parseFormFields(response, 'form#MriSimplication, form#command, form[name="frmNilReturn"], form[action*="eReturns.htm"]');
+        const fields = parseFormFields(response, 'form#MriSimplication');
+
+        if (!fields.obligationId) {
+            await appendJobLog(this.job, `Warning: obligationId not found in parsed form fields. Available keys: ${Object.keys(fields).join(', ')}`, { progress: 75, level: 'warn' });
+        }
 
         const periodFrom = this.formatPortalDate(mriInput.periodFrom);
         const periodTo = this.formatPortalDate(mriInput.periodTo);
-        const monthValue = periodFrom.slice(3, 5);
-        const yearValue = periodFrom.slice(6, 10);
 
+        // Build payload from the actual MRI Simplification form fields.
+        // The form uses mRISimplificationDto.* field names, not the nil-return field names.
         const payload: Record<string, string> = {
             ...fields,
             token_key: this.session.requireToken(),
-            obligationId: fields.obligationId,
-            obligationName: fields.obligationName ?? 'Rent Income',
-            isAgent: fields.isAgent ?? '',
-            agentPin: fields.agentPin ?? '',
-            nilReturnFlag: 'N',
-            amendmentFlag: fields.amendmentFlag ?? 'N',
-            taxpayerPin: mriInput.kraPin,
-            quarters: fields.quarters ?? '',
-            months: monthValue,
-            years: yearValue,
-            toDtWithoutYear: fields.toDtWithoutYear ?? '',
-            spouseTaxPayerId: fields.spouseTaxPayerId ?? '',
-            updateRolloutdate: fields.updateRolloutdate ?? 'N',
-            brnchLogin: fields.brnchLogin ?? 'N',
-            procFrmDt: periodFrom,
-            procToDt: periodTo,
-            errorCd: fields.errorCd ?? '',
-            errorMsg: fields.errorMsg ?? '',
-            isFirstRet: fields.isFirstRet ?? 'N',
-            isDormant: fields.isDormant ?? '',
-            isMig: fields.isMig ?? '',
-            autoPopulate: fields.autoPopulate ?? 'Y',
-            cmbReturnType: fields.cmbReturnType ?? 'Original',
-            txtPin: mriInput.kraPin,
-            branchRegDate: fields.branchRegDate ?? 'Select',
-            txtPeriodFrom: periodFrom,
-            txtPeriodTo: periodTo,
-            mriRentAmount_0: String(mriInput.rentalIncomeAmount),
+            // Override the rental income and period with our values
+            'mRISimplificationDto.totRentalInc': String(mriInput.rentalIncomeAmount),
+            'mRISimplificationDto.rtnPeriodFrom': periodFrom,
+            'mRISimplificationDto.rtnPeriodTo': periodTo,
+            // Ensure total number of properties is set (default 1)
+            'mRISimplificationDto.totNumofPropt': fields['mRISimplificationDto.totNumofPropt'] || '1',
         };
 
+        // Remove button fields — browsers don't submit type="button" inputs
         delete payload.btnSubmit;
+        delete payload.prevBtn;
+        delete payload.back_btn;
+        delete payload.nextBtn;
+        delete payload.goBtn;
+        // Remove file input — not needed for standard filing
+        delete payload['sfile[1]'];
 
         await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${mriInput.rentalIncomeAmount}`, { progress: 80 });
 

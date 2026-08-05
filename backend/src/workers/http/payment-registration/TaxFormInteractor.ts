@@ -276,7 +276,7 @@ export class TaxFormInteractor {
                 scriptSessionId: dwrIds.scriptSessionId,
             });
 
-            await this.dwr.getSelectedMonthOfSelectedYearWeb({
+            const monthYearResponse = await this.dwr.getSelectedMonthOfSelectedYearWeb({
                 date: rollOutDate,
                 subHeadId: taxSubHeadValue,
                 year: String(year),
@@ -285,11 +285,32 @@ export class TaxFormInteractor {
                 scriptSessionId: dwrIds.scriptSessionId,
             });
 
-            // Parse the agency amount from the loadPRForm HTML.
-            const agencyAmountStr = $('input[name="paymentdetailDTO.totalamountPayableOTR"]').val()?.toString() ?? '0';
-            const agencyAmount = Number(agencyAmountStr) || 0;
+            // Parse the agency amount from the DWR response.
+            // The response contains JavaScript like:
+            //   dwr.engine.remote.handleCallback("5","0",{amountPaid:"675",...})
+            //   dwr.engine.remote.handleCallback("5","0",[{amountPaid:"675",...}])
+            // Try multiple patterns to extract the amount.
+            let agencyAmount = 0;
+            const amountPatterns: RegExp[] = [
+                /amountPaid["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+                /amountPayable["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+                /totalAmount["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+            ];
+            for (const pattern of amountPatterns) {
+                const match = monthYearResponse.match(pattern);
+                if (match) {
+                    agencyAmount = Number(match[1]);
+                    break;
+                }
+            }
 
-            console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES`);
+            // Fallback: parse amount from the loadPRForm HTML.
+            if (agencyAmount === 0) {
+                const agencyAmountStr = $('input[name="paymentdetailDTO.totalamountPayableOTR"]').val()?.toString() ?? '0';
+                agencyAmount = Number(agencyAmountStr) || 0;
+            }
+
+            console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES (DWR response snippet: ${monthYearResponse.slice(0, 300)})`);
 
             // Build a synthetic liability row — Agency Revenue has no liability table.
             const fakeRow: LiabilityRow = {

@@ -43,8 +43,20 @@ export class TotReturnSubmitter extends BaseHttpFilingService {
             totTurnover: Number(input.totTurnover),
         };
 
-        if (!Number.isFinite(totInput.totYear) || !Number.isFinite(totInput.totMonth) || !Number.isFinite(totInput.totTurnover)) {
-            throw new Error('Turnover Tax filing requires totYear, totMonth, and totTurnover in the queued job payload');
+        if (!Number.isFinite(totInput.totYear) || !Number.isFinite(totInput.totMonth)) {
+            throw new Error('Turnover Tax filing requires totYear and totMonth in the queued job payload');
+        }
+        // totTurnover defaults to 0 for nil returns; allow NaN → 0.
+        if (!Number.isFinite(totInput.totTurnover)) {
+            totInput.totTurnover = 0;
+        }
+
+        // For nil returns, periodFrom/periodTo may be missing — derive from totYear/totMonth.
+        if (totInput.periodFrom === 'undefined' || !totInput.periodFrom || totInput.periodFrom === 'NaN') {
+            const lastDay = new Date(totInput.totYear, totInput.totMonth, 0).getDate();
+            const mm = String(totInput.totMonth).padStart(2, '0');
+            totInput.periodFrom = `${totInput.totYear}-${mm}-01`;
+            totInput.periodTo = `${totInput.totYear}-${mm}-${String(lastDay).padStart(2, '0')}`;
         }
 
         await setJobStep(this.job, 70, 'Preparing Turnover Tax return (HTTP)');

@@ -313,8 +313,8 @@ export function buildLiabilityPayload(
         actualLiabilityAmount,
         taxObligationTableEncoded: encoded,
         amountPaid,
-        // KRA computes the total server-side from the obligation table; send 0.
-        totalAmountToBePaid: '0',
+        // KRA expects the total amount to be the actual liability amount.
+        totalAmountToBePaid: String(Math.round(Number(rawAmount))),
         obligationId: row.obligationId,
         hdrId: row.hdrId,
     };

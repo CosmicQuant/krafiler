@@ -50,12 +50,6 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const response = this.session.lastResponse ?? '';
         const fields = parseFormFields(response, 'form#MriSimplication');
 
-        // Extract the DWR session IDs from the initPage response.
-        const windowNameMatch = response.match(/windowName['"]?\s*[:=]\s*['"]?(DWR-[A-F0-9]+)/);
-        const scriptSessionIdMatch = response.match(/scriptSessionId['"]?\s*[:=]\s*['"]?([A-F0-9]+)/);
-        const windowName = windowNameMatch?.[1] ?? '';
-        const scriptSessionId = scriptSessionIdMatch?.[1] ?? '';
-
         const rentalAmount = mriInput.rentalIncomeAmount;
         const taxOnRent = Math.round(rentalAmount * 0.075 * 100) / 100;
 
@@ -68,12 +62,27 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const taxPayerId = fields['mRISimplificationDto.taxpayerId'] || '';
         const landLordEmail = fields['landLordWEmail'] || '';
 
+        // Establish a DWR session via __System.pageLoaded, exactly as the browser does
+        // when the MRI form loads. This gives us valid windowName + scriptSessionId
+        // for the fetchDataForMRIReturnsAjax call.
+        const page = '/KRA-Portal/eReturns.htm?actionCode=initPage';
+        const dwr = new DwrService(this.session.client);
+        let windowName = '';
+        let scriptSessionId = '';
+        try {
+            const dwrSession = await dwr.pageLoaded(page);
+            windowName = dwrSession.windowName;
+            scriptSessionId = dwrSession.scriptSessionId;
+            await appendJobLog(this.job, `DWR session established: window=${windowName.slice(0, 16)}..., script=${scriptSessionId.slice(0, 16)}...`, { progress: 74 });
+        } catch (dwrInitErr: any) {
+            await appendJobLog(this.job, `DWR pageLoaded failed: ${dwrInitErr.message}. Will attempt fetchDataForMRIReturnsAjax without session.`, { progress: 74, level: 'warn' });
+        }
+
         // The browser calls fetchDataForMRIReturnsAjax via DWR to fetch property
         // details (landId, rengId). These are required in hidPropertyDetailList.
         // Without them KRA rejects with "Problem encountered in iTax".
         let hidPropertyDetailList = '';
         try {
-            const dwr = new DwrService(this.session.client);
             const dwrResponse = await dwr.fetchDataForMRIReturnsAjax({
                 kraPin: mriInput.kraPin,
                 periodFrom,
@@ -88,7 +97,10 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
                 taxpayerId: taxPayerId,
                 windowName,
                 scriptSessionId,
+                page,
             });
+
+            await appendJobLog(this.job, `DWR fetchDataForMRIReturnsAjax response (first 500): ${dwrResponse.slice(0, 500)}`, { progress: 76, level: 'info' });
 
             // Parse the DWR response for property details.
             // DWR returns JavaScript like: dwr.engine.remote.handleCallback("1","0",[{landId:"833",...}])

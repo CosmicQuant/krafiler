@@ -383,4 +383,82 @@ export class DwrService {
 			headers: { Referer: `https://itax.kra.go.ke${page}` },
 		});
 	}
+
+	/**
+	 * Fetch MRI property details via DWR. This is called by the browser's
+	 * fetchDataForMRIReturnsAjax() after the form loads and after the user
+	 * enters the rental income. The response contains property records with
+	 * landId and rengId that are required in the hidPropertyDetailList form field.
+	 */
+	async fetchDataForMRIReturnsAjax(options: {
+		kraPin: string;
+		periodFrom: string;
+		periodTo: string;
+		returnType?: string;
+		totNumofPropt?: string;
+		totRentalInc: string;
+		taxOnRentInc: string;
+		rentwhtCreditd?: string;
+		crdSelfAssesPmt?: string;
+		taxDue: string;
+		taxpayerId: string;
+		windowName: string;
+		scriptSessionId: string;
+		page?: string;
+	}): Promise<string> {
+		const page = options.page ?? '/KRA-Portal/eReturns.htm?actionCode=initPage';
+		const returnType = options.returnType ?? 'Original';
+		const totNumofPropt = options.totNumofPropt ?? '1';
+		const rentwhtCreditd = options.rentwhtCreditd ?? '0.00';
+		const crdSelfAssesPmt = options.crdSelfAssesPmt ?? '0.00';
+
+		const encodedPeriodFrom = encodeURIComponent(options.periodFrom);
+		const encodedPeriodTo = encodeURIComponent(options.periodTo);
+
+		const param1 =
+			'Object_Object:{' +
+			[
+				'taxpayerPin:reference:c0-e1',
+				'txtPeriodFrom:reference:c0-e2',
+				'txtPeriodTo:reference:c0-e3',
+				'cmbReturnType:reference:c0-e4',
+				'totNumofPropt:reference:c0-e5',
+				'totRentalInc:reference:c0-e6',
+				'taxOnRentInc:reference:c0-e7',
+				'rentwhtCreditd:reference:c0-e8',
+				'crdSelfAssesPmt:reference:c0-e9',
+				'taxDue:reference:c0-e10',
+				'taxpayerId:reference:c0-e11',
+			].join(', ') +
+			'}';
+
+		const body = this.buildRequestBody({
+			callCount: '1',
+			windowName: options.windowName,
+			'c0-scriptName': 'FetchTrpDtls',
+			'c0-methodName': 'fetchDataForMRIReturnsAjax',
+			'c0-id': '0',
+			'c0-param0': 'boolean:false',
+			'c0-e1': `string:${options.kraPin}`,
+			'c0-e2': `string:${encodedPeriodFrom}`,
+			'c0-e3': `string:${encodedPeriodTo}`,
+			'c0-e4': `string:${returnType}`,
+			'c0-e5': `string:${totNumofPropt}`,
+			'c0-e6': `string:${options.totRentalInc}`,
+			'c0-e7': `string:${options.taxOnRentInc}`,
+			'c0-e8': `string:${rentwhtCreditd}`,
+			'c0-e9': `string:${crdSelfAssesPmt}`,
+			'c0-e10': `string:${options.taxDue}`,
+			'c0-e11': `string:${options.taxpayerId}`,
+			'c0-param1': param1,
+			batchId: String(this.batchId++),
+			page,
+			httpSessionId: '',
+			scriptSessionId: options.scriptSessionId,
+		});
+
+		return this.postRaw('dwr/call/plaincall/FetchTrpDtls.fetchDataForMRIReturnsAjax.dwr', body, {
+			headers: { Referer: `https://itax.kra.go.ke${page}` },
+		});
+	}
 }

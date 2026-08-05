@@ -2,6 +2,7 @@ import { appendJobLog, setJobStep } from '../../utils/job-helpers';
 import { parsePortalErrors, parseSubmissionResult, parseFormFields } from '../parsers';
 import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
 import { BaseHttpFilingService, FilingReceiptResult } from './BaseHttpFilingService';
+import { DwrService } from '../dwr/DwrService';
 
 export interface MriFilingInput {
     kraPin: string;
@@ -49,6 +50,12 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const response = this.session.lastResponse ?? '';
         const fields = parseFormFields(response, 'form#MriSimplication');
 
+        // Extract the DWR session IDs from the initPage response.
+        const windowNameMatch = response.match(/windowName['"]?\s*[:=]\s*['"]?(DWR-[A-F0-9]+)/);
+        const scriptSessionIdMatch = response.match(/scriptSessionId['"]?\s*[:=]\s*['"]?([A-F0-9]+)/);
+        const windowName = windowNameMatch?.[1] ?? '';
+        const scriptSessionId = scriptSessionIdMatch?.[1] ?? '';
+
         const rentalAmount = mriInput.rentalIncomeAmount;
         const taxOnRent = Math.round(rentalAmount * 0.075 * 100) / 100;
 
@@ -60,14 +67,61 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const taxPayerAdd = fields['mRISimplificationDto.taxpayerAdd'] || '';
         const taxPayerId = fields['mRISimplificationDto.taxpayerId'] || '';
         const landLordEmail = fields['landLordWEmail'] || '';
-        const originalHidPropertyDetailList = fields['hidPropertyDetailList'] || '';
-        const hidPropertyDetailList = originalHidPropertyDetailList && originalHidPropertyDetailList.trim() !== ''
-            ? originalHidPropertyDetailList
-            : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
+
+        // The browser calls fetchDataForMRIReturnsAjax via DWR to fetch property
+        // details (landId, rengId). These are required in hidPropertyDetailList.
+        // Without them KRA rejects with "Problem encountered in iTax".
+        let hidPropertyDetailList = '';
+        try {
+            const dwr = new DwrService(this.session.client);
+            const dwrResponse = await dwr.fetchDataForMRIReturnsAjax({
+                kraPin: mriInput.kraPin,
+                periodFrom,
+                periodTo,
+                returnType: 'Original',
+                totNumofPropt: '1',
+                totRentalInc: String(rentalAmount),
+                taxOnRentInc: String(taxOnRent),
+                rentwhtCreditd: '0.00',
+                crdSelfAssesPmt: '0.00',
+                taxDue: String(taxOnRent),
+                taxpayerId: taxPayerId,
+                windowName,
+                scriptSessionId,
+            });
+
+            // Parse the DWR response for property details.
+            // DWR returns JavaScript like: dwr.engine.remote.handleCallback("1","0",[{landId:"833",...}])
+            const landMatch = dwrResponse.match(/landId["']?\s*[:=]\s*["']?(\d+)/g);
+            const rengMatch = dwrResponse.match(/rengId["']?\s*[:=]\s*["']?(\d+)/g);
+            if (landMatch && rengMatch && landMatch.length > 0 && rengMatch.length > 0) {
+                const landId = landMatch[0].match(/(\d+)/)?.[1] ?? '';
+                const rengId = rengMatch[0].match(/(\d+)/)?.[1] ?? '';
+                hidPropertyDetailList = JSON.stringify([{ landId, rengId, rent: rentalAmount, liability: taxOnRent }]);
+                await appendJobLog(this.job, `Fetched property details: landId=${landId}, rengId=${rengId}`, { progress: 76 });
+            }
+
+            if (!hidPropertyDetailList) {
+                // If DWR response parsing failed, use the form's existing value or fallback
+                const formValue = fields['hidPropertyDetailList'] || '';
+                hidPropertyDetailList = formValue && formValue.trim() !== ''
+                    ? formValue
+                    : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
+                await appendJobLog(this.job, `Could not parse property details from DWR response. Using fallback.`, { progress: 78, level: 'warn' });
+            }
+        } catch (dwrErr: any) {
+            await appendJobLog(this.job, `DWR fetchDataForMRIReturnsAjax failed: ${dwrErr.message}`, { progress: 78, level: 'warn' });
+            const formValue = fields['hidPropertyDetailList'] || '';
+            hidPropertyDetailList = formValue && formValue.trim() !== ''
+                ? formValue
+                : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
+        }
 
         // fieldsToSkip is a multi-value field (appears twice in the form for taxpayerName and taxpayerAdd).
         const fieldsToSkipValues = ['mRISimplificationDto.taxpayerName', 'mRISimplificationDto.taxpayerAdd'];
 
+        // Note: token_key is NOT included — it's outside form#MriSimplication and
+        // the browser does not submit it (confirmed by HAR capture).
         const payload: Record<string, string[]> = {
             errorCd: [''],
             errorMsg: [''],
@@ -95,7 +149,6 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
             'mRISimplificationDto.rentwhtCreditd': ['0.00'],
             'mRISimplificationDto.crdSelfAssesPmt': ['0.00'],
             'mRISimplificationDto.taxDue': [String(taxOnRent)],
-            token_key: [this.session.requireToken()],
         };
 
         await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${rentalAmount}`, { progress: 80 });

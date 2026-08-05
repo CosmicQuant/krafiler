@@ -49,58 +49,87 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         const response = this.session.lastResponse ?? '';
         const fields = parseFormFields(response, 'form#MriSimplication');
 
-        // Log what we actually got from the initPage response for debugging
-        const responseSnippet = response.slice(0, 500).replace(/\n/g, ' ').trim();
-        await appendJobLog(this.job, `initPage response snippet: ${responseSnippet}`, { progress: 72, level: 'info' });
-        await appendJobLog(this.job, `Parsed ${Object.keys(fields).length} form fields from MriSimplication form. Keys: ${Object.keys(fields).join(', ')}`, { progress: 74, level: 'info' });
-
-        if (!fields.obligationId) {
-            await appendJobLog(this.job, `Warning: obligationId not found in parsed form fields. Available keys: ${Object.keys(fields).join(', ')}`, { progress: 75, level: 'warn' });
-        }
+        const rentalAmount = mriInput.rentalIncomeAmount;
+        const taxOnRent = Math.round(rentalAmount * 0.075 * 100) / 100;
 
         const periodFrom = this.formatPortalDate(mriInput.periodFrom);
         const periodTo = this.formatPortalDate(mriInput.periodTo);
 
-        // Build payload from the actual MRI Simplification form fields.
-        // The form uses mRISimplificationDto.* field names, not the nil-return field names.
-        const payload: Record<string, string> = {
-            ...fields,
-            token_key: this.session.requireToken(),
-            // Override the rental income and period with our values
-            'mRISimplificationDto.totRentalInc': String(mriInput.rentalIncomeAmount),
-            'mRISimplificationDto.rtnPeriodFrom': periodFrom,
-            'mRISimplificationDto.rtnPeriodTo': periodTo,
-            // Ensure total number of properties is set (default 1)
-            'mRISimplificationDto.totNumofPropt': fields['mRISimplificationDto.totNumofPropt'] || '1',
+        // Build payload matching the exact HAR-captured successful submission.
+        const taxPayerName = fields['mRISimplificationDto.taxpayerName'] || '';
+        const taxPayerAdd = fields['mRISimplificationDto.taxpayerAdd'] || '';
+        const taxPayerId = fields['mRISimplificationDto.taxpayerId'] || '';
+        const landLordEmail = fields['landLordWEmail'] || '';
+        const originalHidPropertyDetailList = fields['hidPropertyDetailList'] || '';
+        const hidPropertyDetailList = originalHidPropertyDetailList && originalHidPropertyDetailList.trim() !== ''
+            ? originalHidPropertyDetailList
+            : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
+
+        // fieldsToSkip is a multi-value field (appears twice in the form for taxpayerName and taxpayerAdd).
+        const fieldsToSkipValues = ['mRISimplificationDto.taxpayerName', 'mRISimplificationDto.taxpayerAdd'];
+
+        const payload: Record<string, string[]> = {
+            errorCd: [''],
+            errorMsg: [''],
+            'mRISimplificationDto.taxpayerId': [taxPayerId],
+            obligationId: [fields.obligationId || '33'],
+            amendmentFlag: ['N'],
+            taxpayerPin: [mriInput.kraPin],
+            fieldsToSkip: fieldsToSkipValues,
+            'mRISimplificationDto.taxPayerPIN': [mriInput.kraPin],
+            'mRISimplificationDto.taxpayerName': [taxPayerName],
+            'mRISimplificationDto.taxpayerAdd': [taxPayerAdd],
+            landLordWEmail: [landLordEmail],
+            'mRISimplificationDto.typeOfRtn': ['Original'],
+            'mRISimplificationDto.rtnPeriodFrom': [periodFrom],
+            'mRISimplificationDto.rtnPeriodTo': [periodTo],
+            hidPropertyDetailList: [hidPropertyDetailList],
+            hidPropertyDetailDTOList: ['[object Object]'],
+            mriRentAmount_0: [String(rentalAmount)],
+            totalAmountTobePaid: [String(taxOnRent)],
+            taxPercent: ['10'],
+            totNoOfP: ['1'],
+            'mRISimplificationDto.totNumofPropt': ['1'],
+            'mRISimplificationDto.totRentalInc': [String(rentalAmount)],
+            'mRISimplificationDto.taxOnRentInc': [String(taxOnRent)],
+            'mRISimplificationDto.rentwhtCreditd': ['0.00'],
+            'mRISimplificationDto.crdSelfAssesPmt': ['0.00'],
+            'mRISimplificationDto.taxDue': [String(taxOnRent)],
+            token_key: [this.session.requireToken()],
         };
 
-        // Remove button fields — browsers don't submit type="button" inputs
-        delete payload.btnSubmit;
-        delete payload.prevBtn;
-        delete payload.back_btn;
-        delete payload.nextBtn;
-        delete payload.goBtn;
-        // Remove file input — not needed for standard filing
-        delete payload['sfile[1]'];
+        await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${rentalAmount}`, { progress: 80 });
 
-        await appendJobLog(this.job, `Submitting MRI return for ${periodFrom} to ${periodTo} with rental income ${mriInput.rentalIncomeAmount}`, { progress: 80 });
-
-        // The MRI form declares enctype="multipart/form-data", so we must send
-        // a multipart body — KRA rejects URL-encoded submissions with the dashboard page.
+        // The MRI form declares enctype="multipart/form-data" and the browser submits
+        // with checkedCreditsDtlList=undefined (literal string "undefined").
         const boundary = `----WebKitFormBoundary${Date.now().toString(36)}`;
-        const multipartLines: string[] = [];
-        for (const [name, value] of Object.entries(payload)) {
-            multipartLines.push(`--${boundary}`);
-            multipartLines.push(`Content-Disposition: form-data; name="${name}"`);
-            multipartLines.push('');
-            multipartLines.push(String(value));
+        const crlf = '\r\n';
+        const multipartParts: string[] = [];
+
+        for (const [name, values] of Object.entries(payload)) {
+            const arr = Array.isArray(values) ? values : [values];
+            for (const val of arr) {
+                multipartParts.push(`--${boundary}`);
+                multipartParts.push(`Content-Disposition: form-data; name="${name}"`);
+                multipartParts.push('');
+                multipartParts.push(String(val));
+            }
         }
-        multipartLines.push(`--${boundary}--`);
-        multipartLines.push('');
-        const multipartBody = multipartLines.join('\r\n');
+
+        // Empty file upload part (mirrors browser behavior — sfile[1] with empty filename).
+        multipartParts.push(`--${boundary}`);
+        multipartParts.push(`Content-Disposition: form-data; name="sfile[1]"; filename=""`);
+        multipartParts.push(`Content-Type: application/octet-stream`);
+        multipartParts.push('');
+        multipartParts.push('');
+
+        multipartParts.push(`--${boundary}--`);
+        multipartParts.push('');
+
+        const multipartBody = multipartParts.join(crlf);
 
         const submitResponse = await this.session.client.postRaw(
-            'eReturns.htm?actionCode=saveMRISimplification&checkedCreditsDtlList=',
+            'eReturns.htm?actionCode=saveMRISimplification&checkedCreditsDtlList=undefined',
             Buffer.from(multipartBody, 'utf-8'),
             {
                 step: 'form-submit',

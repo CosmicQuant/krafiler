@@ -361,6 +361,8 @@ export class DwrService {
 		windowName: string;
 		scriptSessionId: string;
 		page?: string;
+		year?: string;
+		booleanParam?: string;
 	}): Promise<string> {
 		const page = options.page ?? '/KRA-Portal/paymentRegistration.htm?actionCode=loadPRForm';
 		const encodedDate = encodeURIComponent(options.date);
@@ -371,8 +373,8 @@ export class DwrService {
 			'c0-methodName': 'getSelectedMonthOfSelectedYearWeb',
 			'c0-id': '0',
 			'c0-param0': `string:${encodedDate}`,
-			'c0-param1': 'string:',
-			'c0-param2': 'string:false',
+			'c0-param1': options.year ? `string:${options.year}` : 'string:',
+			'c0-param2': `string:${options.booleanParam ?? 'false'}`,
 			'c0-param3': `string:${options.subHeadId}`,
 			batchId: String(this.batchId++),
 			page,

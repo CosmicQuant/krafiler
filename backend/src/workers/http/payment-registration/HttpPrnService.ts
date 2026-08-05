@@ -162,7 +162,7 @@ export class HttpPrnService {
             start_row_taxObligationTable: '1',
             taxObligationTable_1: selection.liabilityPayload.taxObligationTableEncoded,
             taxObligationTable_1_1: 'Delete',
-            'paymentdetailDTO.totalAmountTobePaid': selection.liabilityPayload.amountPaid,
+            'paymentdetailDTO.totalAmountTobePaid': selection.liabilityPayload.totalAmountToBePaid || selection.liabilityPayload.amountPaid,
             'paymentdetailDTO.obligationId': selection.liabilityPayload.obligationId ?? '',
             'paymentdetailDTO.paymentMode': 'OPM',
             'paymentdetailDTO.bankCd': '-1',
@@ -171,7 +171,8 @@ export class HttpPrnService {
             'paymentdetailDTO.beneAccIdRTGS': '-1',
             // amountPaid is intentionally left blank; KRA uses the table row amount.
             amountPaid: '',
-            'paymentdetailDTO.totalamountPayableOTR': '0',
+            // For Agency Revenue (NITA/AHL), this is the actual payable amount.
+            'paymentdetailDTO.totalamountPayableOTR': (selection.liabilityPayload as any).totalamountPayableOTR ?? '0',
             prnNo: '',
             paidAmount: '',
             changeAmount: '',

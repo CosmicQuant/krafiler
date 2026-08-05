@@ -134,7 +134,7 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         subHeadLabelRegex: /\(0512\).*NITA Levy|NITA Levy/i,
         obligationType: 'AGENCY',
         defaultTaxTypeLabel: '(0512) NITA Levy',
-        fallbackSubHeadId: '40',
+        fallbackSubHeadId: '41',
     },
     affordable_housing: {
         headValue: 'AGENCY',
@@ -142,7 +142,7 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         subHeadLabelRegex: /\(0511\).*Housing Levy|Housing Levy/i,
         obligationType: 'AGENCY',
         defaultTaxTypeLabel: '(0511) Housing Levy',
-        fallbackSubHeadId: '44',
+        fallbackSubHeadId: '42',
     },
 };
 
@@ -232,6 +232,104 @@ export class TaxFormInteractor {
         const paymentTypeValue = this.resolveSelectValue($, '#cmbPaymentType', /Self Assessment/i) ?? 'SAT';
 
         const { year, month } = parsePeriodRange(periodFrom, periodTo);
+
+        // Agency Revenue obligations (NITA, Affordable Housing Levy) use a
+        // simplified DWR cascade — they do NOT call fetchTaxPeriod,
+        // fetchTotalLiabilityDetailsWeb, or fetchObligationDetail. The amount
+        // comes from the loadPRForm HTML (paymentdetailDTO.totalamountPayableOTR),
+        // not from a liability table.
+        const isAgencyRevenue = config.headValue === 'AGENCY';
+
+        if (isAgencyRevenue) {
+            // DWR cascade for Agency Revenue: getObligationRollOutDateDtls ×3,
+            // getSelectedMonthOfSelectedYearWeb (true), getObligationRollOutDateDtls,
+            // getSelectedMonthOfSelectedYearWeb (false).
+            for (let i = 0; i < 3; i++) {
+                await this.dwr.getObligationRollOutDateDtls({
+                    subHeadId: taxSubHeadValue,
+                    taxPayerId,
+                    windowName: dwrIds.windowName,
+                    scriptSessionId: dwrIds.scriptSessionId,
+                });
+            }
+
+            // The rollout date is typically embedded in the page or a fixed
+            // historical date. Use the HTML value if present, otherwise use
+            // a known default (NITA: 01/04/2019, AHL: 01/01/2013).
+            const rollOutDateFromHtml = $('input[name="paymentdetailDTO.rollOutDate"]').val()?.toString() ?? '';
+            const defaultRollOutDate = taxObligationType === 'affordable_housing' ? '01/01/2013' : '01/04/2019';
+            const rollOutDate = rollOutDateFromHtml || defaultRollOutDate;
+
+            await this.dwr.getSelectedMonthOfSelectedYearWeb({
+                date: rollOutDate,
+                subHeadId: taxSubHeadValue,
+                year: String(year),
+                booleanParam: 'true',
+                windowName: dwrIds.windowName,
+                scriptSessionId: dwrIds.scriptSessionId,
+            });
+
+            await this.dwr.getObligationRollOutDateDtls({
+                subHeadId: taxSubHeadValue,
+                taxPayerId,
+                windowName: dwrIds.windowName,
+                scriptSessionId: dwrIds.scriptSessionId,
+            });
+
+            await this.dwr.getSelectedMonthOfSelectedYearWeb({
+                date: rollOutDate,
+                subHeadId: taxSubHeadValue,
+                year: String(year),
+                booleanParam: 'false',
+                windowName: dwrIds.windowName,
+                scriptSessionId: dwrIds.scriptSessionId,
+            });
+
+            // Parse the agency amount from the loadPRForm HTML.
+            const agencyAmountStr = $('input[name="paymentdetailDTO.totalamountPayableOTR"]').val()?.toString() ?? '0';
+            const agencyAmount = Number(agencyAmountStr) || 0;
+
+            console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES`);
+
+            // Build a synthetic liability row — Agency Revenue has no liability table.
+            const fakeRow: LiabilityRow = {
+                taxTypeName: config.defaultTaxTypeLabel,
+                taxPeriod: `${month} ${year}`,
+                amountPayable: agencyAmount.toFixed(2),
+                amountPaid: String(Math.round(agencyAmount)),
+                obligationId: taxSubHeadValue,
+                hdrId: '0',
+                fromDate: formatDateDdMmYyyy(periodFrom),
+                toDate: formatDateDdMmYyyy(periodTo),
+                obligationType: config.obligationType,
+            };
+
+            const liabilityPayload = buildLiabilityPayload(fakeRow, config.defaultTaxTypeLabel, config.obligationType);
+            // For Agency Revenue, the total IS sent (unlike normal taxes where KRA computes it).
+            liabilityPayload.totalAmountToBePaid = String(Math.round(agencyAmount));
+            (liabilityPayload as any).totalamountPayableOTR = String(Math.round(agencyAmount));
+
+            const taxPayerName = taxPayerDetails.taxPayerName || taxPayerNameFromHtml;
+            const taxPayerAddress = taxPayerDetails.taxPayerFullAddr || taxPayerAddressFromHtml;
+            const taxPayerEmail = taxPayerDetails.taxPayerEmail || taxPayerEmailFromHtml;
+
+            return {
+                tokenKey,
+                taxPayerId,
+                taxPayerName,
+                taxPayerAddress,
+                taxPayerEmail,
+                taxPayerMobile: taxPayerDetails.taxPayerMobile ?? '',
+                taxPayerRegWith: taxPayerDetails.taxPayerRegWith ?? '',
+                taxHeadValue,
+                taxSubHeadValue,
+                paymentTypeValue,
+                selectedPeriodYear: String(year),
+                selectedPeriodMonth: month,
+                liabilityPayload,
+                taxPayerDetails,
+            };
+        }
 
         // DWR cascade.
 

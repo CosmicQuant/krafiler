@@ -2312,6 +2312,18 @@ export async function processFilingJob(job: JobContext): Promise<{
                         [`${obligationCol}LastFiledDate`]: new Date().toISOString(),
                     };
 
+                    // Remember the filed period so subsequent standalone PRN generation
+                    // (which reads {obligation}PeriodMonth/Year via getClientFilingPeriod)
+                    // targets the period that was just filed instead of the
+                    // previous-calendar-month default.
+                    const pMatch = periodFrom?.match(/^(\d{4})-(\d{2})/);
+                    if (pMatch) {
+                        clientUpdate[`${obligationCol}PeriodMonth`] = Number(pMatch[2]);
+                        clientUpdate[`${obligationCol}PeriodYear`] = Number(pMatch[1]);
+                        clientUpdate[`${obligationCol}Period`] = `${pMatch[1]}-${pMatch[2]}`;
+                        clientUpdate[`filedPeriods.${obligationCol}`] = FieldValue.arrayUnion(`${pMatch[1]}-${pMatch[2]}`);
+                    }
+
                     if (httpResultFinal.receiptPath) {
                         // Convert local receipt path to GCS signed URL for frontend download.
                         let receiptUrl = httpResultFinal.receiptPath;
@@ -2326,13 +2338,6 @@ export async function processFilingJob(job: JobContext): Promise<{
                             console.error(`[Worker][${jobId}] Failed to generate receipt signed URL:`, e.message);
                         }
                         clientUpdate[`${obligationCol}ReceiptUrl`] = receiptUrl;
-                    }
-
-                    const periodMatch = periodFrom.match(/^(\d{4})-(\d{2})/);
-                    if (periodMatch) {
-                        const periodKey = `${periodMatch[1]}-${periodMatch[2]}`;
-                        clientUpdate[`${obligationCol}Period`] = periodKey;
-                        clientUpdate[`filedPeriods.${obligationCol}`] = FieldValue.arrayUnion(periodKey);
                     }
 
                     await adminDb.collection('clients').doc(payload.clientId).update(clientUpdate);

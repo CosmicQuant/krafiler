@@ -292,7 +292,7 @@ export class HttpFilingOrchestrator {
                 await navigator.selectReturnObligation(this.payload.taxObligationType, this.payload.kraPin);
             }
 
-            const service = this.resolveService(this.payload.taxObligationType, session, this.job);
+            const service = this.resolveService(this.payload.taxObligationType, session, this.job, isNil);
             const input = this.buildServiceInput();
             const result = await service.execute(input);
 
@@ -312,8 +312,14 @@ export class HttpFilingOrchestrator {
     private resolveService(
         taxObligationType: string,
         session: KraHttpSession,
-        job: JobContext
+        job: JobContext,
+        isNil: boolean
     ): BaseHttpFilingService {
+        // Nil returns for ALL tax types use the same NilReturnSubmitter flow.
+        // Non-nil TOT needs zip upload, but nil TOT is just a nil return like any other.
+        if (isNil) {
+            return new NilReturnSubmitter(session, job);
+        }
         switch (taxObligationType) {
             case 'paye':
             case 'income_tax_resident_individual':

@@ -274,22 +274,33 @@ const KraNilReturnForm: React.FC<KraNilReturnFormProps> = ({
 
     const onSubmit = async (data: FilingFormData): Promise<void> => {
         try {
-            const fallbackMriPeriod = getPreviousMonthRange();
+            const fallbackPrevMonth = getPreviousMonthRange();
+
+            // Derive periodFrom/periodTo for toT from year+month numeric inputs.
+            let periodFrom: string | undefined = data.periodFrom || undefined;
+            let periodTo: string | undefined = data.periodTo || undefined;
+
+            if (isTotReturn) {
+                // TOT uses Filing Year + Month numeric inputs — derive the month range.
+                if (data.totYear && data.totMonth) {
+                    const lastDay = new Date(data.totYear, data.totMonth, 0).getDate();
+                    const mm = String(data.totMonth).padStart(2, '0');
+                    periodFrom = `${data.totYear}-${mm}-01`;
+                    periodTo = `${data.totYear}-${mm}-${String(lastDay).padStart(2, '0')}`;
+                }
+            } else if (isMriReturn) {
+                // MRI is monthly — default to previous month
+                periodFrom = periodFrom || fallbackPrevMonth.periodFrom;
+                periodTo = periodTo || fallbackPrevMonth.periodTo;
+            }
+
             const result = await apiFetchJson<FilingResponse>('/tax/file-return', {
                 method: 'POST',
                 body: JSON.stringify({
                     ...data,
                     kraPin: data.kraPin.toUpperCase(),
-                    periodFrom: isMriReturn
-                        ? (data.periodFrom || fallbackMriPeriod.periodFrom)
-                        : isTotReturn
-                            ? undefined
-                            : data.periodFrom,
-                    periodTo: isMriReturn
-                        ? (data.periodTo || fallbackMriPeriod.periodTo)
-                        : isTotReturn
-                            ? undefined
-                            : data.periodTo,
+                    periodFrom,
+                    periodTo,
                     ownsRentalProperty: (data.taxObligationType === 'income_tax_resident_individual' || data.taxObligationType === 'income_tax_non_resident_individual')
                         ? data.ownsRentalProperty
                         : false,

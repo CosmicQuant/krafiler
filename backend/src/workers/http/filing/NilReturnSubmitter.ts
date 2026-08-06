@@ -19,9 +19,35 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
     }
 
     async file(input: Record<string, unknown>): Promise<FilingReceiptResult> {
+        const periodFromRaw = String(input.periodFrom ?? '');
+        const periodToRaw = String(input.periodTo ?? '');
+
+        // Derive period from totYear/totMonth if periodFrom/periodTo are missing (nil ToT).
+        let periodFromStr = periodFromRaw === 'undefined' || periodFromRaw === '' ? '' : periodFromRaw;
+        let periodToStr = periodToRaw === 'undefined' || periodToRaw === '' ? '' : periodToRaw;
+
+        const totYear = Number(input.totYear);
+        const totMonth = Number(input.totMonth);
+
+        if ((!periodFromStr || !periodToStr) && Number.isFinite(totYear) && Number.isFinite(totMonth)) {
+            const lastDay = new Date(totYear, totMonth, 0).getDate();
+            const mm = String(totMonth).padStart(2, '0');
+            periodFromStr = `${totYear}-${mm}-01`;
+            periodToStr = `${totYear}-${mm}-${String(lastDay).padStart(2, '0')}`;
+        }
+
+        // Fallback to previous month for monthly obligations when still empty.
+        if (!periodFromStr || !periodToStr) {
+            const now = new Date();
+            const firstOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const lastOfPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+            periodFromStr = periodFromStr || firstOfPrevMonth.toISOString().slice(0, 10);
+            periodToStr = periodToStr || lastOfPrevMonth.toISOString().slice(0, 10);
+        }
+
         const nilInput: NilReturnInput = {
-            periodFrom: String(input.periodFrom),
-            periodTo: String(input.periodTo),
+            periodFrom: periodFromStr,
+            periodTo: periodToStr,
             ownsRentalProperty: input.ownsRentalProperty === true,
             taxObligationType: String(input.taxObligationType) as TaxObligationType,
             kraPin: String(input.kraPin),
@@ -99,13 +125,41 @@ export class NilReturnSubmitter extends BaseHttpFilingService {
             payload.ownsRentalProperty = nilInput.ownsRentalProperty === true ? 'Yes' : 'No';
         }
 
-        await appendJobLog(this.job, `Submitting nil return for ${nilInput.periodFrom} to ${nilInput.periodTo}`, { progress: 80 });
+        await appendJobLog(this.job, `Submitting nil return for ${nilInput.periodFrom} to ${nilInput.periodTo} (${nilInput.taxObligationType})`, { progress: 80 });
 
-        const submitResponse = await this.session.post(
+        // KRA nil return forms use enctype="multipart/form-data" — build a
+        // multipart body with boundary, matching browser behavior exactly.
+        const boundary = `----WebKitFormBoundary${Date.now().toString(36)}`;
+        const crlf = '\r\n';
+        const parts: string[] = [];
+
+        for (const [name, value] of Object.entries(payload)) {
+            parts.push(`--${boundary}`);
+            parts.push(`Content-Disposition: form-data; name="${name}"`);
+            parts.push('');
+            parts.push(String(value));
+        }
+        parts.push(`--${boundary}--`);
+        parts.push('');
+
+        const multipartBody = parts.join(crlf);
+
+        const submitResponse = await this.session.client.postRaw(
             'eReturns.htm?actionCode=fileNilReturn',
-            payload,
-            { timeout: 60_000 }
+            Buffer.from(multipartBody, 'utf-8'),
+            {
+                step: 'form-submit',
+                headers: {
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    Referer: 'https://itax.kra.go.ke/KRA-Portal/eReturns.htm?actionCode=initPage',
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                    Origin: 'https://itax.kra.go.ke',
+                    'Upgrade-Insecure-Requests': '1',
+                },
+                timeout: 60_000,
+            }
         );
+        this.session.lastResponse = submitResponse;
 
         const errors = parsePortalErrors(submitResponse);
         const mapped = errors.map((e) => mapPortalMessage(e)).find(Boolean);

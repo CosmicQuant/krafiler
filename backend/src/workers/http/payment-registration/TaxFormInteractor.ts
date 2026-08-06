@@ -134,7 +134,7 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         subHeadLabelRegex: /\(0512\).*NITA Levy|NITA Levy/i,
         obligationType: 'AGENCY',
         defaultTaxTypeLabel: '(0512) NITA Levy',
-        fallbackSubHeadId: '41',
+        fallbackSubHeadId: '42',
     },
     affordable_housing: {
         headValue: 'AGENCY',
@@ -142,7 +142,7 @@ const TAX_TYPE_CONFIG: Record<string, { headValue: string; headLabelRegex: RegEx
         subHeadLabelRegex: /\(0511\).*Housing Levy|Housing Levy/i,
         obligationType: 'AGENCY',
         defaultTaxTypeLabel: '(0511) Housing Levy',
-        fallbackSubHeadId: '42',
+        fallbackSubHeadId: '41',
     },
 };
 
@@ -165,7 +165,8 @@ export class TaxFormInteractor {
         periodFrom: string,
         periodTo: string,
         dwrIds: { windowName: string; scriptSessionId: string },
-        kraPin: string
+        kraPin: string,
+        manualAmount?: number
     ): Promise<TaxFormSelection> {
         const $ = cheerio.load(html);
 
@@ -255,9 +256,9 @@ export class TaxFormInteractor {
 
             // The rollout date is typically embedded in the page or a fixed
             // historical date. Use the HTML value if present, otherwise use
-            // a known default (NITA: 01/04/2019, AHL: 01/01/2013).
+            // a known default (NITA: 01/01/2013, AHL: 01/04/2019).
             const rollOutDateFromHtml = $('input[name="paymentdetailDTO.rollOutDate"]').val()?.toString() ?? '';
-            const defaultRollOutDate = taxObligationType === 'affordable_housing' ? '01/01/2013' : '01/04/2019';
+            const defaultRollOutDate = taxObligationType === 'nita' ? '01/01/2013' : '01/04/2019';
             const rollOutDate = rollOutDateFromHtml || defaultRollOutDate;
 
             await this.dwr.getSelectedMonthOfSelectedYearWeb({
@@ -285,32 +286,41 @@ export class TaxFormInteractor {
                 scriptSessionId: dwrIds.scriptSessionId,
             });
 
-            // Parse the agency amount from the DWR response.
-            // The response contains JavaScript like:
-            //   dwr.engine.remote.handleCallback("5","0",{amountPaid:"675",...})
-            //   dwr.engine.remote.handleCallback("5","0",[{amountPaid:"675",...}])
-            // Try multiple patterns to extract the amount.
+            // Agency Revenue obligations (NITA, AHL) do not expose a liability from
+            // KRA. The payable amount is computed by the payroll engine and supplied
+            // by the caller. Use the provided manual amount first; otherwise try
+            // the legacy DWR/HTML fallbacks (which usually return 0).
             let agencyAmount = 0;
-            const amountPatterns: RegExp[] = [
-                /amountPaid["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
-                /amountPayable["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
-                /totalAmount["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
-            ];
-            for (const pattern of amountPatterns) {
-                const match = monthYearResponse.match(pattern);
-                if (match) {
-                    agencyAmount = Number(match[1]);
-                    break;
+            if (manualAmount !== undefined && manualAmount > 0) {
+                agencyAmount = manualAmount;
+                console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES (from payroll)`);
+            } else {
+                // Parse the agency amount from the DWR response.
+                // The response contains JavaScript like:
+                //   dwr.engine.remote.handleCallback("5","0",{amountPaid:"675",...})
+                //   dwr.engine.remote.handleCallback("5","0",[{amountPaid:"675",...}])
+                // Try multiple patterns to extract the amount.
+                const amountPatterns: RegExp[] = [
+                    /amountPaid["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+                    /amountPayable["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+                    /totalAmount["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/i,
+                ];
+                for (const pattern of amountPatterns) {
+                    const match = monthYearResponse.match(pattern);
+                    if (match) {
+                        agencyAmount = Number(match[1]);
+                        break;
+                    }
                 }
-            }
 
-            // Fallback: parse amount from the loadPRForm HTML.
-            if (agencyAmount === 0) {
-                const agencyAmountStr = $('input[name="paymentdetailDTO.totalamountPayableOTR"]').val()?.toString() ?? '0';
-                agencyAmount = Number(agencyAmountStr) || 0;
-            }
+                // Fallback: parse amount from the loadPRForm HTML.
+                if (agencyAmount === 0) {
+                    const agencyAmountStr = $('input[name="paymentdetailDTO.totalamountPayableOTR"]').val()?.toString() ?? '0';
+                    agencyAmount = Number(agencyAmountStr) || 0;
+                }
 
-            console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES (DWR response snippet: ${monthYearResponse.slice(0, 300)})`);
+                console.log(`[TaxFormInteractor] Agency Revenue amount for ${taxObligationType}: ${agencyAmount} KES (DWR response snippet: ${monthYearResponse.slice(0, 300)})`);
+            }
 
             // Build a synthetic liability row — Agency Revenue has no liability table.
             const fakeRow: LiabilityRow = {

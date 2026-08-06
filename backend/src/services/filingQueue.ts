@@ -30,6 +30,8 @@ interface FilingGuardInput {
     vatPreviousCredit?: number;
     sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;
+    nitaAmount?: number;
+    housingLevyAmount?: number;
 }
 
 function normaliseOptionalNumber(value: unknown): number | null {
@@ -55,6 +57,8 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         vatCurrentMonthDownload: Boolean(input.vatCurrentMonthDownload),
         vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
         printPrnOnly: Boolean(input.printPrnOnly),
+        nitaAmount: normaliseOptionalNumber(input.nitaAmount),
+        housingLevyAmount: normaliseOptionalNumber(input.housingLevyAmount),
     });
 }
 
@@ -88,6 +92,8 @@ export async function findDuplicatePendingFiling(
             vatCurrentMonthDownload: pendingJobData.payload.vatCurrentMonthDownload,
             vatPreviousCredit: pendingJobData.payload.vatPreviousCredit,
             printPrnOnly: pendingJobData.payload.printPrnOnly,
+            nitaAmount: pendingJobData.payload.nitaAmount,
+            housingLevyAmount: pendingJobData.payload.housingLevyAmount,
         });
 
         if (pendingKey !== requestedKey) continue;

@@ -1,5 +1,6 @@
 import { JobContext, NilReturnPayload } from '../../../types';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
+import { adminDb } from '../../../lib/firebaseAdmin';
 import { KraHttpSession } from '../session/KraHttpSession';
 import { HttpLoginService } from '../navigation/HttpLoginService';
 import { ReturnsNavigator } from '../navigation/ReturnsNavigator';
@@ -139,9 +140,32 @@ export class HttpFilingOrchestrator {
                 const allPrnResults: Array<{ taxType?: string; prnPath?: string; prnGcsPath?: string; error?: string }> = [];
                 let hasAtLeastOneSuccess = false;
 
+                // Load once for the PAYE+NITA+AHL case. Fall back to payload amounts if available.
+                let clientAmounts: { nitaAmount?: number; housingLevyAmount?: number } = {};
+                if (this.payload.clientId) {
+                    try {
+                        const clientDoc = await adminDb.collection('clients').doc(this.payload.clientId).get();
+                        if (clientDoc.exists) {
+                            const clientData = clientDoc.data() as any;
+                            clientAmounts = {
+                                nitaAmount: clientData?.amounts?.nitaAmount ?? this.payload.nitaAmount,
+                                housingLevyAmount: clientData?.amounts?.housingLevyAmount ?? this.payload.housingLevyAmount,
+                            };
+                        }
+                    } catch (err) {
+                        console.warn(`[HTTP Filing] Could not load client amounts for PRN:`, (err as Error).message);
+                    }
+                }
+
                 for (const prnConfig of prnTaxTypes) {
                     try {
                         await appendJobLog(this.job, `Generating PRN for ${prnConfig.label}...`, { progress: 80 });
+
+                        const amount = prnConfig.taxType === 'nita'
+                            ? (clientAmounts.nitaAmount ?? this.payload.nitaAmount)
+                            : prnConfig.taxType === 'affordable_housing'
+                            ? (clientAmounts.housingLevyAmount ?? this.payload.housingLevyAmount)
+                            : undefined;
 
                         const prnService = new HttpPrnService({ session, job: this.job });
                         const prnResult = await prnService.execute({
@@ -155,6 +179,7 @@ export class HttpFilingOrchestrator {
                             otpCode: this.payload.otpCode,
                             userId: this.job.data.userId,
                             jobId: this.job.data.jobId,
+                            amount,
                         });
 
                         allPrnResults.push({

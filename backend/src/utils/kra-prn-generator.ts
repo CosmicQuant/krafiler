@@ -7,6 +7,8 @@ export interface PrnConfig {
     taxType: string;
     periodFrom?: string;
     kraPin?: string;
+    /** Payroll-computed amount for NITA / Affordable Housing Levy PRNs. */
+    amount?: number;
 }
 
 const TAX_MAPPING: Record<string, { headRegex: RegExp; subHeadRegex: RegExp }> = {
@@ -403,19 +405,21 @@ export async function generatePRNSlip(
         console.log(`[PRN] Add click target: ${addClicked}`);
         await page.waitForTimeout(3_000);
 
-        // If KRA shows "Entered amount should be greater than 0", populate the amount field and re-add
-        const amountSet = await page.evaluate(() => {
+        // If KRA shows "Entered amount should be greater than 0", populate the amount field and re-add.
+        // For NITA/AHL the amount is payroll-computed and passed via config.amount; otherwise fall back to 1000.
+        const amountToEnter = config.amount && config.amount > 0 ? String(Math.round(config.amount)) : '1000';
+        const amountSet = await page.evaluate((amount: string) => {
             const amountInput =
                 (document.getElementById('in_taxObligationTable_11') as HTMLInputElement | null) ||
                 (document.querySelector('input[name*="amount"], input[id*="amount"], input[id*="Amount"]') as HTMLInputElement | null);
             if (amountInput) {
-                amountInput.value = '1000';
+                amountInput.value = amount;
                 amountInput.dispatchEvent(new Event('change', { bubbles: true }));
                 amountInput.dispatchEvent(new Event('input', { bubbles: true }));
                 return true;
             }
             return false;
-        });
+        }, amountToEnter);
         console.log(`[PRN] Amount input set: ${amountSet}`);
         if (amountSet) {
             await page.waitForTimeout(1_500);

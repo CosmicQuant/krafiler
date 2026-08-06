@@ -288,6 +288,30 @@ const validateFilingRequest = [
 
             return true;
         }),
+
+    body('nitaAmount')
+        .custom((value: unknown) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                throw new Error('nitaAmount must be a non-negative number');
+            }
+            return true;
+        }),
+
+    body('housingLevyAmount')
+        .custom((value: unknown) => {
+            if (value === undefined || value === null || value === '') {
+                return true;
+            }
+            const numericValue = typeof value === 'number' ? value : Number(value);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                throw new Error('housingLevyAmount must be a non-negative number');
+            }
+            return true;
+        }),
 ];
 
 // ─── POST /api/tax/file-return (+ legacy alias) ─────────────────────────────
@@ -311,7 +335,7 @@ router.post(
             return;
         }
 
-        const { kraPin, clientId, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatCurrentMonthDownload, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly } =
+        const { kraPin, clientId, clientName, kraPassword, periodFrom, periodTo, taxObligationType, ownsRentalProperty, rentalIncomeAmount, totYear, totMonth, totTurnover, otpCode, payeZipUrl, vatZipUrl, prepareVatOnly, vatCurrentMonthDownload, vatPreviousCredit, sectionBWithoutPinSales, printPrnOnly, nitaAmount, housingLevyAmount } =
             req.body as any;
 
         const effectivePeriod = taxObligationType === 'monthly_rental_income' && (!periodFrom || !periodTo)
@@ -355,6 +379,16 @@ router.post(
                         ? Number(sectionBWithoutPinSales)
                         : undefined,
                 printPrnOnly: Boolean(req.body.printPrnOnly),
+                nitaAmount: typeof nitaAmount === 'number'
+                    ? nitaAmount
+                    : nitaAmount !== undefined && nitaAmount !== null && nitaAmount !== ''
+                        ? Number(nitaAmount)
+                        : undefined,
+                housingLevyAmount: typeof housingLevyAmount === 'number'
+                    ? housingLevyAmount
+                    : housingLevyAmount !== undefined && housingLevyAmount !== null && housingLevyAmount !== ''
+                        ? Number(housingLevyAmount)
+                        : undefined,
             });
 
             if (duplicatePendingJob) {
@@ -428,6 +462,12 @@ router.post(
                         : {}),
                     ...(sectionBWithoutPinSales !== undefined && sectionBWithoutPinSales !== null && sectionBWithoutPinSales !== ''
                         ? { sectionBWithoutPinSales: Number(sectionBWithoutPinSales) }
+                        : {}),
+                    ...(nitaAmount !== undefined && nitaAmount !== null && nitaAmount !== ''
+                        ? { nitaAmount: Number(nitaAmount) }
+                        : {}),
+                    ...(housingLevyAmount !== undefined && housingLevyAmount !== null && housingLevyAmount !== ''
+                        ? { housingLevyAmount: Number(housingLevyAmount) }
                         : {}),
                 },
                 createdAt: new Date().toISOString(),

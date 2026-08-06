@@ -204,7 +204,9 @@ export function useFilingActions(deps: FilingActionsDeps) {
                 periodTo,
                 taxObligationType: "paye",
                 payeZipUrl: activeClient.payeZipUrl,
-                ownsRentalProperty: false
+                ownsRentalProperty: false,
+                nitaAmount: activeClient.nitaAmount,
+                housingLevyAmount: activeClient.housingLevyAmount,
             };
 
             const res = await apiFetch('/tax/file-return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -433,7 +435,9 @@ export function useFilingActions(deps: FilingActionsDeps) {
                     periodTo,
                     taxObligationType: obligation,
                     ownsRentalProperty: false,
-                    printPrnOnly: true
+                    printPrnOnly: true,
+                    nitaAmount: client.nitaAmount,
+                    housingLevyAmount: client.housingLevyAmount,
                 }),
             });
             if (!res.ok) { const data = await res.json(); throw new Error(data.message || `Failed to queue ${type} PRN generation.`); }

@@ -64,6 +64,10 @@ export interface NilReturnPayload {
     sectionBWithoutPinSales?: number;
     nssfFileUrl?: string;
     masterFileUrl?: string;
+    /** Payroll-computed NITA Levy amount for PRN generation. */
+    nitaAmount?: number;
+    /** Payroll-computed Affordable Housing Levy amount for PRN generation. */
+    housingLevyAmount?: number;
 }
 
 export interface FilingJob {
@@ -126,6 +130,9 @@ export interface FileNilReturnRequest {
     vatPreviousCredit?: number;
     sectionBWithoutPinSales?: number;
     printPrnOnly?: boolean;
+    /** Payroll-computed amounts for NITA and Affordable Housing Levy PRNs (PAYE only). */
+    nitaAmount?: number;
+    housingLevyAmount?: number;
 }
 
 export interface FileNilReturnResponse {

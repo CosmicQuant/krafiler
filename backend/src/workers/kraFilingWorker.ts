@@ -342,15 +342,39 @@ export async function generatePrnAfterFiling(
 
     const prnService = new PrnService(page, parentJob);
 
+    // Load payroll-computed NITA/AHL amounts from the client doc when available.
+    let clientAmounts: { nitaAmount?: number; housingLevyAmount?: number } = {};
+    const clientId = (parentJob.data.payload as any).clientId;
+    if (clientId) {
+        try {
+            const clientDoc = await adminDb.collection('clients').doc(clientId).get();
+            if (clientDoc.exists) {
+                const clientData = clientDoc.data() as any;
+                clientAmounts = {
+                    nitaAmount: clientData?.amounts?.nitaAmount ?? (parentJob.data.payload as any).nitaAmount,
+                    housingLevyAmount: clientData?.amounts?.housingLevyAmount ?? (parentJob.data.payload as any).housingLevyAmount,
+                };
+            }
+        } catch (err) {
+            console.warn(`[PRN Auto] Could not load client amounts:`, (err as Error).message);
+        }
+    }
+
     for (const prnConfig of prnTypesToGenerate) {
         // Use the filing period so the PRN matches the return period (e.g. May 2026 VAT)
         const prnDate = periodFrom ? new Date(periodFrom) : new Date();
+        const amount = prnConfig.taxType === 'nita'
+            ? (clientAmounts.nitaAmount ?? (parentJob.data.payload as any).nitaAmount)
+            : prnConfig.taxType === 'affordable_housing'
+            ? (clientAmounts.housingLevyAmount ?? (parentJob.data.payload as any).housingLevyAmount)
+            : undefined;
         const prnConfigObj: PrnConfig = {
             taxType: prnConfig.taxType,
             periodYear: prnDate.getFullYear().toString(),
             periodMonth: prnDate.toLocaleString('default', { month: 'long' }),
             periodFrom,
             kraPin,
+            amount,
         };
 
         try {

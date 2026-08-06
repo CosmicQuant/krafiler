@@ -1098,26 +1098,13 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
 
         let gcsPath: string | null = null;
         let fileName = isPrn ? `${baseObligation}_prn.pdf` : `${baseObligation}_receipt.pdf`;
-
-        // For PAYE PRNs, prefer the client document's payePrnResults array. It is
-        // updated immediately by both filing and print-PRN jobs and contains the
-        // GCS paths for all three statutory PRNs (PAYE, NITA, AHL).
         const clientData = clientDoc.data();
-        if (isPrn && baseObligation === 'paye' && clientData) {
-            const payePrnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
-                clientData.payePrnResults || [];
-            const targetTaxType = prnTaxType || 'paye';
-            const match = payePrnResults.find(
-                (r) => r.taxType?.toLowerCase() === targetTaxType && (r.prnGcsPath || r.prnPath)
-            );
-            if (match) {
-                gcsPath = match.prnGcsPath || null;
-                if (!gcsPath && match.prnPath && match.prnPath.startsWith('users/')) {
-                    gcsPath = match.prnPath;
-                }
-            }
-        }
 
+        // Prefer the most recent COMPLETED job's own result.prnResults, which is
+        // written to the job doc as soon as the run finishes — before the worker
+        // merges the new paths into the client doc's payePrnResults. Reading the
+        // freshest job first avoids serving a stale (older-period) PRN during the
+        // small race window between job completion and the client-doc merge.
         for (const { data } of jobDocs) {
             if (gcsPath) break;
             if (isPrn) {
@@ -1147,6 +1134,24 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
             } else {
                 gcsPath = data?.artifacts?.receiptGcsPath || null;
                 if (gcsPath) break;
+            }
+        }
+
+        // Fallback to the client document's merged payePrnResults array (covers
+        // the case where the originating job doc has been pruned past the 50-doc
+        // window). Contains the GCS paths for all three statutory PRNs.
+        if (!gcsPath && isPrn && baseObligation === 'paye' && clientData) {
+            const payePrnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
+                clientData.payePrnResults || [];
+            const targetTaxType = prnTaxType || 'paye';
+            const match = payePrnResults.find(
+                (r) => r.taxType?.toLowerCase() === targetTaxType && (r.prnGcsPath || r.prnPath)
+            );
+            if (match) {
+                gcsPath = match.prnGcsPath || null;
+                if (!gcsPath && match.prnPath && match.prnPath.startsWith('users/')) {
+                    gcsPath = match.prnPath;
+                }
             }
         }
 

@@ -23,6 +23,8 @@ export interface HttpPrnInput {
     otpCode?: string;
     userId?: string;
     jobId?: string;
+    /** Payroll-computed amount for NITA or Affordable Housing Levy PRNs. */
+    amount?: number;
 }
 
 export interface HttpPrnResult {
@@ -79,7 +81,8 @@ export class HttpPrnService {
             input.periodFrom,
             input.periodTo,
             dwrIds,
-            input.kraPin
+            input.kraPin,
+            input.amount
         );
         await this.log(`Selected liability: ${selection.liabilityPayload.amountPaid} KES`, 78);
 

@@ -1960,6 +1960,12 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
     try {
         const clientId = req.params.clientId;
         const uid = req.user!.uid;
+        // Optional period filter (YYYY-MM). The receipts endpoint honours ?period=
+        // so we mirror the selected period into the receipt URLs here too.
+        const period = (req.query.period as string | undefined)?.trim() || '';
+        const nssfPeriod = period
+            ? `${period.split('-')[1]}/${period.split('-')[0]}`
+            : '';
 
         // All compliance data (file URLs, statuses, amounts, receipt URLs) is stored
         // on the client document, not the payroll run. Verify client ownership only —
@@ -1970,7 +1976,59 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
         }
         const client = clientDoc.data() as any;
 
+        // If a period filter is present, look up the freshest completed job for
+        // that period so the receipt URLs point at the correct period's files.
+        let payeReceiptUrl: string | null = client.payeReceiptUrl || null;
+        let nssfReceiptUrl: string | null = client.nssfReceiptUrl || null;
+        let shaReceiptUrl: string | null = client.shaReceiptUrl || null;
+        if (period) {
+            const jobsSnap = await adminDb.collection('jobs')
+                .where('clientId', '==', clientId)
+                .limit(60)
+                .get();
+            const match = (taxType: string): string | null => {
+                const candidates = jobsSnap.docs
+                    .map((d) => ({ data: d.data() }))
+                    .filter((j) => {
+                        const p = j.data?.payload?.payload || {};
+                        if (p.taxObligationType !== taxType) return false;
+                        if (taxType === 'nssf') return String(p.nssfPeriod || '') === nssfPeriod;
+                        return String(p.periodFrom || '').startsWith(period);
+                    })
+                    .sort((a, b) => {
+                        const ca = a.data?.completedAt?.toMillis?.() || 0;
+                        const cb = b.data?.completedAt?.toMillis?.() || 0;
+                        return cb - ca;
+                    });
+                const top = candidates[0];
+                if (!top) return null;
+                return top.data?.artifacts?.receiptGcsPath
+                    ? `/api/clients/${clientId}/receipts/${taxType}${period ? `?period=${period}` : ''}`
+                    : null;
+            };
+            const payeJob = match('paye');
+            if (payeJob) payeReceiptUrl = payeJob;
+            const nssfJob = match('nssf');
+            if (nssfJob) nssfReceiptUrl = nssfJob;
+            const shaJob = match('sha');
+            if (shaJob) shaReceiptUrl = shaJob;
+        }
+
         // Return persisted compliance file info from the client document
+        // Statuses reflect the selected period when a period filter is active;
+        // otherwise they fall back to the client doc's overall status.
+        const periodStatuses = period
+            ? {
+                paye: payeReceiptUrl ? 'filed' : (client.paye ?? client.status?.paye ?? 'na'),
+                nssf: nssfReceiptUrl ? 'filed' : (client.nssf ?? client.status?.nssf ?? 'na'),
+                sha: shaReceiptUrl ? 'filed' : (client.sha ?? client.status?.sha ?? 'na'),
+            }
+            : {
+                paye: client.paye ?? client.status?.paye ?? 'na',
+                nssf: client.nssf ?? client.status?.nssf ?? 'na',
+                sha: client.sha ?? client.status?.sha ?? 'na',
+            };
+
         res.json({
             payeZipUrl: client.generatedFiles?.payeZipUrl || null,
             payeZipLabel: client.generatedFiles?.payeZipLabel || null,
@@ -1978,11 +2036,7 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
             nssfFileLabel: client.generatedFiles?.nssfFileLabel || null,
             shaFileUrl: client.generatedFiles?.shaFileUrl || null,
             shaFileLabel: client.generatedFiles?.shaFileLabel || null,
-            statuses: {
-                paye: client.paye ?? client.status?.paye ?? 'na',
-                nssf: client.nssf ?? client.status?.nssf ?? 'na',
-                sha: client.sha ?? client.status?.sha ?? 'na',
-            },
+            statuses: periodStatuses,
             amounts: {
                 payeAmount: client.amounts?.payeAmount || 0,
                 nitaAmount: client.amounts?.nitaAmount || 0,
@@ -1990,10 +2044,10 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
                 nssfAmount: client.amounts?.nssfAmount || 0,
                 shaAmount: client.amounts?.shaAmount || 0,
             },
-            // Receipt URLs from filing jobs
-            payeReceiptUrl: client.payeReceiptUrl || null,
-            nssfReceiptUrl: client.nssfReceiptUrl || null,
-            shaReceiptUrl: client.shaReceiptUrl || null,
+            // Receipt URLs from filing jobs (period-aware when ?period is set)
+            payeReceiptUrl,
+            nssfReceiptUrl,
+            shaReceiptUrl,
         });
     } catch (err: any) {
         console.error('Error fetching compliance status:', err);

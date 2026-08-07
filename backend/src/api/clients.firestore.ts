@@ -1049,6 +1049,14 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
     const baseObligation = isPrn ? obligationType.replace(/_prn$/, '') : obligationType;
     const token = normalizeObligationToken(baseObligation);
 
+    // Optional period filter (YYYY-MM). When provided, only jobs whose period
+    // matches are considered, so the download reflects the user's selected month.
+    const periodFilter = (req.query.period as string | undefined)?.trim() || '';
+    // NSSF stores its period as "MM/YYYY"; convert the query format for matching.
+    const nssfPeriodFilter = periodFilter
+        ? `${periodFilter.split('-')[1]}/${periodFilter.split('-')[0]}`
+        : '';
+
     // Sub-obligations (e.g. NITA Levy, Affordable Housing Levy) are generated as part
     // of a PAYE filing. They are not top-level taxObligationType values, so query
     // under the parent obligation and then filter by the specific PRN taxType.
@@ -1087,7 +1095,22 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
                     j.data?.payload?.payload?.taxObligationType ||
                     j.data?.payload?.taxObligationType ||
                     j.data?.taxObligationType;
-                return jobTaxType === parentObligation;
+                if (jobTaxType !== parentObligation) return false;
+
+                // When a period filter is provided, match it against the job's period.
+                if (periodFilter) {
+                    const jobPayload = j.data?.payload?.payload || j.data?.payload || {};
+                    // NSSF stores period as "MM/YYYY" (nssfPeriod); others use periodFrom (YYYY-MM-DD).
+                    const jobNssfPeriod = String(jobPayload.nssfPeriod || '');
+                    const jobPeriodFrom = String(jobPayload.periodFrom || '');
+                    if (parentObligation === 'nssf') {
+                        if (jobNssfPeriod !== nssfPeriodFilter) return false;
+                    } else {
+                        if (!jobPeriodFrom.startsWith(periodFilter)) return false;
+                    }
+                }
+
+                return true;
             })
             .sort((a, b) => {
                 const ca = a.data?.completedAt?.toMillis?.() || 0;
@@ -1140,7 +1163,9 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
         // Fallback to the client document's merged payePrnResults array (covers
         // the case where the originating job doc has been pruned past the 50-doc
         // window). Contains the GCS paths for all three statutory PRNs.
-        if (!gcsPath && isPrn && baseObligation === 'paye' && clientData) {
+        // Skip this fallback when a period filter is active — the merged array
+        // does not carry per-entry period info and would serve a wrong period.
+        if (!gcsPath && !periodFilter && isPrn && baseObligation === 'paye' && clientData) {
             const payePrnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
                 clientData.payePrnResults || [];
             const targetTaxType = prnTaxType || 'paye';

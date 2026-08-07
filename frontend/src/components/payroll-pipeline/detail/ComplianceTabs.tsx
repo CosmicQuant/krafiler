@@ -68,7 +68,17 @@ function deriveStatus(_k: string, rs: RunStatus, ss: string, hu: boolean): Oblig
 }
 
 function roundMoney(amount: number): number {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
+  return Math.round(amount * 100) / 100;
+}
+
+/** Append ?period=YYYY-MM to a /api/clients/.../receipts/ route so the backend
+ * serves the receipt/PRN that matches the user's selected payroll period. */
+function withPeriod(url: string, period: string | undefined): string {
+  if (!period) return url;
+  // Only routes that hit the backend receipts endpoint are period-filtered.
+  if (!url.startsWith('/api/clients/')) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}period=${period}`;
 }
 
 function splitName(fullName: string) {
@@ -89,8 +99,8 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
 
   const fetchStatus = useCallback(async () => {
     if (!runId) return;
-    try { const res = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/compliance-status`); if (res.ok) setState(await res.json()); } catch {}
-  }, [client.id, runId]);
+    try { const res = await apiFetch(`/clients/${client.id}/payroll-runs/${runId}/compliance-status${period ? `?period=${period}` : ''}`); if (res.ok) setState(await res.json()); } catch {}
+  }, [client.id, runId, period]);
 
   const fetchEmployees = useCallback(async () => {
     try { const res = await apiFetch(`/clients/${client.id}/employees`); if (res.ok) setEmployees(await res.json()); } catch {}
@@ -391,10 +401,10 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
                     : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
                     : false;
-                  if (!isFiled || !receiptUrl) return null;
+if (!isFiled || !receiptUrl) return null;
                   return (
                     <button
-                      onClick={() => downloadAuthFile(receiptUrl, 'receipt.pdf')}
+                      onClick={() => downloadAuthFile(withPeriod(receiptUrl, period), 'receipt.pdf')}
                       className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition w-full"
                     >
                       <Download className="h-3.5 w-3.5" /> Download Receipt
@@ -417,13 +427,14 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                           : r.taxType === 'nita' ? 'NITA Levy PRN'
                           : r.taxType === 'affordable_housing' ? 'Housing Levy PRN'
                           : 'PRN';
-                        const url = r.prnGcsPath
+                        const rawUrl = r.prnGcsPath
                           ? `/api/clients/${client.id}/receipts/${r.taxType}_prn`
                           : r.prnPath;
+                        const url = withPeriod(rawUrl, period);
                         if (url) prnEntries.push({ label, url });
                       });
                     } else if (liveClient.payePrnUrl) {
-                      prnEntries.push({ label: 'PAYE PRN', url: liveClient.payePrnUrl });
+                      prnEntries.push({ label: 'PAYE PRN', url: withPeriod(liveClient.payePrnUrl, period) });
                     }
                   } else {
                     // Single PRN for other obligations

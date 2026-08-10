@@ -1982,9 +1982,14 @@ router.get('/:clientId/payroll-runs/:id/compliance-status', async (req: Authenti
         let nssfReceiptUrl: string | null = client.nssfReceiptUrl || null;
         let shaReceiptUrl: string | null = client.shaReceiptUrl || null;
         if (period) {
+            // Unordered Firestore get() returns docs by document ID, not recency, so a
+            // low limit can miss the newest filing for prolific clients. Use a generous
+            // limit so the period match below always sees recent filings. The
+            // compliance-status endpoint is called per dashboard load, but these reads
+            // are cheap relative to a stale/missing receipt URL.
             const jobsSnap = await adminDb.collection('jobs')
                 .where('clientId', '==', clientId)
-                .limit(60)
+                .limit(250)
                 .get();
             const match = (taxType: string): string | null => {
                 const candidates = jobsSnap.docs

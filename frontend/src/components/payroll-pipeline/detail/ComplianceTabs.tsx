@@ -78,6 +78,8 @@ function withPeriod(url: string | undefined, period: string | undefined): string
     if (!period) return url;
     // Only routes that hit the backend receipts endpoint are period-filtered.
     if (!url.startsWith('/api/clients/')) return url;
+    // Idempotent: don't append period if the URL already carries one.
+    if (/[?&]period=/.test(url)) return url;
     const sep = url.includes('?') ? '&' : '?';
     return `${url}${sep}period=${period}`;
 }

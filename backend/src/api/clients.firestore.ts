@@ -1051,7 +1051,12 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
 
     // Optional period filter (YYYY-MM). When provided, only jobs whose period
     // matches are considered, so the download reflects the user's selected month.
-    const periodFilter = (req.query.period as string | undefined)?.trim() || '';
+    // Express returns an array when the same query param repeats (e.g.
+    // ?period=2026-07&period=2026-07); coerce the first value defensively.
+    const rawPeriod = req.query.period;
+    const periodFilter = (Array.isArray(rawPeriod) ? rawPeriod[0]
+        : rawPeriod !== undefined ? rawPeriod : ''
+    )?.toString().trim() || '';
     // NSSF stores its period as "MM/YYYY"; convert the query format for matching.
     const nssfPeriodFilter = periodFilter
         ? `${periodFilter.split('-')[1]}/${periodFilter.split('-')[0]}`
@@ -1083,9 +1088,15 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
         // taxObligationType is stored nested inside payload.payload, so a simple where
         // clause on the nested field would require a dedicated composite index. Filtering
         // in memory keeps the query index-free and robust.
+        // NOTE: the unordered Firestore get() returns docs in document-ID order, NOT
+        // recency. A low limit (50) can therefore miss the newest filing for prolific
+        // clients (e.g. a client with >50 jobs whose latest NSSF return falls outside the
+        // first batch). Use a generous limit so the period-filtered recency sort below
+        // always sees the recent filings. Receipt downloads are infrequent, so the extra
+        // reads are negligible.
         const jobsSnap = await adminDb.collection('jobs')
             .where('clientId', '==', id)
-            .limit(50)
+            .limit(250)
             .get();
 
         const jobDocs = jobsSnap.docs

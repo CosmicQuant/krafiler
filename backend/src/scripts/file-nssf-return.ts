@@ -820,6 +820,22 @@ export async function fileNssfReturn(job: any, username: string, password: strin
                                     }
                                 }
 
+                                // 4. Render the receipt (HTML) page to a clean vector PDF. This is the
+                                // reliable path for an NSSF payment order that is served as HTML rather
+                                // than a downloadable PDF — it produces selectable text, not a screenshot.
+                                if (!pdfBody && receiptPage) {
+                                    try {
+                                        await receiptPage.emulateMedia({ media: 'print' });
+                                        const pdfBytes = await receiptPage.pdf({ printBackground: true, format: 'A4', margin: { top: '12mm', bottom: '12mm', left: '10mm', right: '10mm' } });
+                                        if (pdfBytes && pdfBytes.length > 500 && pdfBytes.slice(0, 4).toString('ascii') === '%PDF') {
+                                            pdfBody = Buffer.from(pdfBytes);
+                                            console.log('Captured payment order via page.pdf() vector render:', pdfBytes.length, 'bytes');
+                                        }
+                                    } catch (e: any) {
+                                        console.log('page.pdf() vector render failed:', e.message);
+                                    }
+                                }
+
                                 if (pdfBody) {
                                     await fs.writeFile(paymentOrderPath, pdfBody);
                                     console.log('Captured NSSF receipt PDF:', paymentOrderPath, `(${pdfBody.length} bytes)`);

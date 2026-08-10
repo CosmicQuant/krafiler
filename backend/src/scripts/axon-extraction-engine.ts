@@ -473,9 +473,14 @@ export class AxonDataExtractionEngine {
             const totEmp = employees.length;
             const totNITA = totEmp * 50;
             const totAHL = employees.reduce((sum, emp) => sum + (emp.ahl || 0), 0);
+            // Template v30.0.3 reports the combined employer+employee Affordable
+            // Housing Levy (3%) in totalHousingContribution, while the per-employee
+            // CSV column remains the employee-only 1.5% deduction. totPayable to
+            // KRA therefore includes the full statutory 3%.
+            const totAHLFull = totAHL * 2;
             const totTax = employees.reduce((sum, emp) => sum + (emp.paye || 0), 0);
             const totSelfAssessedTax = employees.reduce((sum, emp) => sum + (emp.selfAssessedPaye || 0), 0);
-            const totPayable = totNITA + totAHL + totTax;
+            const totPayable = totNITA + totAHLFull + totTax;
 
             const monthCode = this.config.periodMMYYYY.substring(0, 2) || mm;
             const yearStr = this.config.periodMMYYYY.substring(2) || String(yyyy);
@@ -486,7 +491,7 @@ export class AxonDataExtractionEngine {
             const rtnPrdFrom = `01/${monthCode}/${yearStr}`;
             const rtnPrdTo = `${lastDay}/${monthCode}/${yearStr}`;
 
-            let singleCellValue = `ClcTaxDue.EmpTO%V_@${totSelfAssessedTax}@P_@ClcTaxDue.FringeBenfTO%V_@0@P_@ClcTaxDue.LumpSumTO%V_@0@P_@ClcTaxDue.TaxDedEmpWithoutPin%V_@0@P_@ClcTaxDue.totalHousingContribution%V_@${totAHL}@P_@ClcTaxDue.totalNITAContribution%V_@${totNITA}@P_@ClcTaxDue.TotEmpRcrds%V_@${totEmp}@P_@ClcTaxDue.TotNITALevyMemb%V_@${totEmp}@P_@ClcTaxDue.TotPybl%V_@${totPayable}@P_@ClcTaxDue.TotTaxPybl%V_@${totTax}@P_@DtlsArrSalPdBftsPayeDedFrmEmpListTO%V_@0@P_@DtlsSalPdBftsPayeDedFrmEmpListTO%V_@${totTax}@P_@DtlsSalPdBftsSelfPayTaxListTO%V_@${totSelfAssessedTax}@P_@FringeBenfTaxCalcListTO%V_@0@P_@labelForYearChangeSecB%V_@Mortgage Interest (M)@P_@RetInf.arrearStartDate%V_@01/02/2021@P_@RetInf.DatePaymentStartDate%V_@01/01/${yearStr}@P_@RetInf.DepositStartDate%V_@01/02/${parseInt(yearStr) - 1}@P_@RtnInf.EntityCode%V_@HOET@P_@RtnInf.EntityType%V_@Head Office@P_@RtnInf.isAddAssmt%V_@N@P_@RtnInf.Month%V_@${monthName}@P_@RtnInf.MonthCode%V_@${monthCode}@P_@RtnInf.ReturnType%V_@Original@P_@RtnInf.ReturnTypeCd%V_@1@P_@RtnInf.RtnMonth%V_@${monthCode}@P_@RtnInf.RtnPrdFrom%V_@${rtnPrdFrom}@P_@RtnInf.RtnPrdTo%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToAct%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToActStart%V_@${rtnPrdFrom}@P_@RtnInf.RtnYear%V_@${yearStr}@P_@RtnInf.TaxPayersPIN%V_@${this.config.employerPin}@P_@TaxPdOnLumpSumPdAftrTrmtnListTO%V_@0@P_@templateInfo.formId%V_@60@P_@templateInfo.moduleId%V_@2@P_@templateInfo.obligId%V_@7@P_@templateInfo.ofcVrsn%V_@EXCEL 1997-2003@P_@templateInfo.tempType%V_@XLS@P_@templateInfo.tempVrsn%V_@30.0.2`;
+            let singleCellValue = `ClcTaxDue.EmpTO%V_@${totSelfAssessedTax}@P_@ClcTaxDue.FringeBenfTO%V_@0@P_@ClcTaxDue.LumpSumTO%V_@0@P_@ClcTaxDue.TaxDedEmpWithoutPin%V_@0@P_@ClcTaxDue.totalHousingContribution%V_@${totAHLFull}@P_@ClcTaxDue.totalNITAContribution%V_@${totNITA}@P_@ClcTaxDue.TotEmpRcrds%V_@${totEmp}@P_@ClcTaxDue.TotNITALevyMemb%V_@${totEmp}@P_@ClcTaxDue.TotPybl%V_@${totPayable}@P_@ClcTaxDue.TotTaxPybl%V_@${totTax}@P_@DtlsArrSalPdBftsPayeDedFrmEmpListTO%V_@0@P_@DtlsSalPdBftsPayeDedFrmEmpListTO%V_@${totTax}@P_@DtlsSalPdBftsSelfPayTaxListTO%V_@${totSelfAssessedTax}@P_@FringeBenfTaxCalcListTO%V_@0@P_@labelForYearChangeSecB%V_@Mortgage Interest (M)@P_@RetInf.arrearStartDate%V_@01/${monthCode}/2021@P_@RetInf.DatePaymentStartDate%V_@01/01/${yearStr}@P_@RetInf.DepositStartDate%V_@01/${monthCode}/${parseInt(yearStr) - 1}@P_@RtnInf.EntityCode%V_@HOET@P_@RtnInf.EntityType%V_@Head Office@P_@RtnInf.isAddAssmt%V_@N@P_@RtnInf.Month%V_@${monthName}@P_@RtnInf.MonthCode%V_@${monthCode}@P_@RtnInf.ReturnType%V_@Original@P_@RtnInf.ReturnTypeCd%V_@1@P_@RtnInf.RtnMonth%V_@${monthCode}@P_@RtnInf.RtnPrdFrom%V_@${rtnPrdFrom}@P_@RtnInf.RtnPrdTo%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToAct%V_@${rtnPrdTo}@P_@RtnInf.RtnPrdToActStart%V_@${rtnPrdFrom}@P_@RtnInf.RtnYear%V_@${yearStr}@P_@RtnInf.TaxPayersPIN%V_@${this.config.employerPin}@P_@TaxPdOnLumpSumPdAftrTrmtnListTO%V_@0@P_@templateInfo.formId%V_@60@P_@templateInfo.moduleId%V_@2@P_@templateInfo.obligId%V_@7@P_@templateInfo.ofcVrsn%V_@EXCEL 1997-2003@P_@templateInfo.tempType%V_@XLS@P_@templateInfo.tempVrsn%V_@30.0.3`;
 
             const singleCellHash = crypto.createHash('sha256').update(singleCellValue).digest('hex');
             const multiCellHash = crypto.createHash('sha256').update('').digest('hex');

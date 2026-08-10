@@ -59,7 +59,7 @@ interface PayRegisterTableProps {
   onAddEmployee?: () => void;
 }
 
-export function PayRegisterTable({ clientId, runId, period, refreshToken, onSelectEntry, onRefresh, onAddEmployee }: PayRegisterTableProps) {
+export function PayRegisterTable({ clientId, runId, period, refreshToken, onSelectEntry, onRefresh: _onRefresh, onAddEmployee }: PayRegisterTableProps) {
   const [entries, setEntries] = useState<PayrollEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

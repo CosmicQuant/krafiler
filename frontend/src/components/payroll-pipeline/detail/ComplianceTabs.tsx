@@ -73,12 +73,13 @@ function roundMoney(amount: number): number {
 
 /** Append ?period=YYYY-MM to a /api/clients/.../receipts/ route so the backend
  * serves the receipt/PRN that matches the user's selected payroll period. */
-function withPeriod(url: string, period: string | undefined): string {
-  if (!period) return url;
-  // Only routes that hit the backend receipts endpoint are period-filtered.
-  if (!url.startsWith('/api/clients/')) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}period=${period}`;
+function withPeriod(url: string | undefined, period: string | undefined): string {
+    if (!url || typeof url !== 'string') return '';
+    if (!period) return url;
+    // Only routes that hit the backend receipts endpoint are period-filtered.
+    if (!url.startsWith('/api/clients/')) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}period=${period}`;
 }
 
 function splitName(fullName: string) {
@@ -429,7 +430,7 @@ if (!isFiled || !receiptUrl) return null;
                           : 'PRN';
                         const rawUrl = r.prnGcsPath
                           ? `/api/clients/${client.id}/receipts/${r.taxType}_prn`
-                          : r.prnPath;
+                          : (typeof r.prnPath === 'string' ? r.prnPath : '');
                         const url = withPeriod(rawUrl, period);
                         if (url) prnEntries.push({ label, url });
                       });
@@ -448,14 +449,6 @@ if (!isFiled || !receiptUrl) return null;
                   }
 
                   if (prnEntries.length === 0) return null;
-
-                  const isFiled = activeConfig.key === 'paye' ? ((state?.statuses?.paye ?? liveClient.paye) === 'filed')
-                    : activeConfig.key === 'nssf' ? ((state?.statuses?.nssf ?? liveClient.nssf) === 'filed')
-                    : activeConfig.key === 'sha' ? ((state?.statuses?.sha ?? liveClient.sha) === 'filed')
-                    : activeConfig.key === 'tot' ? liveClient.tot === 'filed'
-                    : activeConfig.key === 'mri' ? liveClient.mri === 'filed'
-                    : activeConfig.key === 'vat' ? liveClient.vat === 'filed'
-                    : false;
 
                   return (
                     <div className="flex flex-col gap-1.5 mt-1">

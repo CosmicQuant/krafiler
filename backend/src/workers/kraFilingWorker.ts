@@ -2242,10 +2242,14 @@ export async function processFilingJob(job: JobContext): Promise<{
                         if (taxObligationType === 'paye') {
                             const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
                             const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
-                            const generatedMap = new Map(prnResults.map((r: any) => [r.taxType, r]));
+                            // Only persist PRN entries that actually have a download path; a failed
+                            // PRN run must not wipe a previously-good entry nor write a placeholder
+                            // (a path-less entry crashes the dashboard's PRN rendering loop).
+                            const successfulGenerated = prnResults.filter((r: any) => r.prnGcsPath || r.prnPath);
+                            const generatedMap = new Map(successfulGenerated.map((r: any) => [r.taxType, r]));
                             const merged = [
                                 ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
-                                ...prnResults.map((r: any) => ({
+                                ...successfulGenerated.map((r: any) => ({
                                     taxType: r.taxType,
                                     prnPath: r.prnPath,
                                     prnGcsPath: r.prnGcsPath,
@@ -2753,10 +2757,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                             // wipe out PRNs that were generated successfully in an earlier job.
                             const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
                             const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
-                            const generatedMap = new Map(successfulPrns.map((r) => [r.taxType, r]));
+                            const successfulPrnsWithPaths = successfulPrns.filter((r: any) => r.prnGcsPath || r.prnPath);
+                            const generatedMap = new Map(successfulPrnsWithPaths.map((r) => [r.taxType, r]));
                             const merged = [
                                 ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
-                                ...successfulPrns.map((r) => ({
+                                ...successfulPrnsWithPaths.map((r) => ({
                                     taxType: r.taxType,
                                     prnPath: r.prnPath,
                                     prnGcsPath: r.prnGcsPath,
@@ -4128,10 +4133,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                         // generated PRNs.
                         const clientSnap = await adminDb.collection('clients').doc(payload.clientId).get();
                         const existingResults: Array<{ taxType?: string }> = clientSnap.data()?.payePrnResults || [];
-                        const generatedMap = new Map(successfulPrns.map((r) => [r.taxType, r]));
+                        const successfulPrnsWithPaths = successfulPrns.filter((r: any) => r.prnGcsPath || r.prnPath);
+                        const generatedMap = new Map(successfulPrnsWithPaths.map((r) => [r.taxType, r]));
                         const merged = [
                             ...existingResults.filter((r) => !generatedMap.has(r.taxType as any)),
-                            ...successfulPrns.map((r) => ({
+                            ...successfulPrnsWithPaths.map((r) => ({
                                 taxType: r.taxType,
                                 prnPath: r.prnPath,
                                 prnGcsPath: r.prnGcsPath,

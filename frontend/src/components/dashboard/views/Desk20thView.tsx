@@ -43,10 +43,12 @@ interface Desk20thViewProps {
   onGenerateTotZip: (client: ClientObligation) => Promise<void>;
   onFileMri: (client: ClientObligation, amount: number) => Promise<void>;
   onAutoFile: (client: ClientObligation) => Promise<void>;
+  onAutoFileNssf?: (client: ClientObligation) => Promise<void>;
   onGeneratePrn: (client: ClientObligation, type: string) => Promise<void>;
-  onFileNil: (client: ClientObligation, periodFrom: string, periodTo: string, ownsRentalProperty: boolean) => Promise<void>;
+  onFileNil?: (client: ClientObligation, periodFrom: string, periodTo: string, ownsRentalProperty: boolean) => Promise<void>;
   onCancelJob?: (client: ClientObligation) => Promise<void>;
   cancellingClientIds?: Record<string, boolean>;
+  onSelectClient?: (client: ClientObligation) => void;
   fixedType?: 'vat' | 'tot' | 'mri' | 'dst';
 }
 
@@ -70,10 +72,12 @@ export function Desk20thView({
   onGenerateTotZip,
   onFileMri,
   onAutoFile,
+  onAutoFileNssf,
   onGeneratePrn,
-  onFileNil,
-  onCancelJob,
-  cancellingClientIds,
+  onFileNil: _onFileNil,
+  onCancelJob: _onCancelJob,
+  cancellingClientIds: _cancellingClientIds,
+  onSelectClient,
   fixedType,
 }: Desk20thViewProps) {
 
@@ -541,10 +545,10 @@ export function Desk20thView({
                         ) : (
                           <button
                             onClick={() => {
-                              if (ob.type === 'MRI') void onFileMri(ob.client);
+                              if (ob.type === 'MRI') void onFileMri(ob.client, parseFloat(mriInputVals[ob.client.id]) || 0);
                               else if (ob.type === 'TOT') void onFileTot(ob.client);
                               else if (ob.type === 'PAYE') void onAutoFile(ob.client);
-                              else if (ob.type === 'NSSF') void onAutoFileNssf(ob.client);
+                              else if (ob.type === 'NSSF') void onAutoFileNssf?.(ob.client);
                             }}
                             disabled={
                               isPendingFilingJob(relevantJob as any) ||

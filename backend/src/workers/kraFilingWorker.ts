@@ -2191,10 +2191,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                     && !/credential|invalid.*password|account.*locked|validation.*error|file.*structural/i.test(message);
 
                 if (httpAttempt < maxHttpAttempts && isRetryable) {
-                    await appendJobLog(job, `HTTP engine attempt ${httpAttempt} failed: ${message}. Will retry once more.`, { progress: 10, level: 'warn' });
-                    console.warn(`[Worker][${jobId}] HTTP engine attempt ${httpAttempt} failed, retrying:`, message);
-                    // Brief delay before retry to allow transient network/captcha issues to clear.
-                    await new Promise((r) => setTimeout(r, 2000));
+                    const isNetworkTimeout = /ETIMEDOUT|ECONNRESET|socket hang up|Network error/i.test(message);
+                    const retryDelay = isNetworkTimeout ? 15_000 : 2_000;
+                    await appendJobLog(job, `HTTP engine attempt ${httpAttempt} failed: ${message}. Will retry in ${retryDelay / 1000}s.`, { progress: 10, level: 'warn' });
+                    console.warn(`[Worker][${jobId}] HTTP engine attempt ${httpAttempt} failed, retrying in ${retryDelay}ms:`, message);
+                    await new Promise((r) => setTimeout(r, retryDelay));
                     continue;
                 }
 

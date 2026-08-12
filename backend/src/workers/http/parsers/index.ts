@@ -436,3 +436,98 @@ function extractNoticeId(onclickOrHref: string): string | null {
     const match = onclickOrHref.match(/noticeId=([0-9]+)/i);
     return match?.[1] ?? null;
 }
+
+/**
+ * Parse KRA's "Returns Summary" validation error table.
+ *
+ * When KRA rejects a VAT/Excise return upload due to data validation
+ * errors, it renders an HTML table with columns:
+ *   Sr.No. | File Section | Error Description
+ *
+ * Example rows:
+ *   1 | B_General_Rated_Sales_Dtls | Please note that the Total General Rated Sales cannot be less than...
+ *   2 | F_General_Rated_Purchases_Dtls | PIN entered should not be same as Taxpayer's PIN.
+ *
+ * Without this parser, the error message shown to the user is the raw
+ * page JavaScript ("Insert title here var parts = window.location..."),
+ * not the actual validation text.
+ */
+export function parseReturnsSummaryErrors(html: string): Array<{ section: string; description: string }> {
+    const errors: Array<{ section: string; description: string }> = [];
+
+    try {
+        const $ = loadHtml(html);
+
+        // KRA renders the summary table with various possible structures.
+        // Strategy 1: Look for a table containing "Error Description" header.
+        let summaryTable: any = null;
+        const tables = $('table');
+        tables.each((_: number, el: any) => {
+            const headerText = $(el).find('th, td, .headerText').text();
+            if (/Error\s+Description/i.test(headerText) && /File\s+Section/i.test(headerText)) {
+                summaryTable = $(el);
+                return false;
+            }
+            return true;
+        });
+
+        if (summaryTable) {
+            const rows = summaryTable.find('tr');
+            rows.each((_: number, row: any) => {
+                const cells = $(row).find('td');
+                if (cells.length >= 3) {
+                    const section = $(cells.get(1)).text().trim();
+                    const description = $(cells.last()).text().trim();
+                    if (section && description && !/Sr\.?No/i.test(section)) {
+                        errors.push({ section, description });
+                    }
+                }
+            });
+        }
+
+        // Strategy 2: Look for the "Returns Summary" heading and parse the
+        // table(s) that follow it.
+        if (errors.length === 0) {
+            const summaryHeading = $('h2, h3, h4, td, div, span')
+                .filter((__: number, el: any) => /Returns\s+Summary/i.test($(el).text().trim()))
+                .first();
+            if (summaryHeading.length > 0) {
+                let tableEl = summaryHeading.nextAll('table').first();
+                if (!tableEl.length) {
+                    tableEl = summaryHeading.closest('table');
+                }
+                tableEl.find('tr').each((_: number, row: any) => {
+                    const cells = $(row).find('td');
+                    if (cells.length >= 3) {
+                        const section = $(cells.get(1)).text().trim();
+                        const description = $(cells.last()).text().trim();
+                        if (section && description && !/Sr\.?No/i.test(section)) {
+                            errors.push({ section, description });
+                        }
+                    }
+                });
+            }
+        }
+
+        // Strategy 3: Look for rows with B_ or F_ or C_ or D_ prefixes (file section
+        // names KRA uses for VAT validation errors)
+        if (errors.length === 0) {
+            const allRows = $('table tr, tr');
+            allRows.each((_: number, row: any) => {
+                const cells = $(row).find('td');
+                if (cells.length >= 2) {
+                    const section = $(cells.get(0)).text().trim();
+                    const description = $(cells.eq(1)).text().trim();
+                    if (/^(?:B_|C_|D_|E_|F_|G_|H_|I_|J_)/.test(section) && description) {
+                        errors.push({ section, description });
+                    }
+                }
+            });
+        }
+    } catch (e) {
+        // Parsing errors must not bubble up — the caller falls back to the
+        // generic error message.
+    }
+
+    return errors;
+}

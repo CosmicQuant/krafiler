@@ -116,9 +116,7 @@ router.post('/process-job', async (req: Request, res: Response): Promise<void> =
         await jobStore.updateJob(jobId, {
             status,
             message,
-            error: isCancelled
-                ? undefined
-                : { message, code: 'FILING_ERROR', retryable: false, failedAt: Timestamp.now() },
+            error: isCancelled ? undefined : message,
         }).catch((updateErr) => {
             logger.error({ jobId, err: updateErr }, 'Failed to update job failure state');
         });

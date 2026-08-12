@@ -4,7 +4,7 @@ import path from 'path';
 import FormData from 'form-data';
 import { loadHtml } from '../parsers';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
-import { parseFormFields, parsePortalErrors, parseSubmissionResult } from '../parsers';
+import { parseFormFields, parsePortalErrors, parseSubmissionResult, parseReturnsSummaryErrors } from '../parsers';
 import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
 import { BaseHttpFilingService, FilingReceiptResult } from './BaseHttpFilingService';
 import { resolveUploadArtifactPath } from '../../utils/filing-helpers';
@@ -139,6 +139,26 @@ export class VatReturnSubmitter extends BaseHttpFilingService {
         }
 
         const result = parseSubmissionResult(submitResponse);
+
+        // Also parse any structured "Returns Summary" validation errors that KRA shows
+        // after a validation failure. These are tabular (Sr.No / File Section / Error Description).
+        const summaryErrors = parseReturnsSummaryErrors(submitResponse);
+        if (!result.success && summaryErrors.length > 0) {
+            const errorText = summaryErrors.map((e) => `${e.section}: ${e.description}`).join('; ');
+            throw new KraError(
+                KraErrorCode.VALIDATION_ERROR,
+                `VAT validation errors from KRA:\n${summaryErrors.map((e) => `  ${e.section}: ${e.description}`).join('\n')}`,
+                { rawResponse: submitResponse.slice(0, 4000), context: { validationErrors: summaryErrors } },
+            );
+        }
+
+        // Detect the KRA unauthenticated home page — the session expired before/during upload.
+        if (!result.success && /Kenya Revenue Authority|generatecaptchaservlet|loginForm/i.test(submitResponse.slice(0, 2000))) {
+            throw new KraError(
+                KraErrorCode.SESSION_INVALID,
+                'KRA session expired during VAT upload (the portal returned the login page). The system will retry with a fresh login.',
+            );
+        }
 
         if (!result.success) {
             throw new KraError(

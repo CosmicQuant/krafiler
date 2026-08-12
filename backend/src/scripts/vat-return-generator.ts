@@ -363,17 +363,46 @@ function findAmountInRow(row: CsvRow): number {
 function mapSectionRows(params: {
     rows: CsvRow[];
     section: 'B' | 'C' | 'D1' | 'D2' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J';
+    taxpayerPin?: string;
 }): { lines: PreparedVatLineItem[]; totalBase: number; totalVat: number } {
-    const { rows, section } = params;
+    const { rows, section, taxpayerPin } = params;
     const lookup = new Map<string, string>();
     const lines: PreparedVatLineItem[] = [];
     let totalBase = 0;
     let totalVat = 0;
+    const taxpayerPinUpper = taxpayerPin ? taxpayerPin.toUpperCase().trim() : '';
 
     for (const row of rows) {
         const taxableAmount = findAmountInRow(row);
         if (taxableAmount === 0) {
             continue;
+        }
+
+        // For purchase sections (F, G, H, I, J) KRA rejects rows where the
+        // supplier PIN equals the taxpayer's own PIN ("PIN entered should not
+        // be same as Taxpayer's PIN"). This happens when a taxpayer sells to
+        // themselves. Remove those rows instead of submitting them and
+        // having KRA reject the entire return for one invalid row.
+        if (taxpayerPinUpper && ['F', 'G', 'H', 'I', 'J'].includes(section)) {
+            let supplierPin = '';
+            if (section === 'F' && row.length <= 9) {
+                // Import purchases row: PIN is at index 1
+                supplierPin = (row[1] || '').trim().toUpperCase();
+            } else if (section === 'H') {
+                supplierPin = (row[1] || '').trim().toUpperCase();
+            } else {
+                // Non-import purchases: PIN is at index 1 for most sections,
+                // index 0 has the locality/type field.
+                supplierPin = (row[1] || '').trim().toUpperCase();
+            }
+
+            // KRA's Import locality rows (for section F imports) may have an
+            // empty PIN — those are legitimate import entries and should be kept.
+            const isImport = (row[0] || '').trim().toLowerCase() === 'import';
+            if (supplierPin === taxpayerPinUpper) {
+                console.log(`[VAT] Removing self-purchase row from Section ${section}: supplier PIN ${supplierPin} matches taxpayer PIN ${taxpayerPinUpper}`);
+                continue;
+            }
         }
 
         let values: string[] = [];
@@ -1000,11 +1029,15 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     }
 
     // ── Process purchases ───────────────────────────────────────────────────
-    const fPurchases = mapSectionRows({ rows: fSource, section: 'F' });
-    const gPurchases = mapSectionRows({ rows: gSource, section: 'G' });
-    const hPurchases = mapSectionRows({ rows: hSource, section: 'H' });
-    const iPurchases = mapSectionRows({ rows: iSource, section: 'I' });
-    const jPurchases = mapSectionRows({ rows: jSource, section: 'J' });
+    // Pass taxpayerPin so self-purchase rows (supplier PIN == taxpayer PIN) are
+    // filtered out — KRA rejects the entire return if even one row has a PIN
+    // that matches the taxpayer's own PIN ("PIN entered should not be same as
+    // Taxpayer's PIN").
+    const fPurchases = mapSectionRows({ rows: fSource, section: 'F', taxpayerPin: params.taxpayerPin });
+    const gPurchases = mapSectionRows({ rows: gSource, section: 'G', taxpayerPin: params.taxpayerPin });
+    const hPurchases = mapSectionRows({ rows: hSource, section: 'H', taxpayerPin: params.taxpayerPin });
+    const iPurchases = mapSectionRows({ rows: iSource, section: 'I', taxpayerPin: params.taxpayerPin });
+    const jPurchases = mapSectionRows({ rows: jSource, section: 'J', taxpayerPin: params.taxpayerPin });
 
     // ── Build XML named values ──────────────────────────────────────────────
     const generalSalesTotal = bWithPin.totalBase + bWithoutPin.totalBase;

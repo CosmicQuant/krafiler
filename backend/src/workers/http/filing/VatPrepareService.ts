@@ -136,7 +136,20 @@ export class VatPrepareService {
             zipBuffer[2] === 0x03 && zipBuffer[3] === 0x04;
 
         if (!isZip) {
-            const preview = zipBuffer.slice(0, 1000).toString('utf8');
+            const preview = zipBuffer.slice(0, 2000).toString('utf8');
+
+            // Detect the KRA unauthenticated home page — this means the session
+            // expired during the credit-extraction navigation that precedes the
+            // download. The download POST silently returned the portal login
+            // page instead of a ZIP. Re-auth is needed; the retry loop in the
+            // worker will catch this and re-establish the session.
+            if (/Kenya Revenue Authority|generatecaptchaservlet|loginForm|actionCode=loginUser/i.test(preview)) {
+                throw new KraError(
+                    KraErrorCode.SESSION_INVALID,
+                    'KRA session expired during VAT download (the portal returned the login page instead of the ZIP). The system will retry with a fresh login.',
+                );
+            }
+
             const errors = parsePortalErrors(preview);
             const mapped = errors.map((e: string) => mapPortalMessage(e)).find(Boolean);
             if (mapped) throw mapped;

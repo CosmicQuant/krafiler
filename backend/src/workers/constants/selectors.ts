@@ -53,6 +53,7 @@ export const TAX_OBLIGATION_PATTERNS: Record<TaxObligationType, RegExp[]> = {
     ],
     excise_duty: [
         /^excise\s*duty$/i,
+        /^excise$/i,
         /excise/i,
     ],
     nita: [

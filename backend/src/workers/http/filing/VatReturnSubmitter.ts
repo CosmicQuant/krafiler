@@ -157,6 +157,7 @@ export class VatReturnSubmitter extends BaseHttpFilingService {
             throw new KraError(
                 KraErrorCode.SESSION_INVALID,
                 'KRA session expired during VAT upload (the portal returned the login page). The system will retry with a fresh login.',
+                { retryable: true },
             );
         }
 

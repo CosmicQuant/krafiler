@@ -40,12 +40,28 @@ cd ..
 # ── 3. Deploy Compute API to Cloud Run ──────────────────────────────
 echo ""
 echo "[3/7] Deploying Compute API to Cloud Run..."
+
+# Write env vars to a YAML file to avoid Git-Bash/MSYS path mangling of
+# URLs (https://... -> https;\...) when passed via --set-env-vars.
+cat > /tmp/krafiler-api-env.yaml <<EOF
+NODE_ENV: production
+USE_PUBSUB: "true"
+PUBSUB_TOPIC: filing-jobs
+USE_HTTP_ENGINE: "true"
+TEMP_DIR: /tmp
+RECEIPTS_DIR: /data/receipts
+CLOUD_STORAGE_BUCKET: taxpulse
+JWT_SECRET: 99a8917c4ca99856f71403091907ce69205d99fbc42c53f03077adaef7709bae
+ALLOWED_ORIGIN: https://taxpulse-498006.web.app
+PLAYWRIGHT_HEADLESS: "true"
+EOF
+
 gcloud run deploy "${API_SERVICE}" \
   --image "${API_IMAGE}:latest" \
   --region "${REGION}" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars "NODE_ENV=production,USE_PUBSUB=true,PUBSUB_TOPIC=filing-jobs,USE_HTTP_ENGINE=true,TEMP_DIR=/tmp,RECEIPTS_DIR=/data/receipts,CLOUD_STORAGE_BUCKET=taxpulse,JWT_SECRET=99a8917c4ca99856f71403091907ce69205d99fbc42c53f03077adaef7709bae,ALLOWED_ORIGIN=https://taxpulse-498006.web.app,PLAYWRIGHT_HEADLESS=true" \
+  --env-vars-file /tmp/krafiler-api-env.yaml \
   --memory 1Gi \
   --cpu 1 \
   --concurrency 80 \

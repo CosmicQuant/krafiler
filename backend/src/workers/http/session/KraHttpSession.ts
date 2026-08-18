@@ -35,6 +35,18 @@ export class KraHttpSession {
     }
 
     updateToken(html: string, source = 'response'): void {
+        // Don't corrupt the session token if the response is a login/unauthenticated page.
+        // KRA returns the login page when a token_key is invalid or the session has expired;
+        // the login page contains its own token_key which is NOT a session-authenticated token.
+        // Replacing the valid token with it would silently kill all subsequent requests.
+        //
+        // NOTE: "Kenya Revenue Authority" appears on EVERY KRA page (header/footer), so it
+        // must NOT be used as a guard pattern — it would block token updates from the
+        // authenticated dashboard returned after a successful login. Only use patterns that
+        // are unique to the login page itself.
+        if (/generatecaptchaservlet|<form[^>]+name=["']loginForm["']/i.test(html)) {
+            return;
+        }
         const match = html.match(/<input[^>]+name=["']token_key["'][^>]+value=["']([^"']+)["'][^>]*>/i);
         if (match && match[1] !== this.tokenKey) {
             this.tokenKey = match[1];

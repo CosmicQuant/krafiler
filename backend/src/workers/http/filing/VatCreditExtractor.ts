@@ -99,7 +99,7 @@ export class VatCreditExtractor {
                     operation: '',
                     actionCode: '',
                     flag: '',
-                    token_key: 'null',
+                    token_key: this.session.requireToken(),
                 },
                 { timeout: 30_000 }
             );

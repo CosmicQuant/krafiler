@@ -147,6 +147,7 @@ export class VatPrepareService {
                 throw new KraError(
                     KraErrorCode.SESSION_INVALID,
                     'KRA session expired during VAT download (the portal returned the login page instead of the ZIP). The system will retry with a fresh login.',
+                    { retryable: true },
                 );
             }
 

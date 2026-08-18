@@ -160,13 +160,25 @@ function normalizeInvoiceNumber(value: string): string {
 }
 
 // Credit-note rows in KRA source CSVs have the original invoice reference and date
-// in trailing columns. For a 10-column source row:
-//   column I (index 8) = original invoice number (e.g. |KRACU0200104576/222)
-//   column J (index 9) = original invoice date (e.g. 13/06/2026)
+// in the trailing columns. The position varies by section because purchase sections
+// (F, G, H, I, J) have a locality prefix column that sales sections (B, C) lack.
+// Instead of hardcoding indices, read from the last two columns of the row —
+// they are empty for non-credit-note rows and contain the CN data for credit-note rows.
+//
+// Example (Section F, 11-col row):
+//   column J (index 9)  = relevant/original invoice number (e.g. |0190979210000098732)
+//   column K (index 10) = relevant/original invoice date   (e.g. 20/01/2026)
+//
+// Example (Section B, 10-col row):
+//   column I (index 8) = relevant/original invoice number
+//   column J (index 9) = relevant/original invoice date
 function getCreditNoteColumns(row: CsvRow): { cnInvoice: string; cnDate: string } {
+    if (row.length < 2) {
+        return { cnInvoice: '', cnDate: '' };
+    }
     return {
-        cnInvoice: normalizeInvoiceNumber(row[8] || ''),
-        cnDate: (row[9] || '').trim(),
+        cnInvoice: normalizeInvoiceNumber(row[row.length - 2] || ''),
+        cnDate: (row[row.length - 1] || '').trim(),
     };
 }
 

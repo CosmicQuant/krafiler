@@ -44,7 +44,9 @@ interface FirestoreJobDoc extends DocumentData {
         sourcePackageLabel?: string;
         vatSummary?: VatPreparationSummary;
     };
-    error?: { message?: string };
+    error?: string | { message?: string };
+    userMessage?: string;
+    errorMessage?: string;
     createdAt?: Timestamp;
     startedAt?: Timestamp;
     completedAt?: Timestamp;
@@ -115,12 +117,25 @@ export function useJobListener(
                 const resultSourcePackageUrl = buildStoredArtifactUrl(result.sourcePackageUrl);
                 const resultVatSummary = result.vatSummary;
 
+                // Surface the REAL error (e.g. the actual KRA portal message), never a
+                // generic placeholder. The worker writes `error` as a plain string; the
+                // NSSF failure path writes an error-type code plus errorMessage/userMessage.
+                const failedReason =
+                    data.status === 'failed'
+                        ? (data.userMessage
+                            || (typeof data.error === 'object' ? data.error?.message : '')
+                            || (typeof data.error === 'string' ? data.error : '')
+                            || data.errorMessage
+                            || data.message
+                            || '')
+                        : '';
+
                 nextJobs[clientId] = {
                     id: jobId,
                     state,
                     progress: typeof data.progress === 'number' ? data.progress : 0,
                     message: data.message || 'Processing...',
-                    failedReason: data.error?.message || '',
+                    failedReason,
                     obligationType: data.payload?.payload?.taxObligationType || data.payload?.taxObligationType || '',
                     receiptUrl: resultReceiptUrl,
                     prnUrl: resultPrnUrl,

@@ -384,6 +384,21 @@ function mapSectionRows(params: {
     let totalVat = 0;
     const taxpayerPinUpper = taxpayerPin ? taxpayerPin.toUpperCase().trim() : '';
 
+    // Pre-scan ALL rows to build the PIN → Name lookup so a name that first
+    // appears on a LATER row can still fill earlier rows that are missing a
+    // name (KRA's Excel utility fills names this way — not forward-only).
+    // Sales sections (B, C, E) have PIN/Name at columns 0/1; purchase sections
+    // (D, F, G, H, I, J) have a locality/type prefix so PIN/Name are at 1/2.
+    const pinColumn = ['B', 'C', 'E'].includes(section) ? 0 : 1;
+    const nameColumn = pinColumn + 1;
+    for (const row of rows) {
+        const pin = (row[pinColumn] || '').trim();
+        const name = (row[nameColumn] || '').trim();
+        if (pin && name) {
+            lookup.set(pin, name);
+        }
+    }
+
     for (const row of rows) {
         const taxableAmount = findAmountInRow(row);
         if (taxableAmount === 0) {
@@ -618,12 +633,14 @@ function mapSectionRows(params: {
 }
 
 function toCsvLine(values: string[]): string {
+    // KRA's Excel utility encodes commas as ||-|| instead of using CSV quoting,
+    // and the portal parser does not expect quoted fields. Match that exact
+    // convention so uploads behave identically to the official utility.
     return values
         .map((value) => {
-            const normalized = value ?? '';
-            if (/[",\r\n]/.test(normalized)) {
-                return `"${normalized.replace(/"/g, '""')}"`;
-            }
+            const normalized = (value ?? '')
+                .replace(/[\r\n]+/g, ' ')
+                .replace(/,/g, '||-||');
             return normalized;
         })
         .join(',');
@@ -638,7 +655,9 @@ async function writeCsvArtifact(filePath: string, rows: PreparedVatLineItem[], t
     if (trailingBlankColumns && trailingBlankColumns > 0) {
         lines.push(','.repeat(trailingBlankColumns - 1));
     }
-    const content = `${lines.join('\n')}\n`;
+    // KRA's Excel utility writes Windows CRLF line endings with a trailing CRLF
+    // after the last row — match that exactly.
+    const content = `${lines.join('\r\n')}\r\n`;
     await fs.writeFile(filePath, content, 'utf8');
     return true;
 }
@@ -831,6 +850,9 @@ function buildVatXml(namedValues: Record<string, string>): string {
     const singleCellHash = createHash('sha256').update(singleCellValue, 'utf8').digest('hex');
     const multiCellHash = createHash('sha256').update(multiCellValue, 'utf8').digest('hex');
 
+    // KRA's Excel utility writes the XML with CRLF line separators and NO
+    // trailing newline after </Sheet> — match that exactly. (The hash covers
+    // only the SingleCellValue string, so this is purely a format match.)
     return [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<Sheet>',
@@ -840,8 +862,7 @@ function buildVatXml(namedValues: Record<string, string>): string {
         `<MultiCellHash>${multiCellHash}</MultiCellHash>`,
         '<SheetCode>VAT_RET</SheetCode>',
         '</Sheet>',
-        '',
-    ].join('\n');
+    ].join('\r\n');
 }
 
 function createVatUploadZip(destinationZipPath: string, files: Array<{ path: string; name: string }>): void {
@@ -1125,7 +1146,9 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
 
     if (eWithPin.lines.length > 0) {
         const ePath = path.join(generatedDir, 'E_Exempted_Sales_Dtls.csv');
-        if (await writeCsvArtifact(ePath, eWithPin.lines)) {
+        // KRA's Excel utility appends a blank row at the end of the E Exempted Sales CSV
+        // (8 output columns → 8 empty fields).
+        if (await writeCsvArtifact(ePath, eWithPin.lines, 8)) {
             generatedFiles.push(ePath);
             zipEntries.push({ path: ePath, name: 'E_Exempted_Sales_Dtls.csv' });
         }

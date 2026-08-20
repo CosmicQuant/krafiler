@@ -176,13 +176,28 @@ export async function getFilingJobStatus(jobId: string): Promise<JobStatusResult
 
     const logs = await jobStore.getJobLogs(jobId, 200);
 
+    // failedReason must surface the REAL error (e.g. the actual KRA portal message),
+    // never a generic placeholder. The worker writes the error in different shapes:
+    //   - httpWorker failure handler: error = <string> (raw error message)
+    //   - NSSF failure handler:       error = <string> (error-type code),
+    //                                  errorMessage = <raw message>, userMessage = <friendly>
+    //   - legacy/object form:         error = { message: <string> }
+    const failedReason = doc.status === 'failed'
+        ? (doc.userMessage
+            ?? (doc.error && typeof doc.error === 'object' ? doc.error.message : null)
+            ?? (typeof doc.error === 'string' && doc.error ? doc.error : null)
+            ?? doc.errorMessage
+            ?? doc.message
+            ?? null)
+        : null;
+
     return {
         jobId,
         state: doc.status,
         progress: doc.progress,
         message: doc.message ?? null,
         attemptsMade: 1,
-        failedReason: doc.error?.message ?? null,
+        failedReason,
         stepLogs: logs,
         lastStep: logs.length > 0 ? logs[logs.length - 1] : null,
         credentialUpdate: doc.payload.credentialUpdate ?? null,

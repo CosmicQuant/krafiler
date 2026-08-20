@@ -22,7 +22,18 @@ export interface JobStoreDoc {
     message: string;
     cloudTaskName?: string;
     result?: any;
-    error?: { message: string; code: string; retryable: boolean; failedAt: Timestamp };
+    /**
+     * Failure details. The httpWorker failure handler writes a plain string
+     * (the raw error message, e.g. the actual KRA portal error). The NSSF
+     * failure handler writes an error-type code string plus separate
+     * `errorMessage` (raw) and `userMessage` (friendly) fields. An object
+     * shape is kept for compatibility with any legacy writers.
+     */
+    error?: string | { message: string; code: string; retryable: boolean; failedAt: Timestamp };
+    /** Friendly, user-facing failure message (NSSF failure path). */
+    userMessage?: string;
+    /** Raw failure message (NSSF failure path). */
+    errorMessage?: string;
     credentialUpdate?: any;
     cancelRequestedAt?: string;
     cancelledAt?: string;

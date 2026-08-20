@@ -2173,6 +2173,8 @@ export async function processFilingJob(job: JobContext): Promise<{
         isVatCurrentMonthDownload ||
         isVatUpload;
 
+    let fallBackToPlaywright = false;
+
     if (useHttpEngine && isHttpSupportedObligation) {
         const maxHttpAttempts = 2; // 1 initial attempt + 1 retry
         let httpResult: any;
@@ -2186,6 +2188,19 @@ export async function processFilingJob(job: JobContext): Promise<{
                 break; // success — exit the retry loop
             } catch (httpErr) {
                 const message = httpErr instanceof Error ? httpErr.message : String(httpErr);
+
+                // Password expiry and mobile verification require the interactive
+                // Playwright flow — it can complete the password-change/OTP screens
+                // automatically and return the new credentials in credentialUpdate.
+                // The HTTP engine cannot, so hand the job to the browser path below
+                // instead of failing it.
+                const errCode = (httpErr as any)?.code;
+                if (errCode === 'PASSWORD_EXPIRED' || errCode === 'MOBILE_VERIFICATION_REQUIRED') {
+                    await appendJobLog(job, `${message} — switching to browser automation, which completes this step automatically`, { progress: 42, level: 'warn' });
+                    console.warn(`[Worker][${jobId}] HTTP engine cannot handle ${errCode}; falling back to Playwright`);
+                    fallBackToPlaywright = true;
+                    break;
+                }
 
                 // Do not retry on non-retryable errors (bad credentials, validation errors from KRA).
                 const isRetryable = !(httpErr as any)?.retryable === false
@@ -2206,6 +2221,12 @@ export async function processFilingJob(job: JobContext): Promise<{
             }
         }
 
+        if (fallBackToPlaywright) {
+            // Re-enter the browser flow below with the original credentials.
+            // The Playwright path detects the password-change / mobile-verification
+            // screens, completes them, and files the return as before.
+            await appendJobLog(job, 'Continuing with Playwright browser automation...', { progress: 45, level: 'info' });
+        } else {
         try {
             const httpResultFinal = httpResult;
 
@@ -2432,6 +2453,7 @@ export async function processFilingJob(job: JobContext): Promise<{
             await appendJobLog(job, `HTTP engine post-processing failed: ${message}`, { progress: 10, level: 'error' });
             console.error(`[Worker][${jobId}] HTTP engine post-processing failed:`, message);
             throw postProcessErr;
+        }
         }
     }
 

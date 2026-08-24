@@ -27,7 +27,7 @@ export class ReturnsNavigator {
                 flag: '',
                 token_key: 'null',
             },
-            { timeout: 45_000 }
+            { timeout: 60_000 }
         );
 
         const errors = parsePortalErrors(response);
@@ -100,7 +100,10 @@ export class ReturnsNavigator {
                 obligationId: obligation.value,
                 obligationIdOthforAmnesty: hiddenFields.obligationIdOthforAmnesty ?? '4',
             },
-            { timeout: 45_000 }
+            // KRA takes well over 45s to render the file-return page for
+            // taxpayers with many pending periods (a browser just waits it out;
+            // the HTTP engine used to abort with ETIMEDOUT at 45s).
+            { timeout: 120_000 }
         );
 
         const errors = parsePortalErrors(response);

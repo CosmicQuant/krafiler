@@ -40,7 +40,7 @@ export class VatCreditExtractor {
                     flag: '',
                     token_key: this.session.requireToken(),
                 },
-                { timeout: 30_000 }
+                { timeout: 60_000 }
             );
 
             // Step 2: Submit Consult with VAT selected
@@ -56,7 +56,7 @@ export class VatCreditExtractor {
                     entityType: '',
                     branchName: '',
                 },
-                { timeout: 30_000 }
+                { timeout: 60_000 }
             );
 
             // Step 3: Parse filed returns table for trpId of most recent VAT filing
@@ -71,7 +71,7 @@ export class VatCreditExtractor {
             // Step 4: GET the filing detail page
             const detailResponse = await this.session.get(
                 `eReturnsView.htm?ACTION_TYPE=viewForm&trpId=${trpId}&obligationId=9`,
-                { timeout: 30_000 }
+                { timeout: 60_000 }
             );
 
             // Step 5: Parse credit from the detail page
@@ -101,7 +101,7 @@ export class VatCreditExtractor {
                     flag: '',
                     token_key: this.session.requireToken(),
                 },
-                { timeout: 30_000 }
+                { timeout: 60_000 }
             );
 
             const whtFields = parseFormFields(whtFormPage, 'form');
@@ -124,7 +124,7 @@ export class VatCreditExtractor {
                     'whtCertiHdrDTO.year': year,
                     'whtCertiHdrDTO.prn': '',
                 },
-                { timeout: 30_000 }
+                { timeout: 60_000 }
             );
 
             // Step 3: Parse withholding amount

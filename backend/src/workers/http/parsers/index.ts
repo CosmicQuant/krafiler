@@ -391,6 +391,15 @@ export function parsePortalErrors(html: string): string[] {
         '[id*="error"]',
         '[class*="error"]',
         'font[color="red"]',
+        // KRA renders server-side errors in red-styled labels/spans inside
+        // tables (e.g. "System Error Occured. Please contact System
+        // Administrator." on the Returns Summary page).
+        'label[style*="color: red"]',
+        'label[style*="color:red"]',
+        'span[style*="color: red"]',
+        'span[style*="color:red"]',
+        'td[style*="color: red"]',
+        'td[style*="color:red"]',
     ];
 
     for (const selector of selectors) {
@@ -478,7 +487,7 @@ export function parseReturnsSummaryErrors(html: string): Array<{ section: string
                 if (cells.length >= 3) {
                     const section = $(cells.get(1)).text().trim();
                     const description = $(cells.last()).text().trim();
-                    if (section && description && !/Sr\.?No/i.test(section)) {
+                    if (section && description && !/Sr\.?No|File\s+Section/i.test(section)) {
                         errors.push({ section, description });
                     }
                 }
@@ -501,7 +510,7 @@ export function parseReturnsSummaryErrors(html: string): Array<{ section: string
                     if (cells.length >= 3) {
                         const section = $(cells.get(1)).text().trim();
                         const description = $(cells.last()).text().trim();
-                        if (section && description && !/Sr\.?No/i.test(section)) {
+                        if (section && description && !/Sr\.?No|File\s+Section/i.test(section)) {
                             errors.push({ section, description });
                         }
                     }

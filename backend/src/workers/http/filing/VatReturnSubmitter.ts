@@ -152,8 +152,10 @@ export class VatReturnSubmitter extends BaseHttpFilingService {
             );
         }
 
-        // Detect the KRA unauthenticated home page — the session expired before/during upload.
-        if (!result.success && /Kenya Revenue Authority|generatecaptchaservlet|loginForm/i.test(submitResponse.slice(0, 2000))) {
+        // Detect the real unauthenticated login page — the session expired before/during upload.
+        // "Kenya Revenue Authority" is on every KRA page title, so only match
+        // actual login-page markers.
+        if (!result.success && /generatecaptchaservlet|loginForm|actionCode=loginUser/i.test(submitResponse.slice(0, 4000))) {
             throw new KraError(
                 KraErrorCode.SESSION_INVALID,
                 'KRA session expired during VAT upload (the portal returned the login page). The system will retry with a fresh login.',

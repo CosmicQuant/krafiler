@@ -2,7 +2,7 @@ import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { appendJobLog, setJobStep } from '../../utils/job-helpers';
-import { parseFormFields, parsePortalErrors } from '../parsers';
+import { parseFormFields, parsePortalErrors, parseReturnsSummaryErrors } from '../parsers';
 import { KraError, KraErrorCode, mapPortalMessage } from '../errors';
 import { KraHttpSession } from '../session/KraHttpSession';
 import { prepareVatReturnArtifacts, PreparedVatReturnArtifacts } from '../../../scripts/vat-return-generator';
@@ -136,14 +136,40 @@ export class VatPrepareService {
             zipBuffer[2] === 0x03 && zipBuffer[3] === 0x04;
 
         if (!isZip) {
-            const preview = zipBuffer.slice(0, 2000).toString('utf8');
+            // Parse the full response for error markers — KRA error pages are
+            // large and the actual error text sits deep in the markup.
+            const responseText = zipBuffer.toString('utf8');
+            const preview = responseText.slice(0, 2000);
 
-            // Detect the KRA unauthenticated home page — this means the session
-            // expired during the credit-extraction navigation that precedes the
-            // download. The download POST silently returned the portal login
-            // page instead of a ZIP. Re-auth is needed; the retry loop in the
-            // worker will catch this and re-establish the session.
-            if (/Kenya Revenue Authority|generatecaptchaservlet|loginForm|actionCode=loginUser/i.test(preview)) {
+            // Surface the actual KRA error first (Returns Summary validation
+            // table, red error labels, generic error pages). These checks must
+            // run BEFORE the login-page heuristic: "Kenya Revenue Authority"
+            // is in the <title> of every KRA page, so matching it here would
+            // misreport any KRA error page as "session expired".
+            // Structured "Returns Summary" errors (Sr.No / File Section /
+            // Error Description table) — includes KRA's generic "System Error
+            // Occured. Please contact System Administrator." row.
+            const summaryErrors = parseReturnsSummaryErrors(responseText);
+            if (summaryErrors.length > 0) {
+                const errorText = summaryErrors.map((e: { section: string; description: string }) => `${e.section}: ${e.description}`).join('; ');
+                const mappedSummary = mapPortalMessage(errorText);
+                if (mappedSummary) throw mappedSummary;
+                throw new KraError(
+                    KraErrorCode.VALIDATION_ERROR,
+                    `VAT download rejected by KRA:\n${summaryErrors.map((e: { section: string; description: string }) => `  ${e.section}: ${e.description}`).join('\n')}`,
+                    { rawResponse: responseText.slice(0, 4000) },
+                );
+            }
+
+            const errors = parsePortalErrors(responseText);
+            const mapped = errors.map((e: string) => mapPortalMessage(e)).find(Boolean);
+            if (mapped) throw mapped;
+
+            // Detect the real unauthenticated login page — this means the session
+            // expired during the navigation that precedes the download. The login
+            // page contains the captcha servlet and the login form; other KRA
+            // pages (including error pages) do not.
+            if (/generatecaptchaservlet|loginForm|actionCode=loginUser/i.test(responseText)) {
                 throw new KraError(
                     KraErrorCode.SESSION_INVALID,
                     'KRA session expired during VAT download (the portal returned the login page instead of the ZIP). The system will retry with a fresh login.',
@@ -151,14 +177,10 @@ export class VatPrepareService {
                 );
             }
 
-            const errors = parsePortalErrors(preview);
-            const mapped = errors.map((e: string) => mapPortalMessage(e)).find(Boolean);
-            if (mapped) throw mapped;
-
             throw new KraError(
                 KraErrorCode.VALIDATION_ERROR,
                 `VAT download did not return a valid ZIP archive. Response preview: ${preview.slice(0, 500)}`,
-                { rawResponse: preview.slice(0, 2000) }
+                { rawResponse: responseText.slice(0, 2000) }
             );
         }
 

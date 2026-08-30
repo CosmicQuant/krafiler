@@ -74,6 +74,11 @@ const ERROR_PATTERNS: Array<{ code: KraErrorCode; patterns: RegExp[]; retryable:
             /502\s+bad\s+gateway/i,
             /504\s+gateway\s+time-?out/i,
             /service\s+unavailable/i,
+            // KRA's transient server failure pages (covers both their
+            // "Occured" and the correct "Occurred" spellings).
+            /system\s+error\s+oc+ur+ed/i,
+            /please\s+contact\s+system\s+administrator/i,
+            /error\s+has\s+occurred/i,
         ],
     },
 ];

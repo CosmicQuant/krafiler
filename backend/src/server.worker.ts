@@ -58,6 +58,7 @@ process.on('SIGINT', () => {
 
 import httpWorkerRoutes from './workers/httpWorker';
 import pinoHttp from 'pino-http';
+import { startJobSweeper } from './services/jobSweeper';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '8080', 10);
@@ -98,6 +99,10 @@ app.use(
 );
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+// Periodically fail jobs stuck 'active' by a crashed/restarted worker so they
+// don't block subsequent filings via the duplicate-pending guard.
+startJobSweeper();
+
 const server = app.listen(PORT);
 
 server.on('listening', () => {

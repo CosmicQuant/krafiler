@@ -161,6 +161,10 @@ export class HttpFilingOrchestrator {
                     try {
                         await appendJobLog(this.job, `Generating PRN for ${prnConfig.label}...`, { progress: 80 });
 
+                        // NOTE: amounts.housingLevyAmount stores the FULL statutory
+                        // AHL remittance (3% = 1.5% employee + 1.5% employer),
+                        // matching the P10 XML declaration. Use it as-is — do NOT
+                        // double it again here.
                         const amount = prnConfig.taxType === 'nita'
                             ? (clientAmounts.nitaAmount ?? this.payload.nitaAmount)
                             : prnConfig.taxType === 'affordable_housing'

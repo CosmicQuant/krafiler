@@ -443,7 +443,7 @@ export function useFilingActions(deps: FilingActionsDeps) {
             if (!res.ok) { const data = await res.json(); throw new Error(data.message || `Failed to queue ${type} PRN generation.`); }
             const rData = await res.json();
             const obligationType = taxObligationMap[type] || type.toLowerCase();
-            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...', receiptUrl: undefined, prnUrl: undefined, obligationType } }));
+            d.setActiveJobs((prev) => ({ ...prev, [client.id]: { id: rData.jobId, state: 'waiting', progress: 0, message: 'Queueing PRN job...', receiptUrl: undefined, prnUrl: undefined, obligationType, printPrnOnly: true } }));
             d.setDashboardNotice({ tone: 'success', message: `${type} PRN generation queued for ${client.name}.` });
         } catch (e: any) {
             d.setDashboardNotice({ tone: 'error', message: e.message });

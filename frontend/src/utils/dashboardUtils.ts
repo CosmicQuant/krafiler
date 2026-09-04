@@ -140,7 +140,7 @@ export function getAutoFileLabel(job?: ActiveDashboardJob | null) {
     }
 
     if (job.state === 'active') {
-        return 'Filing...';
+        return job.printPrnOnly ? 'Generating PRN...' : 'Filing...';
     }
 
     if (job.state === 'cancelling') {
@@ -167,7 +167,7 @@ export function getFilingStatusLabel(job: ActiveDashboardJob) {
         return '◌ Cancelling';
     }
 
-    return '⚙ Filing...';
+    return job.printPrnOnly ? '⚙ Generating PRN...' : '⚙ Filing...';
 }
 
 export function getFilingProgressTone(job: ActiveDashboardJob) {

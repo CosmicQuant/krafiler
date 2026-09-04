@@ -204,6 +204,9 @@ router.post('/generate-unified', upload.single('payrollFile'), async (req: Authe
                 if (nssfInfo?.url) {
                     updateData['generatedFiles.nssfFileUrl'] = nssfInfo.url;
                     updateData['status.nssf'] = 'generated';
+                    // Regenerating files supersedes any stale NSSF failure banner.
+                    updateData['nssfError'] = null;
+                    updateData['nssfErrorType'] = null;
                 }
                 if (shaInfo?.url) {
                     updateData['generatedFiles.shaFileUrl'] = shaInfo.url;

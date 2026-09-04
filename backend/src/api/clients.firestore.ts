@@ -380,18 +380,45 @@ router.put('/:id/status', async (req: AuthenticatedRequest, res) => {
 router.delete('/:id', async (req: AuthenticatedRequest, res) => {
     try {
         const uid = req.user!.uid;
-        const docRef = adminDb.collection(COLLECTION).doc(req.params.id);
+        const clientId = req.params.id;
+        const docRef = adminDb.collection(COLLECTION).doc(clientId);
         const doc = await docRef.get();
 
         if (!doc.exists || doc.data()?.ownerUid !== uid) {
             return res.status(404).json({ message: 'Client not found' });
         }
 
-        // Delete subcollections (employees, payrollRuns, etc.)
-        const employees = await adminDb.collection('employees').where('clientId', '==', req.params.id).get();
-        const batch = adminDb.batch();
-        employees.docs.forEach((d: any) => batch.delete(d.ref));
-        await batch.commit();
+        // Cascade-delete all client-scoped records so nothing is orphaned when
+        // the client document is removed. Firestore batches cap at 500 writes,
+        // so deletes are chunked.
+        const deleteInChunks = async (docs: any[]): Promise<void> => {
+            for (let i = 0; i < docs.length; i += 450) {
+                const batch = adminDb.batch();
+                docs.slice(i, i + 450).forEach((d: any) => batch.delete(d.ref));
+                await batch.commit();
+            }
+        };
+
+        // Payroll run entries are a subcollection of payrollRuns — delete them
+        // before the run documents themselves.
+        const runs = await adminDb.collection('payrollRuns').where('clientId', '==', clientId).get();
+        for (const run of runs.docs) {
+            const entries = await run.ref.collection('entries').get();
+            await deleteInChunks(entries.docs);
+        }
+
+        const cascadeCollections = [
+            'employees',
+            'payrollRuns',
+            'attendanceRecords',
+            'leaveRequests',
+            'loans',
+            'documents',
+        ];
+        for (const coll of cascadeCollections) {
+            const snap = await adminDb.collection(coll).where('clientId', '==', clientId).get();
+            await deleteInChunks(snap.docs);
+        }
 
         await docRef.delete();
 
@@ -1023,7 +1050,10 @@ router.put('/:id/payroll-data', async (req: AuthenticatedRequest, res) => {
             },
             'amounts.payeAmount': Math.round(totalPaye * 100) / 100,
             'amounts.nitaAmount': Math.round(totalNita * 100) / 100,
-            'amounts.housingLevyAmount': Math.round(totalHousingLevy * 100) / 100,
+            // calc.ahl is the employee-side 1.5% deduction; store the full
+            // statutory 3% remittance (employee + employer) so the AHL PRN and
+            // compliance views bill what KRA actually requires.
+            'amounts.housingLevyAmount': Math.round(totalHousingLevy * 2 * 100) / 100,
             'amounts.nssfAmount': Math.round(totalNssf * 100) / 100,
             'amounts.shaAmount': Math.round(totalSha * 100) / 100,
             updatedAt: Timestamp.now(),

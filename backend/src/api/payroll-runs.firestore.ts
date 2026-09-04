@@ -1918,6 +1918,9 @@ router.post('/:clientId/payroll-runs/:id/generate-compliance', async (req: Authe
             updateData['generatedFiles.nssfFileUrl'] = nssfFileUrl;
             updateData['generatedFiles.nssfFileLabel'] = nssfFileLabel;
             updateData['status.nssf'] = 'generated';
+            // Regenerating files supersedes any stale NSSF failure banner.
+            updateData['nssfError'] = null;
+            updateData['nssfErrorType'] = null;
         }
         if (shaFileUrl) {
             updateData['generatedFiles.shaFileUrl'] = shaFileUrl;

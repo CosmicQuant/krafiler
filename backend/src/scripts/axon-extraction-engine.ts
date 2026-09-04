@@ -617,7 +617,11 @@ export async function generateComplianceFiles(inputCsvPath: string, fallbackConf
         const summaryAmounts = {
             payeAmount: employees.reduce((sum, emp) => sum + (Number(emp.paye) || 0), 0),
             nitaAmount: employees.length * 50, // Standard NITA deduction per employee
-            housingLevyAmount: employees.reduce((sum, emp) => sum + (Number(emp.ahl) || 0), 0),
+            // The per-employee `ahl` is the employee-side 1.5% deduction, but KRA
+            // requires the full statutory 3% remittance (1.5% employee + 1.5%
+            // employer). Report the full amount to match totalHousingContribution
+            // declared in the P10 XML (totAHLFull = totAHL * 2) and the AHL PRN.
+            housingLevyAmount: employees.reduce((sum, emp) => sum + (Number(emp.ahl) || 0), 0) * 2,
             nssfAmount: employees.reduce((sum, emp) => sum + (Number(emp.nssfContribution) || 0), 0),
             shaAmount: employees.reduce((sum, emp) => sum + (Number(emp.shaContribution) || 0), 0)
         };

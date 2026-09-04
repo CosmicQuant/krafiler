@@ -14,6 +14,7 @@ import cors from 'cors';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import { logger } from './logger';
+import { startJobSweeper } from './services/jobSweeper';
 
 // ─── Crash Handlers ────────────────────────────────────────────────────────────
 process.on('unhandledRejection', (reason) => {
@@ -175,6 +176,10 @@ app.use(
 );
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+
+// Periodically fail jobs stuck 'active' by a crashed/restarted worker so they
+// don't block subsequent filings via the duplicate-pending guard.
+startJobSweeper();
 
 const server = app.listen(PORT);
 

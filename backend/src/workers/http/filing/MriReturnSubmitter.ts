@@ -114,19 +114,16 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
             }
 
             if (!hidPropertyDetailList) {
-                // If DWR response parsing failed, use the form's existing value or fallback
-                const formValue = fields['hidPropertyDetailList'] || '';
-                hidPropertyDetailList = formValue && formValue.trim() !== ''
-                    ? formValue
-                    : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
-                await appendJobLog(this.job, `Could not parse property details from DWR response. Using fallback.`, { progress: 78, level: 'warn' });
+                // If DWR response parsing failed, use the form's existing value — but
+                // ALWAYS override its rent/liability with the actual amounts. The form's
+                // pre-filled hidPropertyDetailList template contains rent: 0, and
+                // submitting it verbatim makes KRA record the gross rent as 0.
+                hidPropertyDetailList = this.buildPropertyDetailList(fields['hidPropertyDetailList'] || '', rentalAmount, taxOnRent);
+                await appendJobLog(this.job, `Could not parse property details from DWR response. Using fallback with injected rent ${rentalAmount}.`, { progress: 78, level: 'warn' });
             }
         } catch (dwrErr: any) {
             await appendJobLog(this.job, `DWR fetchDataForMRIReturnsAjax failed: ${dwrErr.message}`, { progress: 78, level: 'warn' });
-            const formValue = fields['hidPropertyDetailList'] || '';
-            hidPropertyDetailList = formValue && formValue.trim() !== ''
-                ? formValue
-                : JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
+            hidPropertyDetailList = this.buildPropertyDetailList(fields['hidPropertyDetailList'] || '', rentalAmount, taxOnRent);
         }
 
         // fieldsToSkip is a multi-value field (appears twice in the form for taxpayerName and taxpayerAdd).
@@ -233,5 +230,32 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
             downloadUrl: result.downloadUrl,
             noticeId: result.noticeId,
         };
+    }
+
+    /**
+     * Builds the hidPropertyDetailList JSON, preserving any landId/rengId from
+     * the form's pre-filled value but always overriding rent and liability with
+     * the actual rental income and tax. The form template carries rent: 0 —
+     * submitting it verbatim makes KRA record the gross rent as 0.
+     */
+    private buildPropertyDetailList(formValue: string, rentalAmount: number, taxOnRent: number): string {
+        if (formValue && formValue.trim() !== '') {
+            try {
+                const parsed = JSON.parse(formValue);
+                const list = Array.isArray(parsed) ? parsed : [parsed];
+                const injected = list.map((entry: any) => ({
+                    landId: String(entry?.landId ?? ''),
+                    rengId: String(entry?.rengId ?? ''),
+                    rent: rentalAmount,
+                    liability: taxOnRent,
+                }));
+                if (injected.length > 0) {
+                    return JSON.stringify(injected);
+                }
+            } catch {
+                // Fall through to the plain fallback below.
+            }
+        }
+        return JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
     }
 }

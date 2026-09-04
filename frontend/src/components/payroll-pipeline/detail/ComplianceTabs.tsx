@@ -98,7 +98,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [activeJobs, setActiveJobs] = useState<Record<string, { jobId: string; status: string; progress: number; message: string }>>({});
+  const [activeJobs, setActiveJobs] = useState<Record<string, { jobId: string; status: string; progress: number; message: string; kind?: 'filing' | 'prn'; failedReason?: string }>>({});
 
   const fetchStatus = useCallback(async () => {
     if (!runId) return;
@@ -154,6 +154,19 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
           const newProgress = typeof data.progress === 'number' ? data.progress : job.progress;
           const newMessage = (data.message as string) || job.message;
 
+          // Capture the real failure reason (same priority chain as useJobListener)
+          // so the status banner can show the actual KRA error instead of vanishing.
+          const newFailedReason = newStatus === 'failed'
+            ? String(
+                data.userMessage
+                || (typeof data.error === 'object' ? (data.error as any)?.message : '')
+                || (typeof data.error === 'string' ? data.error : '')
+                || data.errorMessage
+                || data.message
+                || ''
+              )
+            : '';
+
           setActiveJobs((prev) => ({
             ...prev,
             [type]: {
@@ -161,6 +174,7 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
               status: newStatus || prev[type].status,
               progress: newProgress,
               message: newMessage,
+              failedReason: newFailedReason || prev[type].failedReason,
             },
           }));
 
@@ -200,16 +214,16 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
         if (!nssfUrl) { setError('NSSF file not available. Generate compliance files first.'); setFilingType(null); return; }
         const nssfPeriod = period ? `${period.split('-')[1]}/${period.split('-')[0]}` : '';
         const res = await apiFetch(`/tax/file-nssf-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, nssfFileUrl: nssfUrl, period: nssfPeriod }) });
-         const data = await res.json(); if (res.ok) { setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, nssf: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'NSSF filing failed');
+         const data = await res.json(); if (res.ok) { setSuccess(`NSSF queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, nssf: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued', kind: 'filing' } })); } else setError(data.message || 'NSSF filing failed');
       } else if (type === 'paye') {
         const payeUrl = state?.payeZipUrl; const [ys, ms] = period.split('-'); const lastDay = new Date(parseInt(ys), parseInt(ms), 0).getDate();
         const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: 'paye', periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(lastDay).padStart(2, '0')}`, payeZipUrl: payeUrl, printPrnOnly: false }) });
-         const data = await res.json(); if (res.ok) { setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, paye: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued' } })); } else setError(data.message || 'PAYE filing failed');
+         const data = await res.json(); if (res.ok) { setSuccess(`PAYE queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, paye: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'Queued', kind: 'filing' } })); } else setError(data.message || 'PAYE filing failed');
       } else if (type === 'prn') {
         const [ys, ms] = period.split('-');
         const taxType = activeTab === 'paye' ? 'paye' : activeTab;
         const res = await apiFetch(`/tax/file-return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.id, kraPin: client.pin, kraPassword: client.password || client.iTaxPassword || '', taxObligationType: taxType, periodFrom: `${ys}-${ms}-01`, periodTo: `${ys}-${ms}-${String(new Date(parseInt(ys), parseInt(ms), 0).getDate()).padStart(2, '0')}`, printPrnOnly: true }) });
-        const data = await res.json(); if (res.ok) { setSuccess(`PRN queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, [activeTab]: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'PRN queued' } })); } else setError(data.message || 'PRN generation failed');
+         const data = await res.json(); if (res.ok) { setSuccess(`PRN queued. Job: ${data.jobId || 'N/A'}`); if (data.jobId) setActiveJobs(prev => ({ ...prev, [activeTab]: { jobId: data.jobId, status: 'waiting', progress: 0, message: 'PRN queued', kind: 'prn' } })); } else setError(data.message || 'PRN generation failed');
       }
     } catch { setError('Network error'); } finally { setFilingType(null); }
   };
@@ -288,14 +302,23 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
       {/* Active filing job status */}
       {(() => {
         const job = activeJobs[activeTab];
-        if (!job || job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') return null;
-        const isError = job.status === 'failed' || job.status === 'cancelled';
+        if (!job) return null;
+        // Completed/cancelled jobs hand off to the receipt/status banners below.
+        if (job.status === 'completed' || job.status === 'cancelled') return null;
+        // Failed jobs STAY visible with the real error so the user sees why
+        // the filing/PRN attempt failed (mirrors the VAT dashboard behavior).
+        const isFailed = job.status === 'failed';
+        const actionLabel = job.kind === 'prn' ? 'Generating PRN' : 'Filing';
         return (
-          <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: isError ? '#fca5a5' : '#bfdbfe', backgroundColor: isError ? '#fef2f2' : '#eff6ff', color: isError ? '#b91c1c' : '#1d4ed8' }}>
-            <Clock className="h-3.5 w-3.5 animate-spin" />
-            <span className="font-semibold">{activeTab.toUpperCase()} {job.message?.toLowerCase().includes('prn') ? 'PRN generation' : 'filing'}:</span>
-            <span>{job.message || 'Processing...'}</span>
-            {typeof job.progress === 'number' && job.progress > 0 && (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs" style={{ borderColor: isFailed ? '#fca5a5' : '#bfdbfe', backgroundColor: isFailed ? '#fef2f2' : '#eff6ff', color: isFailed ? '#b91c1c' : '#1d4ed8' }}>
+            {isFailed ? <AlertCircle className="h-3.5 w-3.5 shrink-0" /> : <Clock className="h-3.5 w-3.5 animate-spin" />}
+            <span className="font-semibold shrink-0">{activeTab.toUpperCase()} {actionLabel}:</span>
+            <span className="leading-relaxed">
+              {isFailed
+                ? (job.failedReason || 'The job failed. Please try again.')
+                : (job.message || 'Processing...')}
+            </span>
+            {!isFailed && typeof job.progress === 'number' && job.progress > 0 && (
               <span className="ml-auto font-mono">{job.progress}%</span>
             )}
           </div>
@@ -379,6 +402,14 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     : activeConfig.key === 'sha' ? (liveClient.shaError || liveClient.shaErrorType)
                     : null;
                   if (!error) return null;
+                  // Don't show a stale failure banner once the obligation has since
+                  // been filed or its files regenerated — the error predates that
+                  // progress and is no longer actionable.
+                  const currentStatus = activeConfig.key === 'nssf' ? (state?.statuses?.nssf || liveClient.nssf)
+                    : activeConfig.key === 'paye' ? (state?.statuses?.paye || liveClient.paye)
+                    : activeConfig.key === 'sha' ? (state?.statuses?.sha || liveClient.sha)
+                    : undefined;
+                  if (currentStatus === 'filed' || currentStatus === 'generated') return null;
                   return (
                     <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 mt-1">
                       <p className="font-semibold">Filing Failed</p>

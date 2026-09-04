@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
-    X, ChevronDown, ChevronUp, Search, Eye
+    X, ChevronDown, ChevronUp, Search, Eye, Trash2
 } from 'lucide-react';
 import {
     useReactTable,
@@ -156,6 +156,23 @@ export function EmployeeMasterPanel({ clientId, runId, period, onRefresh: _onRef
         setModalOpen(true);
     };
 
+    const handleDelete = useCallback(async (emp: Employee) => {
+        if (!window.confirm(`Delete employee "${emp.employeeName}"? This cannot be undone.`)) {
+            return;
+        }
+        try {
+            const res = await apiFetch(`/clients/${clientId}/employees/${emp.id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.message || data.error || 'Failed to delete employee.');
+            }
+            setEmployees((current) => current.filter((e) => e.id !== emp.id));
+            setError(null);
+        } catch (err: any) {
+            setError(err.message || 'Failed to delete employee.');
+        }
+    }, [clientId]);
+
     const columns = useMemo<ColumnDef<Employee>[]>(() => [
         {
             accessorKey: 'employeeName',
@@ -254,10 +271,17 @@ export function EmployeeMasterPanel({ clientId, runId, period, onRefresh: _onRef
                     >
                         <Eye className="h-3.5 w-3.5" />
                     </button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleDelete(row.original); }}
+                        className="rounded p-1 text-rose-500 hover:bg-rose-50 hover:text-rose-700 transition"
+                        title="Delete employee"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                 </div>
             ),
         },
-    ], [entries, attendanceSummaries]);
+    ], [entries, attendanceSummaries, handleDelete]);
 
     const table = useReactTable({
         data: employees,

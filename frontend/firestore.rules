@@ -34,7 +34,13 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
+      // Owners may update their profile but NOT billing/plan-limit fields —
+      // those are managed server-side only (Admin SDK bypasses these rules).
+      // This prevents a malicious client from setting plan: 'firm' or
+      // resetting clientCount / filingsThisMonth to bypass billing limits.
+      allow update: if isOwner(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['plan', 'subscriptionStatus', 'subscriptionEndsAt', 'clientCount', 'filingsThisMonth']);
       allow delete: if false;
     }
 

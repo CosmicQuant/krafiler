@@ -30,6 +30,7 @@ interface FirestoreJobDoc extends DocumentData {
         payload?: {
             taxObligationType?: string;
             clientId?: string;
+            printPrnOnly?: boolean;
         };
         taxObligationType?: string;
         clientId?: string;
@@ -137,6 +138,7 @@ export function useJobListener(
                     message: data.message || 'Processing...',
                     failedReason,
                     obligationType: data.payload?.payload?.taxObligationType || data.payload?.taxObligationType || '',
+                    printPrnOnly: data.payload?.payload?.printPrnOnly === true,
                     receiptUrl: resultReceiptUrl,
                     prnUrl: resultPrnUrl,
                     generatedZipUrl: resultGeneratedZipUrl,

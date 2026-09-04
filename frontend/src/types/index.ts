@@ -160,6 +160,8 @@ export type ActiveDashboardJob = {
     message: string;
     obligationType?: string;
     isNil?: boolean;
+    /** True for PRN-only jobs (printPrnOnly) — status labels read "Generating PRN". */
+    printPrnOnly?: boolean;
     failedReason?: string;
     receiptUrl?: string;
     prnUrl?: string;

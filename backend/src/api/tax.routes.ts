@@ -411,6 +411,12 @@ router.post(
                     const clientDoc = await adminDb.collection('clients').doc(clientId.trim()).get();
                     if (clientDoc.exists) {
                         const cd = clientDoc.data() as any;
+                        // Cross-tenant guard: never read stored credentials for a
+                        // client owned by another user.
+                        if (cd?.ownerUid && cd.ownerUid !== userId) {
+                            res.status(404).json({ success: false, message: 'Client not found.' });
+                            return;
+                        }
                         activePassword = cd.credentials?.kraPassword || cd.password || cd.iTaxPassword || null;
                     }
                 } catch (err) {
@@ -577,6 +583,16 @@ router.get(
         const { jobId } = req.params;
 
         try {
+            // Cross-tenant guard: job status (including step logs and
+            // credentialUpdate.newPassword) must only be visible to the job's owner.
+            const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+            const jobOwnerUid = jobDoc.exists ? (jobDoc.data() as any)?.ownerUid : undefined;
+            const requestingUid = (req as Request & { user?: { uid: string } }).user?.uid;
+            if (jobOwnerUid && jobOwnerUid !== requestingUid) {
+                res.status(404).json({ message: `No job found with ID: ${jobId}` });
+                return;
+            }
+
             const status = await getFilingJobStatus(jobId);
 
             if (!status) {
@@ -618,6 +634,16 @@ router.get(
         const manifestPath = `captures/${jobId}/manifest.json`;
 
         try {
+            // Cross-tenant guard: captures contain the full KRA HTTP trace and
+            // must only be readable by the job's owner.
+            const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+            const jobOwnerUid = jobDoc.exists ? (jobDoc.data() as any)?.ownerUid : undefined;
+            const requestingUid = (req as Request & { user?: { uid: string } }).user?.uid;
+            if (jobOwnerUid && jobOwnerUid !== requestingUid) {
+                res.status(404).json({ message: 'No captures found for this job.' });
+                return;
+            }
+
             const file = storage.bucket(BUCKET_NAME).file(manifestPath);
             const [exists] = await file.exists();
             if (!exists) {
@@ -665,6 +691,16 @@ router.get(
         const gcsPath = `captures/${jobId}/${sanitizedArtifact}`;
 
         try {
+            // Cross-tenant guard: capture artifacts contain the full KRA HTTP
+            // trace and must only be readable by the job's owner.
+            const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
+            const jobOwnerUid = jobDoc.exists ? (jobDoc.data() as any)?.ownerUid : undefined;
+            const requestingUid = (req as Request & { user?: { uid: string } }).user?.uid;
+            if (jobOwnerUid && jobOwnerUid !== requestingUid) {
+                res.status(404).json({ message: 'Artifact not found.' });
+                return;
+            }
+
             const file = storage.bucket(BUCKET_NAME).file(gcsPath);
             const [exists] = await file.exists();
             if (!exists) {
@@ -738,6 +774,12 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             const clientDoc = await adminDb.collection('clients').doc(String(clientId).trim()).get();
             if (clientDoc.exists) {
                 const clientData = clientDoc.data() as any;
+                // Cross-tenant guard: never read another user's client data.
+                const requestingUid = (req as Request & { user?: { uid: string } }).user?.uid;
+                if (clientData?.ownerUid && clientData.ownerUid !== requestingUid) {
+                    res.status(404).json({ success: false, message: 'Client not found.' });
+                    return;
+                }
                 nssfFileUrl = clientData.generatedFiles?.nssfFileUrl || null;
             }
         }
@@ -756,6 +798,12 @@ router.post('/file-nssf-return', async (req: Request, res: Response): Promise<vo
             const clientDoc = await adminDb.collection('clients').doc(String(clientId).trim()).get();
             if (clientDoc.exists) {
                 const clientData = clientDoc.data() as any;
+                // Cross-tenant guard: never read another user's NSSF credentials.
+                const requestingUid = (req as Request & { user?: { uid: string } }).user?.uid;
+                if (clientData?.ownerUid && clientData.ownerUid !== requestingUid) {
+                    res.status(404).json({ success: false, message: 'Client not found.' });
+                    return;
+                }
                 // Support both top-level fields (nssfNo / nssfPassword) and nested credentials
                 nssfUsername = clientData.nssfNo?.trim()
                     || clientData.credentials?.nssfLogin?.trim()
@@ -931,6 +979,13 @@ router.post('/generate-tot-zip', async (req: Request, res: Response): Promise<vo
         if (clientId) {
             try {
                 const { adminDb } = await import('../lib/firebaseAdmin');
+                const clientDoc = await adminDb.collection('clients').doc(String(clientId)).get();
+                // Cross-tenant guard: never update another user's client document.
+                const clientOwnerUid = clientDoc.exists ? (clientDoc.data() as any)?.ownerUid : undefined;
+                if (clientOwnerUid && clientOwnerUid !== uid) {
+                    res.status(404).json({ success: false, error: 'Client not found.' });
+                    return;
+                }
                 await adminDb.collection('clients').doc(clientId).update({
                     tot: 'generated',
                     totZipUrl: signedUrl,

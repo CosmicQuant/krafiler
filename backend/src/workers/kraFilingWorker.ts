@@ -364,6 +364,9 @@ export async function generatePrnAfterFiling(
     for (const prnConfig of prnTypesToGenerate) {
         // Use the filing period so the PRN matches the return period (e.g. May 2026 VAT)
         const prnDate = periodFrom ? new Date(periodFrom) : new Date();
+        // NOTE: amounts.housingLevyAmount stores the FULL statutory AHL remittance
+        // (3% = 1.5% employee + 1.5% employer), matching the P10 XML declaration.
+        // Use it as-is — do NOT double it again here.
         const amount = prnConfig.taxType === 'nita'
             ? (clientAmounts.nitaAmount ?? (parentJob.data.payload as any).nitaAmount)
             : prnConfig.taxType === 'affordable_housing'
@@ -2122,6 +2125,11 @@ export async function processFilingJob(job: JobContext): Promise<{
                 nssf: 'filed',
                 nssfLastFiledDate: new Date().toISOString(),
                 nssfReceiptUrl,
+                // Clear any stale failure markers from a previous attempt so the
+                // compliance tab no longer shows the old error banner.
+                nssfStatus: 'filed',
+                nssfError: null,
+                nssfErrorType: null,
             });
             if (receiptGcsPath) {
                 await jobStore.updateJob(jobId, {

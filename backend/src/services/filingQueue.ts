@@ -8,6 +8,7 @@
 import { publishFilingJob } from '../lib/pubsub';
 import * as jobStore from './jobStore';
 import { FilingJob, FilingStepLog } from '../types';
+import { STALE_ACTIVE_MS } from './jobSweeper';
 
 type PendingFilingState = 'waiting' | 'active' | 'delayed';
 
@@ -56,6 +57,7 @@ function buildPendingFilingKey(input: FilingGuardInput): string {
         prepareVatOnly: Boolean(input.prepareVatOnly),
         vatCurrentMonthDownload: Boolean(input.vatCurrentMonthDownload),
         vatPreviousCredit: normaliseOptionalNumber(input.vatPreviousCredit),
+        sectionBWithoutPinSales: normaliseOptionalNumber(input.sectionBWithoutPinSales),
         printPrnOnly: Boolean(input.printPrnOnly),
         nitaAmount: normaliseOptionalNumber(input.nitaAmount),
         housingLevyAmount: normaliseOptionalNumber(input.housingLevyAmount),
@@ -74,6 +76,16 @@ export async function findDuplicatePendingFiling(
         const pendingJobData = data.payload;
         if (!pendingJobData?.payload) continue;
 
+        // A job stuck 'active'/'processing' without an update for 45+ minutes is
+        // orphaned (worker crash/restart; the jobSweeper will mark it failed) —
+        // it must not block a new filing attempt at enqueue time.
+        if (data.status === 'active' || data.status === 'processing') {
+            const updatedAtMs = data.updatedAt?.toMillis?.() ?? 0;
+            if (updatedAtMs && Date.now() - updatedAtMs > STALE_ACTIVE_MS) {
+                continue;
+            }
+        }
+
         const pendingKey = buildPendingFilingKey({
             userId: pendingJobData.userId,
             kraPin: pendingJobData.payload.kraPin,
@@ -91,6 +103,7 @@ export async function findDuplicatePendingFiling(
             prepareVatOnly: pendingJobData.payload.prepareVatOnly,
             vatCurrentMonthDownload: pendingJobData.payload.vatCurrentMonthDownload,
             vatPreviousCredit: pendingJobData.payload.vatPreviousCredit,
+            sectionBWithoutPinSales: pendingJobData.payload.sectionBWithoutPinSales,
             printPrnOnly: pendingJobData.payload.printPrnOnly,
             nitaAmount: pendingJobData.payload.nitaAmount,
             housingLevyAmount: pendingJobData.payload.housingLevyAmount,

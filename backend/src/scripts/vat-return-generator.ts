@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { computeVatSummaryMath } from './vatMath';
 
 const csv = require('csv-parser');
 const AdmZip = require('adm-zip');
@@ -1216,12 +1217,22 @@ export async function prepareVatReturnArtifacts(params: PrepareVatReturnParams):
     const rZeroRatedSalesVat = dWithPin.totalVat + dWithoutPin.totalVat;
     const rExemptSalesTotal = eWithPin.totalBase + eWithoutPin.totalBase;
     const rExemptSalesVat = eWithPin.totalVat + eWithoutPin.totalVat;
-    const rTotalSalesVat = round(rGeneralSalesVat + rOtherSalesVat + rZeroRatedSalesVat + rExemptSalesVat, 2);
-    const rTotalInputVat = fPurchases.totalVat + gPurchases.totalVat + hPurchases.totalVat + iPurchases.totalVat + jPurchases.totalVat;
-    const rTotalInputRounded = round(rTotalInputVat, 2);
-    const rFinalTaxPayable = round(rTotalSalesVat - rTotalInputRounded, 2);
-    const rWithholdingAmount = round(params.withholdingAmount ?? 0, 2);
-    const rNetVatBalance = round(rFinalTaxPayable - params.previousCredit - rWithholdingAmount, 2);
+    const vatMath = computeVatSummaryMath({
+        salesVat: {
+            general: rGeneralSalesVat,
+            other: rOtherSalesVat,
+            zeroRated: rZeroRatedSalesVat,
+            exempt: rExemptSalesVat,
+        },
+        purchaseVat: [fPurchases.totalVat, gPurchases.totalVat, hPurchases.totalVat, iPurchases.totalVat, jPurchases.totalVat],
+        previousCredit: params.previousCredit,
+        withholdingAmount: params.withholdingAmount,
+    });
+    const rTotalSalesVat = vatMath.outputVat;
+    const rTotalInputRounded = vatMath.inputVat;
+    const rFinalTaxPayable = vatMath.payableVat;
+    const rWithholdingAmount = vatMath.withholdingAmount;
+    const rNetVatBalance = vatMath.netVatBalance;
 
     const resultSummary: PreparedVatReturnSummary = {
         inputVat: rTotalInputRounded,

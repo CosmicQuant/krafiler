@@ -14,6 +14,7 @@ import { PayeReturnSubmitter } from './PayeReturnSubmitter';
 import { VatPrepareService, VatPrepareResult } from './VatPrepareService';
 import { HttpPrnService } from '../payment-registration/HttpPrnService';
 import { KraError, KraErrorCode } from '../errors';
+import { computeFullHousingLevyForPeriod, computeNitaLevyForPeriod } from '../../../services/payrollLevyAmounts';
 
 export interface HttpFilingOrchestratorResult extends FilingExecuteResult {
     credentialUpdate: null;
@@ -165,11 +166,19 @@ export class HttpFilingOrchestrator {
                         // AHL remittance (3% = 1.5% employee + 1.5% employer),
                         // matching the P10 XML declaration. Use it as-is — do NOT
                         // double it again here.
-                        const amount = prnConfig.taxType === 'nita'
-                            ? (clientAmounts.nitaAmount ?? this.payload.nitaAmount)
-                            : prnConfig.taxType === 'affordable_housing'
-                            ? (clientAmounts.housingLevyAmount ?? this.payload.housingLevyAmount)
-                            : undefined;
+                        //
+                        // The payroll run for the period is the AUTHORITATIVE source
+                        // (Σ employee ahlDeduction × 2) — client-doc amounts and
+                        // payload values can be stale from before the full-statutory
+                        // change, so prefer the run whenever it exists.
+                        let amount: number | undefined;
+                        if (prnConfig.taxType === 'nita') {
+                            amount = (await computeNitaLevyForPeriod(this.payload.clientId, this.payload.periodFrom))
+                                ?? (clientAmounts.nitaAmount ?? this.payload.nitaAmount);
+                        } else if (prnConfig.taxType === 'affordable_housing') {
+                            amount = (await computeFullHousingLevyForPeriod(this.payload.clientId, this.payload.periodFrom))
+                                ?? (clientAmounts.housingLevyAmount ?? this.payload.housingLevyAmount);
+                        }
 
                         const prnService = new HttpPrnService({ session, job: this.job });
                         const prnResult = await prnService.execute({

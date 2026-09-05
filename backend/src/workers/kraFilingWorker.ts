@@ -31,6 +31,7 @@ import * as jobStore from '../services/jobStore';
 import { storeReceiptLocally } from '../utils/storage';
 import { sendReceiptNotification } from '../utils/notifications';
 import { uploadFile, uploadBuffer, receiptPath as gcsReceiptPath, getSignedDownloadUrl } from '../lib/cloudStorage';
+import { computeFullHousingLevyForPeriod, computeNitaLevyForPeriod } from '../services/payrollLevyAmounts';
 import type { PrnConfig } from '../utils/kra-prn-generator';
 import { CredentialUpdate, FilingJob, FilingStepLog, TaxObligationType } from '../types';
 import { PayeFilingService } from './services/PayeFilingService';
@@ -367,11 +368,18 @@ export async function generatePrnAfterFiling(
         // NOTE: amounts.housingLevyAmount stores the FULL statutory AHL remittance
         // (3% = 1.5% employee + 1.5% employer), matching the P10 XML declaration.
         // Use it as-is — do NOT double it again here.
-        const amount = prnConfig.taxType === 'nita'
-            ? (clientAmounts.nitaAmount ?? (parentJob.data.payload as any).nitaAmount)
-            : prnConfig.taxType === 'affordable_housing'
-            ? (clientAmounts.housingLevyAmount ?? (parentJob.data.payload as any).housingLevyAmount)
-            : undefined;
+        //
+        // The payroll run for the period is the AUTHORITATIVE source (Σ employee
+        // ahlDeduction × 2) — client-doc amounts and payload values can be stale
+        // from before the full-statutory change, so prefer the run when it exists.
+        let amount: number | undefined;
+        if (prnConfig.taxType === 'nita') {
+            amount = (await computeNitaLevyForPeriod(clientId, periodFrom))
+                ?? (clientAmounts.nitaAmount ?? (parentJob.data.payload as any).nitaAmount);
+        } else if (prnConfig.taxType === 'affordable_housing') {
+            amount = (await computeFullHousingLevyForPeriod(clientId, periodFrom))
+                ?? (clientAmounts.housingLevyAmount ?? (parentJob.data.payload as any).housingLevyAmount);
+        }
         const prnConfigObj: PrnConfig = {
             taxType: prnConfig.taxType,
             periodYear: prnDate.getFullYear().toString(),

@@ -99,6 +99,19 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
   const [success, setSuccess] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [activeJobs, setActiveJobs] = useState<Record<string, { jobId: string; status: string; progress: number; message: string; kind?: 'filing' | 'prn'; failedReason?: string }>>({});
+  // Error-banner dismissals keyed by tab; stores the exact dismissed error text
+  // so a NEW error (different text) still shows after an old one was dismissed.
+  const [dismissedErrors, setDismissedErrors] = useState<Record<string, string>>({});
+
+  // Reset per-client transient state when the user switches clients, so a failed
+  // job banner or error message from one client doesn't bleed into another's tab.
+  useEffect(() => {
+    setActiveJobs({});
+    setDismissedErrors({});
+    setError(null);
+    setSuccess(null);
+    setFilingType(null);
+  }, [client.id]);
 
   const fetchStatus = useCallback(async () => {
     if (!runId) return;
@@ -321,6 +334,15 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
             {!isFailed && typeof job.progress === 'number' && job.progress > 0 && (
               <span className="ml-auto font-mono">{job.progress}%</span>
             )}
+            {isFailed && (
+              <button
+                onClick={() => setActiveJobs((prev) => { const next = { ...prev }; delete next[activeTab]; return next; })}
+                className="ml-auto rounded px-1.5 py-0.5 font-bold leading-none hover:bg-white/60"
+                title="Dismiss"
+              >
+                ✕
+              </button>
+            )}
           </div>
         );
       })()}
@@ -402,6 +424,8 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     : activeConfig.key === 'sha' ? (liveClient.shaError || liveClient.shaErrorType)
                     : null;
                   if (!error) return null;
+                  // Dismissed: hide until a NEW error text appears.
+                  if (dismissedErrors[activeConfig.key] === error) return null;
                   // Don't show a stale failure banner once the obligation has since
                   // been filed or its files regenerated — the error predates that
                   // progress and is no longer actionable.
@@ -411,9 +435,16 @@ export function ComplianceTabs({ client, runId, period, runStatus, entries, onRe
                     : undefined;
                   if (currentStatus === 'filed' || currentStatus === 'generated') return null;
                   return (
-                    <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 mt-1">
+                    <div className="relative rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 mt-1">
                       <p className="font-semibold">Filing Failed</p>
                       <p>{liveClient.nssfError || liveClient.payeError || liveClient.shaError}</p>
+                      <button
+                        onClick={() => setDismissedErrors((prev) => ({ ...prev, [activeConfig.key]: error }))}
+                        className="absolute right-1.5 top-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none text-red-400 hover:bg-red-100 hover:text-red-600"
+                        title="Dismiss"
+                      >
+                        ✕
+                      </button>
                     </div>
                   );
                 })()}

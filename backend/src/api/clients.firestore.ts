@@ -399,17 +399,12 @@ router.delete('/:id', async (req: AuthenticatedRequest, res) => {
             }
         };
 
-        // Payroll run entries are a subcollection of payrollRuns — delete them
-        // before the run documents themselves.
-        const runs = await adminDb.collection('payrollRuns').where('clientId', '==', clientId).get();
-        for (const run of runs.docs) {
-            const entries = await run.ref.collection('entries').get();
-            await deleteInChunks(entries.docs);
-        }
-
+        // Payroll entries live in the top-level payrollEntries collection keyed
+        // by payrollRunId (and denormalized clientId) — delete them with the runs.
         const cascadeCollections = [
             'employees',
             'payrollRuns',
+            'payrollEntries',
             'attendanceRecords',
             'leaveRequests',
             'loans',
@@ -1188,11 +1183,18 @@ router.get('/:id/receipts/:obligationType', async (req: AuthenticatedRequest, re
                         break;
                     }
                 } else {
-                    // Primary PRN for the obligation (legacy: artifacts.prnGcsPath; current: first result.prnResults entry)
-                    const prnResults: Array<{ taxType?: string; prnGcsPath?: string }> =
+                    // Primary PRN for the obligation (legacy: artifacts.prnGcsPath; current: result.prnResults).
+                    // Prefer the entry whose taxType matches the obligation itself; a failed
+                    // PAYE attempt in a PAYE+NITA+AHL run must NOT serve the NITA/AHL
+                    // slip as the "PAYE PRN". Legacy entries without a taxType are allowed.
+                    const prnResults: Array<{ taxType?: string; prnGcsPath?: string; prnPath?: string }> =
                         data?.result?.prnResults || [];
-                    const primaryPrn = prnResults.find((r) => r.prnGcsPath);
-                    gcsPath = primaryPrn?.prnGcsPath || data?.artifacts?.prnGcsPath || null;
+                    const ownType = prnResults.find(
+                        (r) =>
+                            (r.taxType ? r.taxType.toLowerCase() === token : true) &&
+                            (r.prnGcsPath || r.prnPath)
+                    );
+                    gcsPath = ownType?.prnGcsPath || data?.artifacts?.prnGcsPath || null;
                     if (gcsPath) break;
                 }
             } else {

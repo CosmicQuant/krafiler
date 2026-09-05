@@ -44,3 +44,9 @@ frontend/public/clients/**/*.csv
 .archive/
 temp-*.tsx
 frontend/temp-*.tsx
+
+# Repo hygiene — never commit local binaries, dumps, or generated client data.
+# Root tmp/ holds generated filing ZIPs containing real client KRA PINs.
+tmp/
+redis/
+.playwright-mcp/

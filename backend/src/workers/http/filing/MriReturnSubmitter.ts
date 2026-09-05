@@ -79,8 +79,16 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
         }
 
         // The browser calls fetchDataForMRIReturnsAjax via DWR to fetch property
-        // details (landId, rengId). These are required in hidPropertyDetailList.
-        // Without them KRA rejects with "Problem encountered in iTax".
+        // details. KRA's property DTO uses different field names than the
+        // submission — the browser's MRISimplification.js maps them when
+        // building the hidden field:
+        //   landId <- treLandlordPropertyRegHdrId
+        //   rengId <- trePropertyRegDtlId
+        // The form's hidPropertyDetailList is an EMPTY hidden input (populated
+        // by JS at runtime), so the DWR response is the ONLY source of these
+        // IDs. Submitting without them makes KRA accept the return but record
+        // the gross rent as 0 — so if they cannot be fetched we abort instead
+        // of silently filing a zero-rent return.
         let hidPropertyDetailList = '';
         try {
             const dwrResponse = await dwr.fetchDataForMRIReturnsAjax({
@@ -102,28 +110,48 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
 
             await appendJobLog(this.job, `DWR fetchDataForMRIReturnsAjax response (first 500): ${dwrResponse.slice(0, 500)}`, { progress: 76, level: 'info' });
 
-            // Parse the DWR response for property details.
-            // DWR returns JavaScript like: dwr.engine.remote.handleCallback("1","0",[{landId:"833",...}])
-            const landMatch = dwrResponse.match(/landId["']?\s*[:=]\s*["']?(\d+)/g);
-            const rengMatch = dwrResponse.match(/rengId["']?\s*[:=]\s*["']?(\d+)/g);
-            if (landMatch && rengMatch && landMatch.length > 0 && rengMatch.length > 0) {
-                const landId = landMatch[0].match(/(\d+)/)?.[1] ?? '';
-                const rengId = rengMatch[0].match(/(\d+)/)?.[1] ?? '';
-                hidPropertyDetailList = JSON.stringify([{ landId, rengId, rent: rentalAmount, liability: taxOnRent }]);
-                await appendJobLog(this.job, `Fetched property details: landId=${landId}, rengId=${rengId}`, { progress: 76 });
+            // DWR returns JavaScript like:
+            //   dwr.engine.remote.handleCallback("1","0",{...mriPropertyDtlDTOs:[{...treLandlordPropertyRegHdrId:267224,trePropertyRegDtlId:72535...}]...})
+            const hdrMatches = dwrResponse.match(/treLandlordPropertyRegHdrId:"?(\d+)"?/g) || [];
+            const dtlMatches = dwrResponse.match(/trePropertyRegDtlId:"?(\d+)"?/g) || [];
+
+            if (hdrMatches.length === 0 || dtlMatches.length === 0) {
+                throw new KraError(
+                    KraErrorCode.VALIDATION_ERROR,
+                    'KRA returned no registered rental property for this taxpayer (mriPropertyDtlDTOs is empty). ' +
+                        'The MRI return was NOT submitted — register the rental property on the KRA portal first, then retry.',
+                    { retryable: false, rawResponse: dwrResponse.slice(0, 2000) }
+                );
             }
 
-            if (!hidPropertyDetailList) {
-                // If DWR response parsing failed, use the form's existing value — but
-                // ALWAYS override its rent/liability with the actual amounts. The form's
-                // pre-filled hidPropertyDetailList template contains rent: 0, and
-                // submitting it verbatim makes KRA record the gross rent as 0.
-                hidPropertyDetailList = this.buildPropertyDetailList(fields['hidPropertyDetailList'] || '', rentalAmount, taxOnRent);
-                await appendJobLog(this.job, `Could not parse property details from DWR response. Using fallback with injected rent ${rentalAmount}.`, { progress: 78, level: 'warn' });
+            const landId = hdrMatches[0]?.match(/(\d+)/)?.[1] ?? '';
+            const rengId = dtlMatches[0]?.match(/(\d+)/)?.[1] ?? '';
+            if (!landId || !rengId) {
+                throw new KraError(
+                    KraErrorCode.VALIDATION_ERROR,
+                    'Could not parse property registration IDs from the KRA property response. The MRI return was NOT submitted — KRA would record the rent as 0 without them.',
+                    { retryable: false, rawResponse: dwrResponse.slice(0, 2000) }
+                );
+            }
+            hidPropertyDetailList = JSON.stringify([{ landId, rengId, rent: rentalAmount, liability: taxOnRent }]);
+            await appendJobLog(this.job, `Fetched property details: landId=${landId}, rengId=${rengId}`, { progress: 76 });
+
+            if (hdrMatches.length > 1) {
+                await appendJobLog(
+                    this.job,
+                    `Taxpayer has ${hdrMatches.length} registered properties; attaching the full rental amount to the first property.`,
+                    { progress: 77, level: 'warn' }
+                );
             }
         } catch (dwrErr: any) {
-            await appendJobLog(this.job, `DWR fetchDataForMRIReturnsAjax failed: ${dwrErr.message}`, { progress: 78, level: 'warn' });
-            hidPropertyDetailList = this.buildPropertyDetailList(fields['hidPropertyDetailList'] || '', rentalAmount, taxOnRent);
+            if (dwrErr instanceof KraError) {
+                throw dwrErr;
+            }
+            throw new KraError(
+                KraErrorCode.PORTAL_UNAVAILABLE,
+                `Could not fetch rental property details from KRA (DWR: ${dwrErr.message}). The MRI return was NOT submitted — KRA would record the rent as 0 without the property registration IDs. Please retry.`,
+                { retryable: true }
+            );
         }
 
         // fieldsToSkip is a multi-value field (appears twice in the form for taxpayerName and taxpayerAdd).
@@ -230,32 +258,5 @@ export class MriReturnSubmitter extends BaseHttpFilingService {
             downloadUrl: result.downloadUrl,
             noticeId: result.noticeId,
         };
-    }
-
-    /**
-     * Builds the hidPropertyDetailList JSON, preserving any landId/rengId from
-     * the form's pre-filled value but always overriding rent and liability with
-     * the actual rental income and tax. The form template carries rent: 0 —
-     * submitting it verbatim makes KRA record the gross rent as 0.
-     */
-    private buildPropertyDetailList(formValue: string, rentalAmount: number, taxOnRent: number): string {
-        if (formValue && formValue.trim() !== '') {
-            try {
-                const parsed = JSON.parse(formValue);
-                const list = Array.isArray(parsed) ? parsed : [parsed];
-                const injected = list.map((entry: any) => ({
-                    landId: String(entry?.landId ?? ''),
-                    rengId: String(entry?.rengId ?? ''),
-                    rent: rentalAmount,
-                    liability: taxOnRent,
-                }));
-                if (injected.length > 0) {
-                    return JSON.stringify(injected);
-                }
-            } catch {
-                // Fall through to the plain fallback below.
-            }
-        }
-        return JSON.stringify([{ landId: '', rengId: '', rent: rentalAmount, liability: taxOnRent }]);
     }
 }
